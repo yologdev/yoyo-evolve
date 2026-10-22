@@ -70,8 +70,12 @@ STUCK_ON_THRESHOLD = 3         # ≥N attempts AND 0 successes → flag
 # 2048 → 3072 on Day 142: the epistemic blind-spot section (added Day 141)
 # renders LAST and was being decapitated by the old cap — a steering channel
 # that usually arrives truncated is a dormant mechanism. 3KB ≈ 750 tokens.
+# 3072 → 3328 on Day 236 (#944): the phase-spend section renders ~240 bytes
+# mid-order, and the block was already at its cap, so without the raise it
+# pushed the module-size warning's body off the end. +256 pays for exactly the
+# new section; every older section keeps the room it had.
 TOTAL_LINE_CAP = 100
-TOTAL_BYTE_CAP = 3072
+TOTAL_BYTE_CAP = 3328
 
 # ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -2511,6 +2515,161 @@ def render_usage_coverage(cov: UsageCoverage, state: str = AUDIT_DIR_OK) -> str:
 # itself. Two hand-written copies of a rule agree on the day they are written
 # and diverge forever after, which is the whole duplication lesson.
 
+# ── #944: the per-phase spend sinks finally get a reader ────────────────────
+# social.sh and dream.sh each append one JSON row per run to
+# `phases/<phase>/spend.jsonl` on the audit-log branch (a sibling of
+# `sessions/`, so SESSION_DIR_RE never sees it). Until this section nothing
+# read those rows: a sink with no reader is a value printed to a channel
+# nothing later reads (Day 213). This is that reader, in the block every
+# planner already consumes.
+#
+# Source: the audit-log WORKTREE evolve.sh already checked out for this very
+# script (YOYO_AUDIT_DIR = <worktree>/sessions, so the sinks are at
+# <worktree>/phases/...). Deliberately no second `git fetch` here: Step 1c
+# fetched the branch seconds earlier, a second network path is a second
+# thing to fail, and a hand-run without YOYO_AUDIT_DIR already says "not
+# checked" for every other audit-log section.
+#
+# Three states per phase, each with its own wording, NONE folded into a
+# number: rows present -> the numbers; file absent on the branch -> "no rows
+# yet" (dream on its cooldown today); unreadable / no worktree -> "could not
+# check". A row that recorded `"usage":"no_terminal_emit"` is a run that left
+# NO usage record — counted on its own, never summed as $0, so every total is
+# a floor. Sub-agent tokens are not in any record (yoagent#173), so the totals
+# are a floor even when every run recorded.
+PHASE_SPEND_PHASES = ("social", "dream")
+PHASE_SPEND_WINDOW_DAYS = 7
+PHASE_SPEND_ROWS = "phase-spend-rows"
+PHASE_SPEND_NO_ROWS = "phase-spend-no-rows"
+PHASE_SPEND_COULD_NOT_CHECK = "phase-spend-could-not-check"
+PHASE_SPEND_FLOOR_LINE = (
+    "Totals are a floor: sub-agent tokens are not counted (yoagent#173)."
+)
+
+
+def phase_spend_rel_path(phase: str) -> str:
+    """The sink path social.sh / dream.sh append to, relative to the branch root."""
+    return f"phases/{phase}/spend.jsonl"
+
+
+@dataclass
+class PhaseSpend:
+    """What one phase's sink says about the last PHASE_SPEND_WINDOW_DAYS."""
+
+    phase: str
+    state: str = PHASE_SPEND_COULD_NOT_CHECK
+    runs: int = 0              # rows in window (recorded + no_terminal_emit)
+    cost_usd: float = 0.0      # summed over usage_records of in-window rows
+    no_usage: int = 0          # in-window rows with "usage":"no_terminal_emit"
+    unreadable: int = 0        # lines that are not a JSON row with a datable ts
+    older: int = 0             # readable rows outside the window
+    uncosted: int = 0          # usage records in window with no numeric cost_usd
+    reason: str = ""           # why it could not be checked
+
+
+def classify_phase_spend(phase: str, text, absent: bool, now: datetime) -> PhaseSpend:
+    """Pure: fold one sink's text into a PhaseSpend.
+
+    `absent=True` means the file is not on the branch -> NO_ROWS. `text is
+    None` (and not absent) means it could not be read -> COULD_NOT_CHECK.
+
+    Window boundary: a row exactly PHASE_SPEND_WINDOW_DAYS old IS counted
+    (inclusive `<=`). A tie here is one row on the edge of a reporting window,
+    not two sources disagreeing about one event (Day 220's hazard), and it
+    moves a total by one row without changing any verdict, so it gets a
+    convention rather than a could-not-check. A future-dated row (negative age,
+    clock skew) is counted too — it is in no sense older than the window.
+    """
+    if absent:
+        return PhaseSpend(phase=phase, state=PHASE_SPEND_NO_ROWS)
+    if text is None:
+        return PhaseSpend(phase=phase, reason="sink unreadable")
+    out = PhaseSpend(phase=phase, state=PHASE_SPEND_ROWS)
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            out.unreadable += 1
+            continue
+        if not isinstance(row, dict):
+            out.unreadable += 1
+            continue
+        age = run_age_days(row.get("ts"), now)
+        if age is None:
+            out.unreadable += 1
+            continue
+        if age > PHASE_SPEND_WINDOW_DAYS:
+            out.older += 1
+            continue
+        out.runs += 1
+        recs = row.get("usage_records")
+        if not isinstance(recs, list) or not recs:
+            # `"usage":"no_terminal_emit"` is the writer's own spelling; any
+            # other row with no records is the same fact (nothing recorded).
+            out.no_usage += 1
+            continue
+        for rec in recs:
+            cost = rec.get("cost_usd") if isinstance(rec, dict) else None
+            if isinstance(cost, (int, float)) and not isinstance(cost, bool):
+                out.cost_usd += float(cost)
+            else:
+                out.uncosted += 1
+    return out
+
+
+def collect_phase_spend(audit_dir, now: datetime) -> list:
+    """I/O half: read each phase's sink from the audit-log worktree. Fail-soft."""
+    out = []
+    for phase in PHASE_SPEND_PHASES:
+        if audit_dir is None:
+            out.append(PhaseSpend(phase=phase, reason="no audit-log worktree (YOYO_AUDIT_DIR)"))
+            continue
+        path = Path(audit_dir).parent / phase_spend_rel_path(phase)
+        try:
+            if not path.exists():
+                out.append(classify_phase_spend(phase, None, True, now))
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError as e:
+            warn(f"could not read {path}: {e}")
+            out.append(PhaseSpend(phase=phase, reason="sink unreadable"))
+            continue
+        out.append(classify_phase_spend(phase, text, False, now))
+    return out
+
+
+def render_phase_spend(spends: list) -> str:
+    """Pure: one header, one line per phase, one fixed floor line."""
+    lines = [f"## Phase spend (audit-log phases/*/spend.jsonl, last {PHASE_SPEND_WINDOW_DAYS} days)"]
+    for sp in spends:
+        rel = phase_spend_rel_path(sp.phase)
+        if sp.state == PHASE_SPEND_NO_ROWS:
+            lines.append(f"- {sp.phase}: no rows yet ({rel} is not on audit-log).")
+            continue
+        if sp.state == PHASE_SPEND_COULD_NOT_CHECK:
+            lines.append(
+                f"- {sp.phase}: could not check ({sp.reason}) — NOT zero spend."
+            )
+            continue
+        parts = [f"{sp.runs} run(s), ${sp.cost_usd:.2f} summed cost_usd"]
+        if sp.no_usage:
+            parts.append(
+                f"{sp.no_usage} run(s) left no usage record — NOT counted as "
+                f"zero, total is a floor"
+            )
+        if sp.uncosted:
+            parts.append(f"{sp.uncosted} usage record(s) without cost_usd")
+        if sp.unreadable:
+            parts.append(f"{sp.unreadable} unreadable row(s)")
+        if sp.runs == 0:
+            parts.append(f"{sp.older} older row(s) outside the window")
+        lines.append(f"- {sp.phase}: " + "; ".join(parts) + ".")
+    lines.append(PHASE_SPEND_FLOOR_LINE)
+    return "\n".join(lines)
+
+
 MODULE_GATE_REL_PATH = "tests/module_size.rs"
 
 # Report register drift once it passes this fraction of the gate's own drift
@@ -4274,6 +4433,14 @@ def main() -> int:
     )
     if s:
         sections.append(s)
+    # #944: right after usage records (same subject: what the runs cost), and
+    # before the module-size gate. Counts as trajectory DATA only when some
+    # phase actually has rows; "no rows yet" / "could not check" for every
+    # phase must not suppress the global "(no trajectory data yet)" state.
+    phase_spends = collect_phase_spend(audit_dir, datetime.now(timezone.utc))
+    s = render_phase_spend(phase_spends)
+    phase_spend_unknown = not any(sp.state == PHASE_SPEND_ROWS for sp in phase_spends)
+    sections.append(s)
     # Day 183: the module-size gate's two non-fatal branches warn to the stderr
     # of a PASSING test, and the only consumer of `cargo test` in the loop reads
     # the exit code — so nothing read them and three warnings accumulated, one
@@ -4348,6 +4515,7 @@ def main() -> int:
         - (1 if doc_fresh_unknown else 0)
         - (1 if pairing_unknown else 0)
         - (1 if productivity_unknown else 0)
+        - (1 if phase_spend_unknown else 0)
     )
     if data_sections or epistemic_entries or epistemic_never:
         sections.append(render_epistemic(epistemic_entries, epistemic_never))
@@ -8253,6 +8421,99 @@ src/commands_config.rs
         f"inside the {DOC_STALE_AFTER_DAYS}-day threshold" in fresh_render
         and "STALE" not in fresh_render,
     )
+
+    print("\n=== phase spend (#944) self-tests ===\n")
+    # Fixture: one REAL row, byte-for-byte from origin/audit-log
+    # phases/social/spend.jsonl (written by social.sh's persist_social_spend,
+    # 2026-10-22), not a hand-invented shape.
+    ps_real = (
+        '{"ts":"2026-10-22T16:04:16Z","phase":"social","day":236,"exit":0,'
+        '"usage_records":[{"cache_creation_input_tokens":132064,'
+        '"cache_read_input_tokens":663991,"cost_usd":1.2487622,"duration_ms":63941,'
+        '"input_tokens":95646,"is_error":false,"model":"claude-opus-5-5",'
+        '"num_turns":7,"output_tokens":3653,"ts":"2026-10-22T16:04:16",'
+        '"type":"usage"}]}'
+    )
+    # The writer's other branch, spelled exactly as social_spend_row prints it.
+    ps_none = '{"ts":"2026-10-22T18:00:00Z","phase":"social","day":236,"exit":124,"usage":"no_terminal_emit"}'
+    ps_old = ps_real.replace('"ts":"2026-10-22T16:04:16Z"', '"ts":"2026-10-01T16:04:16Z"', 1)
+    ps_edge = ps_real.replace('"ts":"2026-10-22T16:04:16Z"', '"ts":"2026-10-15T20:00:00Z"', 1)
+    assert_eq("phase-spend fixture really is the dated shape", str(ps_old != ps_real and ps_edge != ps_real), "True")
+    ps_now = datetime(2026, 10, 22, 20, 0, 0, tzinfo=timezone.utc)
+
+    sp = classify_phase_spend("social", ps_real + "\n", False, ps_now)
+    assert_eq("phase-spend: real row -> rows state", sp.state, PHASE_SPEND_ROWS)
+    assert_eq("phase-spend: real row -> 1 run", str(sp.runs), "1")
+    assert_eq("phase-spend: real row -> cost summed", f"{sp.cost_usd:.7f}", "1.2487622")
+    two = classify_phase_spend("social", ps_real + "\n" + ps_real + "\n", False, ps_now)
+    assert_eq("phase-spend: two rows sum, not last-wins", f"{two.cost_usd:.7f}", "2.4975244")
+
+    sp = classify_phase_spend("social", ps_real + "\n" + ps_none + "\n", False, ps_now)
+    assert_eq("phase-spend: no_terminal_emit counted as a run", str(sp.runs), "2")
+    assert_eq("phase-spend: no_terminal_emit counted separately", str(sp.no_usage), "1")
+    assert_eq("phase-spend: no_terminal_emit adds nothing to the sum", f"{sp.cost_usd:.7f}", "1.2487622")
+    rendered = render_phase_spend([sp])
+    assert_eq(
+        "phase-spend: render states the floor for a no-usage run",
+        rendered,
+        "## Phase spend (audit-log phases/*/spend.jsonl, last 7 days)\n"
+        "- social: 2 run(s), $1.25 summed cost_usd; 1 run(s) left no usage "
+        "record — NOT counted as zero, total is a floor.\n"
+        + PHASE_SPEND_FLOOR_LINE,
+    )
+
+    sp = classify_phase_spend("social", ps_old + "\n" + ps_real + "\n", False, ps_now)
+    assert_eq("phase-spend: row outside window excluded from runs", str(sp.runs), "1")
+    assert_eq("phase-spend: row outside window counted as older", str(sp.older), "1")
+    assert_eq("phase-spend: row outside window excluded from sum", f"{sp.cost_usd:.7f}", "1.2487622")
+    # Boundary: exactly 7.0 days old is IN (inclusive, see classify_phase_spend).
+    edge_now = datetime(2026, 10, 22, 20, 0, 0, tzinfo=timezone.utc)
+    edge = classify_phase_spend("social", ps_edge, False, edge_now)
+    assert_eq("phase-spend: row exactly at the 7-day edge is counted", str(edge.runs), "1")
+    just_out = classify_phase_spend(
+        "social", ps_edge, False, datetime(2026, 10, 22, 20, 0, 1, tzinfo=timezone.utc)
+    )
+    assert_eq("phase-spend: one second past the edge is older", str(just_out.older), "1")
+    only_old = render_phase_spend([classify_phase_spend("social", ps_old, False, ps_now)])
+    assert_eq(
+        "phase-spend: rows but none in window says so, not 'no rows yet'",
+        only_old.splitlines()[1],
+        "- social: 0 run(s), $0.00 summed cost_usd; 1 older row(s) outside the window.",
+    )
+
+    absent = classify_phase_spend("dream", None, True, ps_now)
+    assert_eq("phase-spend: absent file -> no rows yet", absent.state, PHASE_SPEND_NO_ROWS)
+    cnc = classify_phase_spend("dream", None, False, ps_now)
+    assert_eq("phase-spend: unreadable -> could not check", cnc.state, PHASE_SPEND_COULD_NOT_CHECK)
+    three = render_phase_spend(
+        [absent, cnc, PhaseSpend(phase="social", reason="no audit-log worktree (YOYO_AUDIT_DIR)")]
+    ).splitlines()
+    assert_eq("phase-spend: absent renders 'no rows yet'", three[1],
+              "- dream: no rows yet (phases/dream/spend.jsonl is not on audit-log).")
+    assert_eq("phase-spend: unreadable renders could-not-check, not zero", three[2],
+              "- dream: could not check (sink unreadable) — NOT zero spend.")
+    assert_eq("phase-spend: unset worktree renders could-not-check", three[3],
+              "- social: could not check (no audit-log worktree (YOYO_AUDIT_DIR)) — NOT zero spend.")
+    assert_eq("phase-spend: floor line always present", three[-1], PHASE_SPEND_FLOOR_LINE)
+    junk = classify_phase_spend("social", "not json\n" + ps_real + "\n", False, ps_now)
+    assert_eq("phase-spend: junk line counted unreadable, real row still read",
+              f"{junk.unreadable}/{junk.runs}", "1/1")
+
+    # I/O half over a real directory tree shaped like the harness worktree.
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "sessions").mkdir()
+        (root / "phases" / "social").mkdir(parents=True)
+        (root / "phases" / "social" / "spend.jsonl").write_text(ps_real + "\n")
+        got = collect_phase_spend(root / "sessions", ps_now)
+        assert_eq("phase-spend io: social read from worktree, dream absent",
+                  f"{got[0].state}/{got[0].runs}/{got[1].state}",
+                  f"{PHASE_SPEND_ROWS}/1/{PHASE_SPEND_NO_ROWS}")
+    got = collect_phase_spend(None, ps_now)
+    assert_eq("phase-spend io: no worktree -> could not check for every phase",
+              ",".join(sp.state for sp in got),
+              ",".join([PHASE_SPEND_COULD_NOT_CHECK] * len(PHASE_SPEND_PHASES)))
 
     print(f"\n{'ALL PASSED' if failures == 0 else f'{failures} FAILURE(S)'}")
     return 1 if failures else 0
