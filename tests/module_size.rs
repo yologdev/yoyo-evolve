@@ -366,7 +366,10 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // pasted from what the gate printed after `cargo fmt`, never hand-typed.
     // Day 234: down to 4576 — worktree removal (and its held-work guard) moved
     // to src/spawn_worktree.rs. Pasted from what the gate printed.
-    ("src/commands_spawn.rs", 4576),
+    // Day 236 (#1014): 4576 -> 4570. The write tap's ~8 wiring lines were paid
+    // for by deleting the duplicate run_git_in/repo_root (spawn_worktree.rs's
+    // copies are now pub(crate)); the tap itself lives in src/spawn_write_tap.rs.
+    ("src/commands_spawn.rs", 4570),
     // Day 162 (#692): +108 lines — extract_last_assistant_text now stops at the
     // newest turn's boundary (no stale-turn fallback) plus the regression tests
     // pinning that a text-less newest turn yields None, not an older turn's text.

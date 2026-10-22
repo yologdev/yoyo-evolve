@@ -8,6 +8,7 @@ use crate::format::*;
 use crate::prompt::run_prompt;
 use crate::prompt_utils::summarize_message;
 pub use crate::spawn_worktree::{cleanup_spawn_worktree, cleanup_stale_worktrees, WorktreeCleanup};
+use crate::spawn_worktree::{repo_root, run_git_in};
 use crate::sync_util::lock_or_recover;
 
 use std::path::{Path, PathBuf};
@@ -890,10 +891,18 @@ pub async fn handle_spawn(
     // Subagent inherits the same tools and permissions
     let mut sub_agent = sub_config.build_agent();
 
-    // Run the task
+    // Run the task, bracketed by the write tap (#1014): what changed in the
+    // main checkout outside the worktree while it ran. Before `-o` writes.
+    // No worktree means the worker runs in the checkout, so nothing to tap.
+    let tap_before = worktree
+        .as_ref()
+        .map(|_| crate::spawn_write_tap::snapshot(&cwd));
     let response = run_prompt(&mut sub_agent, &args.task, session_total, effective_model)
         .await
         .text;
+    if let Some(before) = tap_before {
+        crate::spawn_write_tap::report(before.as_ref(), &cwd);
+    }
 
     // Write output to file if -o was specified
     if let Some(ref output_path) = args.output_path {
@@ -1793,21 +1802,6 @@ pub fn spawn_dir_restrictions(
         allow,
         deny: parent.deny.clone(),
     }
-}
-
-/// Run a git command in a specific directory.
-/// Delegates to the centralized `git::run_git_in_dir` for consistent error
-/// handling and test safety.
-fn run_git_in(repo: &Path, args: &[&str]) -> Result<String, String> {
-    crate::git::run_git_in_dir(repo, args)
-}
-
-/// Resolve the root of the git repository that contains `start`.
-/// Falls back to `start` itself if rev-parse fails.
-fn repo_root(start: &Path) -> PathBuf {
-    run_git_in(start, &["rev-parse", "--show-toplevel"])
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| start.to_path_buf())
 }
 
 /// Pre-flight symlink check for a worktree target path.

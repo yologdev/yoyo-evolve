@@ -61,11 +61,11 @@ pub(crate) enum Holding {
     CouldNotCheck(String),
 }
 
-fn run_git_in(dir: &Path, args: &[&str]) -> Result<String, String> {
+pub(crate) fn run_git_in(dir: &Path, args: &[&str]) -> Result<String, String> {
     crate::git::run_git_in_dir(dir, args)
 }
 
-fn repo_root(start: &Path) -> PathBuf {
+pub(crate) fn repo_root(start: &Path) -> PathBuf {
     run_git_in(start, &["rev-parse", "--show-toplevel"])
         .map(PathBuf::from)
         .unwrap_or_else(|_| start.to_path_buf())

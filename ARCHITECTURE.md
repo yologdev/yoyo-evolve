@@ -1626,6 +1626,18 @@ It covers evolve sessions only.
 - dropping the filter fails both label checks;
 - labelling `agent-input` fails the edit check.
 
+### `src/spawn_write_tap.rs` — Day 236 (00:26): `/spawn` write tap, first cut (Part of #1014)
+
+**What it measures:** a spawn worker's file tools are fenced to its worktree (#716) but its `bash` is only pinned there by cwd, so an absolute path or `cd ..` still reaches the parent checkout. The foreground `/spawn` path now takes `git status --porcelain=v1 -z --untracked-files=all` of the **main checkout** just before the worker runs and again just after (before `-o` writes the output file the user asked for), and prints on stderr how many paths appear only in the second snapshot, naming up to 10 (`write tap: N paths changed in the main checkout outside the worker's worktree while it ran: ...`). Only `.yoyo/worktrees/` is excluded; that is the one thing a foreground spawn writes that `git status` lists (its handoff branch and `git worktree` metadata live under `.git/`). Skipped entirely when no worktree was created, since the worker then runs in the checkout by design.
+
+**Limits, stated plainly:** only paths git sees in the parent repo (not `/tmp`, `$HOME`, other repos, or `.gitignore`d files); a path already dirty before the run and changed again is NOT counted, and neither is a dirty path the run cleaned (the snapshot holds names, not contents); attribution is "while it ran", not "by the worker", so a user edit during the run is counted, and the line says so. `None` (not a repo, git failing) prints "could not check" and never reads as zero. Goes through the `src/git.rs` chokepoint via `run_git_output` (not `run_git_in_dir`, which trims and would eat the first porcelain record's leading space).
+
+**Residue on #1014:** `--bg` and `--parallel` are not wired. Not an oversight: during a bg run the parent session keeps editing the same checkout, so "while it ran" would mostly count the parent's own writes. Bash writes outside the repo are unmeasured.
+
+**Size:** `commands_spawn.rs` went 4576 -> 4570 because the ~8 wiring lines were paid for by deleting its duplicate `run_git_in`/`repo_root` (now `pub(crate)` in `spawn_worktree.rs`).
+
+**Positive control:** making `outside_writes` return empty (atomic mutate->test->restore, NEUTERED marker on the line) reddened `positive_control_real_repo_counts_a_new_outside_file` (a real tempdir repo, a new file outside `.yoyo/worktrees/`) and `outside_writes_table` by name; restored, 11/11 green.
+
 ### `src/spawn_worktree.rs` — Day 234 (09:07): `/spawn` no longer force-removes a worktree that still holds work
 
 **The defect, measured before the fix:** in a scratch repo, `git worktree add --detach .yoyo/worktrees/spawn-1-1`, write an untracked file into it, then the first command the old `cleanup_spawn_worktree` issued — `git worktree remove --force <path>` — exited 0 and the file was gone. Callers reached it after a failed handoff commit (`try_worktree_handoff` prints `handoff commit failed` and returns `None`; a rejecting pre-commit hook, `commit.gpgsign` with no agent, no `user.email`), after an `-o` output-file write failure (before any handoff ran), and from `cleanup_stale_worktrees` on every `/spawn`, which judged staleness by the worktree's **root-dir** mtime (nested edits don't touch it). Same class as Claude Code 2.1.304's "removing the worktree ... without asking could lose commits".
