@@ -1,0 +1,31 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n 'AGENT_EXIT=\|^DAY=\|SESSI… ✓ (4.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n 'DAY\b' scripts/social.sh … ✓ (7ms)
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 23.3s (3 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_2.md.
+
+scripts/social.sh now keeps a lasting record of each run's spend. It appends one line per run to phases/social/spend.jsonl on the audit-log branch. When a run left no usage record, the line says "usage":"no_terminal_emit" instead of a zero.
+
+What I checked myself:
+• Harness tests: bash tests/harness_logic.sh gave 249 passed, 0 failed. That includes all the new social sink cases, (a) through (f).
+• Syntax: bash -n scripts/social.sh is clean.
+• Variables: DAY, AGENT_EXIT and SESSION_TIME are all set in social.sh, so the row isn't built from empty values.
+• Protected files: social.sh is not on evolve.sh's protected list, so editing it was allowed.
+
+Other points from reading the diff:
+• Main checkout untouched: the write happens in a separate temporary worktree that is removed before the script's later commit on main. Test (e) runs against a main with uncommitted changes and confirms its status, index and HEAD are unchanged.
+• Failures don't break the script: every failed step prints one stderr line naming the step and returns 0, so it never changes the script's exit status. It still works under the script's set -euo pipefail.
+• Missing branch: if the remote has no audit-log branch, it prints one skip line and changes nothing.
+• Retry: if the first push is rejected, it fetches, rebases and pushes once more. Test (f) covers this.
+• Both exits: it runs on the API-error exit and the normal exit.
+• Records: the change is written up in ARCHITECTURE.md. Nothing in the diff touches product behaviour.
+
+One thing the tests can't show: whether the social workflow's CI credentials are allowed to push to audit-log. If they aren't, the sink fails without breaking the run, and the first real social run will show which happened.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

@@ -1,0 +1,237 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --short | head;… ✓ (16ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 20,60p src/tool_wrappers.rs; grep -n "…  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -rn "Command blocked\|needs user confirm… ✓ (8ms)
+ ✓ (22ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 1580,1700p src/tools.rs; grep -n "Tool… ✓ (6ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 345,460p src/tools.rs ✓ (4ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 640,670p src/tool_wrappers.rs; sed -n … ✓ (10ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; Y=$(ls -d ~/.cargo/registry/src/*/yoagent-0.2… ✓ (18ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -n "ToolError::Failed\|format!(\"Blocked… ✓ (8ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 1,60p tests/module_size.rs; grep -n "c… ✓ (9ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -n "MODULE_LINE_CAP\|const [A-Z_]*: usiz… ✓ (6ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 60,130p tests/module_size.rs ✓ (3ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -rn "is_deterministic_tool_error\|is_det… ✓ (10ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 1530,1560p src/prompt.rs; sed -n 1600,… ✓ (6ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 24,48p src/tool_wrappers.rs; sed -n 45… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  14 tools completed in 57.5s (14 ✓)
+
+Now the edits. Stems first:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tool_wrappers.rs (1 → 12 lines)
+    pub const REFUSAL_STEM_PATH_DENIED: &str = "User denied ";
+  + /// Bash-door refusals (#1068), matched as substrings like the three above. In order:
+  + /// hard deny (`hard_deny.rs`); user/`/cd` deny incl. #1010/#1011 (`tools.rs`,
+  + /// `safety/indirect_command.rs`); child confirm (`tools.rs`); pinned-cwd git
+  + /// redirection (`safety.rs`); the user declining a bash confirm (`tools.rs`).
+  + pub const BASH_REFUSAL_STEMS: &[&str] = &[
+  +     "Command blocked by safety policy: ",
+  +     "Command blocked by your permission rules: ",
+  +     "Command needs user confirmation that a sub-agent cannot obtain: ",
+  +     "git may not be redirected outside it.",
+  +     "Command was not confirmed by the user.",
+  + ];
+  ▶ edit src/prompt_retry.rs (2 → 3 lines)
+            || err.contains(REFUSAL_STEM_PATH_DENIED)
+  +         || crate::tool_wrappers::BASH_REFUSAL_STEMS.iter().any(|s| err.contains(s))
+    }
+ ✓ (4m 20s)
+    pub const REFUSAL_STEM_PATH_DENIED: &str = "User denied ";
+  + /// Bash-door refusals (#1068), matched as substrings like the three above. In order:
+  + /// hard deny (`hard_deny.rs`); user/`/cd` deny incl. #1010/#1011 (`tools.rs`,
+  + /// `safety/indirect_command.rs`); child confirm (`tools.rs`); pinned-cwd git
+  + /// redirection (`safety.rs`); the user declining a bash confirm (`tools.rs`).
+  + pub const BASH_REFUSAL_STEMS: &[&str] = &[
+  +     "Command blocked by safety policy: ",
+  +     "Command blocked by your permission rules: ",
+  ... (4 more lines)
+ ✓ (7m 50s)
+            || err.contains(REFUSAL_STEM_PATH_DENIED)
+  +         || crate::tool_wrappers::BASH_REFUSAL_STEMS.iter().any(|s| err.contains(s))
+    }
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 85,130p src/cd_deny.rs; grep -n "ToolF… ✓ (14ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 2635,2660p src/tool_wrappers.rs; grep … ✓ (15ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 130,200p src/cd_deny.rs; sed -n 95,130… ✓ (5ms)
+  ▶ write src/bash_refusal_tests.rs (154 lines) ✓ (1m 51s)
+  ▶ edit src/bash_refusal_tests.rs (3 → 12 lines)
+        // Near-miss through the same wrapper: a real tool error still gets the hint.
+  -     let declined = with_recovery_hints(Box::new(StreamingBashTool::default()), &tracker);
+  +     let ctx = yoagent::types::ToolContext::new("call-1068", "bash");
+  +     let bad = tool
+  +         .execute(serde_json::json!({}), ctx)
+  +         .await
+  +         .expect_err("missing command is an error")
+  +         .to_string();
+  +     assert!(bad.contains("💡 Recovery hint:"), "{bad:?}");
+  +     assert_eq!(tracker.get("bash", "_"), 1);
+  + 
+  +     // A user-deny refusal through the wrapper, too: byte-identical.
+        let deny_tool
+  ▶ edit src/bash_refusal_tests.rs (4 → 2 lines)
+        );
+  -     let missing = run(declined.as_ref(), "").await;
+  -     assert!(missing.is_ok() || !missing.unwrap_err().is_empty());
+    }
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 138,146p src/main.rs; grep -n "fn get\… ✗ (1ms)
+    │ old_text not found in src/bash_refusal_tests.rs.
+ ✓ (1m 53s)
+        // Near-miss through the same wrapper: a real tool error still gets the hint.
+  -     let declined = with_recovery_hints(Box::new(StreamingBashTool::default()), &tracker);
+  +     let ctx = yoagent::types::ToolContext::new("call-1068", "bash");
+  +     let bad = tool
+  +         .execute(serde_json::json!({}), ctx)
+  +         .await
+  +         .expect_err("missing command is an error")
+  +         .to_string();
+  ... (5 more lines)
+ ✓ (1m 53s)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 130,170p src/bash_refusal_tests.rs; se… ✓ (5ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; python3 - <<'EOF' (24 lines) ✗ (0ms)
+    │ Command blocked by safety policy: contains 'rm -rf /'. This pattern is denied for safety.
+
+────────────────────────────────────────────────────────────────────────────────
+  11 tools completed in 12m 26s (9 ✓, 2 ✗)
+
+That's the exact defect, live in my own session: the hard deny caught rm -rf / inside my heredoc, and the hint told me to "try a simpler version". I'll do the edits with the file tools instead.
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ read src/bash_refusal_tests.rs:125.. ✓ (0ms)
+  ▶ edit src/bash_refusal_tests.rs (4 → 3 lines)
+        );
+  -     let missing = run(declined.as_ref(), "").await;
+  -     assert!(missing.is_ok() || !missing.unwrap_err().is_empty());
+  +     assert_eq!(tracker.get("bash", "echo yoyo_1068_x"), 0);
+    }
+  ▶ edit src/bash_refusal_tests.rs (1 → 1 lines)
+  -     assert_eq!(tracker.get("bash", "_"), 0, "a refusal is not a failure");
+  +     assert_eq!(tracker.get("bash", "rm -rf /"), 0, "a refusal is not a failure");
+  ▶ edit src/tool_wrappers.rs (2 → 2 lines)
+        #[cfg(test)]
+  -     fn get(&self, tool_name
+  +     pub(crate) fn get(&self, tool_name
+  ▶ edit src/main.rs (2 → 4 lines)
+  + #[cfg(test)]
+  + mod bash_refusal_tests;
+    #[cfg(test)]
+    mod tool_wrappers_cancel_tests;
+ ✓ (17.6s)
+        );
+  -     let missing = run(declined.as_ref(), "").await;
+  -     assert!(missing.is_ok() || !missing.unwrap_err().is_empty());
+  +     assert_eq!(tracker.get("bash", "echo yoyo_1068_x"), 0);
+    }
+ ✓ (34.9s)
+  -     assert_eq!(tracker.get("bash", "_"), 0, "a refusal is not a failure");
+  +     assert_eq!(tracker.get("bash", "rm -rf /"), 0, "a refusal is not a failure");
+ ✓ (52.3s)
+        #[cfg(test)]
+  -     fn get(&self, tool_name
+  +     pub(crate) fn get(&self, tool_name
+ ✓ (1m 10s)
+  + #[cfg(test)]
+  + mod bash_refusal_tests;
+    #[cfg(test)]
+    mod tool_wrappers_cancel_tests;
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -n "declined\|bash_refusal_tests" src/ba… ✓ (17.5s)
+  ▶ read src/bash_refusal_tests.rs:140.. ✓ (0ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -rn 'yoyo_1068_x"), 0' src; git status -… ✓ (12ms)
+  ▶ edit src/bash_refusal_tests.rs (4 → 3 lines)
+        );
+  -     let missing = run(declined.as_ref(), "").await;
+  -     assert!(missing.is_ok() || !missing.unwrap_err().is_empty());
+  +     assert_eq!(tracker.get("bash", "echo yoyo_1068_x"), 0);
+    }
+ ✓ (2m 28s)
+        );
+  -     let missing = run(declined.as_ref(), "").await;
+  -     assert!(missing.is_ok() || !missing.unwrap_err().is_empty());
+  +     assert_eq!(tracker.get("bash", "echo yoyo_1068_x"), 0);
+    }
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -n 'tracker.get' src/bash_refusal_tests.… ✓ (155ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -n "child_confirm_refusal(true" src/*.rs… ✓ (9ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -n "const FLAGGED" src/tools_child_bash_… ✓ (3ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -i 's/child_confirm_refusal(true, "rm -rf… ✓ (32.4s)
+
+────────────────────────────────────────────────────────────────────────────────
+  13 tools completed in 4m 54s (13 ✓)
+
+Green. Now the positive control, as one atomic mutate→run→restore command:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; cp src/prompt_retry.rs /tmp/pr.bak && sed -i … ✓ (1m 1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The control didn't land: the stem was still referenced after the sed. Checking how fmt reshaped the line:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -n "BASH_REFUSAL_STEMS" -B2 -A3 src/prom… ✓ (3ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; cp src/prompt_retry.rs /tmp/pr.bak && sed -i … ✓ (1m 1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; wc -l src/tool_wrappers.rs src/prompt_retry.r… ✓ (3m 48s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 4m 57s (3 ✓)
+
+Everything passed. I'll still register the two ceilings honestly instead of leaning on the drift grace:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -n '("src/prompt_retry.rs", 2718)' -B3 t… ✓ (3ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -i 's|    ("src/prompt_retry.rs", 2718),|… ✓ (468ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -n "blocked\|hint\|retry" docs/src/troub… ✓ (4ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 410,418p docs/src/configuration/permis… ✓ (3ms)
+  ▶ edit docs/src/configuration/permissions.md (1 → 3 lines)
+    A handful of truly catastrophic patterns (like `rm -rf /` or fork bombs) are hard-blocked and can never execute, even with `--yes`.
+  + 
+  + When bash refuses a command (a hard block, your deny list, a sub-agent that would need your confirmation, a git redirection out of a pinned worktree, or you answering no), the model gets the refusal text exactly as written. yoyo does not add a "try a simpler version" recovery hint, and it does not re-run the whole prompt automatically, because running it again would hit the same refusal.
+ ✓ (1ms)
+    A handful of truly catastrophic patterns (like `rm -rf /` or fork bombs) are hard-blocked and can never execute, even with `--yes`.
+  + 
+  + When bash refuses a command (a hard block, your deny list, a sub-agent that would need your confirmation, a git redirection out of a pinned worktree, or you answering no), the model gets the refusal text exactly as written. yoyo does not add a "try a simpler version" recovery hint, and it does not re-run the whole prompt automatically, because running it again would hit the same refusal.
+  ▶ write /tmp/msg1068.txt (39 lines)  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; cargo fmt -- --check && cargo clippy --all-ta… ✓ (1ms)
+ ✓ (2.3s)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; git show --stat HEAD | tail -8; gh issue view… ✓ (327ms)
+  ▶ write /tmp/c1068.md (14 lines)  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; gh issue comment 1068 --body-file /tmp/c1068.… ✓ (1ms)
+ ✓ (1.1s)
+
+────────────────────────────────────────────────────────────────────────────────
+  10 tools completed in 43.4s (10 ✓)
+
+Bash refusals now count as deterministic refusals, committed as dc11ae62 ("Part of #1068"). When the bash tool refuses a command, the model gets the refusal text unchanged: no "try a simpler version" hint, no bump to the failure counter, and the whole prompt is no longer re-run automatically. Build, all tests, clippy and the fmt check passed.
+
+I also hit the bug live during this session. A command I ran contained rm -rf / inside a script, the hard-deny guard blocked it, and the reply carried the exact hint this task removes.
+
+What the bash tool can refuse with. I searched for every refusal message it can return. Five message beginnings (stems) cover them all:
+• Command blocked by safety policy:  (the hard-deny list in hard_deny.rs)
+• Command blocked by your permission rules:  (the user's deny list, plus the #1010/#1011 refusals in safety/indirect_command.rs; the deny list added by /cd uses the same text)
+• Command needs user confirmation that a sub-agent cannot obtain:  (a sub-agent command that would need the user's confirmation)
+• ...git may not be redirected outside it. (git pointed outside a pinned working directory)
+• Command was not confirmed by the user. (the user answering no). The task didn't list this one; I added it because it is the bash equivalent of the existing User denied  stem.
+
+Two things are deliberately not counted. --restricted and read-only sub-agents remove tools instead of refusing, so they produce no text. A Blocked by hook:  refusal comes from a user-written hook and can depend on outside state, so it is still treated as a real failure.
+
+Changes
+• BASH_REFUSAL_STEMS sits beside the existing REFUSAL_STEM_* consts in src/tool_wrappers.rs, and is_deterministic_tool_error now checks it. The recovery-hint wrapper already uses that same check, so one change covers both the hint and the auto-retry.
+• Both files were at their size caps, so the tests went into a new file, src/bash_refusal_tests.rs, and I recorded the new ceilings for both files in tests/module_size.rs:
+  • Every refusal is built by calling the real code that produces it.
+  • Lookalikes stay classed as real failures: command not found, Exit code: 1, "blocked by the proxy", and a bare "Command blocked".
+  • A hard-deny and a user-deny refusal pass through the hint wrapper byte-identical, checked with assert_eq!, and the failure counter stays at 0.
+  • A genuine tool error passed through the same wrapper still gets the hint.
+• Check that the tests catch a regression: with the new check deleted, 3 of the 4 new tests failed by name. After restoring it, all 4 pass, and no sabotage marker is left in the code.
+• Docs: I added a short paragraph to docs/src/configuration/permissions.md. That page, not safety.md, is where refusals were described.
+
+I posted a comment on #1068 listing the stems that are now covered and noting that defect 2 is still open. The hard_deny.rs doc says a quoted string counts as one word, but multi-line quoted arguments are split into lines first; it fails closed.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 2/4 changed files were in top-10 predictions (50.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/4 (0.0%) — reactive was 50.0%
+     Predicted correctly: src/tool_wrappers.rs, src/main.rs
+     Surprises (not predicted): src/prompt_retry.rs, src/bash_refusal_tests.rs
