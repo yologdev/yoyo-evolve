@@ -872,27 +872,26 @@ pub fn openai_preset(model: &str) -> Option<ModelConfig> {
     }
 }
 
-/// yoagent 0.25.8 presets for Google, xAI and Mistral ids (#1021, #1037), by
-/// EXACT `(provider, id)` match: `gemini-3.8-flash-lite` must not get Flash's
-/// price (#1003), and a `grok-4.7` on OpenRouter is not xAI's endpoint.
+/// `ModelConfig::preset` for the [`VENDOR_PRESET_PROVIDERS`] arms (#1021, #1037),
+/// EXACT `(provider, id)`: `gemini-3.8-flash-lite` must not get Flash's price
+/// (#1003), and a `grok-4.7` on OpenRouter is not xAI's endpoint.
 /// Argon, 3.8 Flash and Mistral Large 4 are priced at the REGULAR rate, so
 /// `/cost` may read up to 2x the bill while a vendor promotion runs.
 pub fn vendor_preset(provider: &str, model: &str) -> Option<ModelConfig> {
     ensure_bundled_prices();
-    match (provider, model) {
-        ("google", "gemini-4-argon") => Some(ModelConfig::gemini_4_argon()),
-        ("google", "gemini-3.8-flash") => Some(ModelConfig::gemini_3_8_flash()),
-        ("xai", "grok-4.7") => Some(ModelConfig::grok_4_7()),
-        ("mistral", "mistral-large-4") => Some(ModelConfig::mistral_large_4()),
-        _ => None,
-    }
+    VENDOR_PRESET_PROVIDERS
+        .contains(&provider)
+        .then(|| ModelConfig::preset(provider, model))?
 }
 
+/// Arms that call [`apply_vendor_preset`]; others: `vendor_preset_tests.rs`.
+pub(crate) const VENDOR_PRESET_PROVIDERS: &[&str] = &["google", "xai", "mistral", "zai"];
+
 /// [`vendor_preset`] for the id-only readers (`/cost`, `/model` info window):
-/// these four ids are unique to their vendor.
+/// yoagent's vendor preset ids are unique to their vendor.
 pub(crate) fn vendor_preset_by_id(model: &str) -> Option<ModelConfig> {
-    ["google", "xai", "mistral"]
-        .into_iter()
+    VENDOR_PRESET_PROVIDERS
+        .iter()
         .find_map(|p| vendor_preset(p, model))
 }
 
@@ -1101,6 +1100,7 @@ pub fn create_model_config(provider: &str, model: &str, base_url: Option<&str>) 
         }
         "zai" => {
             let mut config = ModelConfig::zai(model, model);
+            apply_vendor_preset(&mut config, provider, model);
             if let Some(url) = base_url {
                 config.base_url = url.to_string();
             }

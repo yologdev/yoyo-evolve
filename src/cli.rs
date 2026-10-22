@@ -1181,14 +1181,14 @@ pub(crate) fn unknown_model_warning(provider: &str, model: &str) -> Option<Strin
     if crate::providers::model_is_known_for_provider(provider, model) {
         return None;
     }
-    let known = known_models_for_provider(provider);
+    let known = crate::providers::known_model_ids_with_presets(provider);
     if known.is_empty() {
         return None;
     }
     Some(format!(
         "{YELLOW}warning:{RESET} Unknown model '{model}' for provider '{provider}'. \
          Known models: {}. Proceeding anyway (custom models are valid).",
-        known.iter().take(5).copied().collect::<Vec<_>>().join(", ")
+        known[..known.len().min(5)].join(", ")
     ))
 }
 

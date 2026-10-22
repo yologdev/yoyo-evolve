@@ -213,6 +213,24 @@ pub fn model_is_known_for_provider(provider: &str, model: &str) -> bool {
     (provider == "anthropic" && crate::agent_builder::anthropic_preset(model).is_some())
         || (provider == "openai" && crate::agent_builder::openai_preset(model).is_some())
         || crate::agent_builder::vendor_preset(provider, model).is_some()
+        || yoagent::provider::ModelConfig::preset(provider, model).is_some()
+}
+
+/// [`known_models_for_provider`] plus every yoagent preset id for `provider`
+/// that is not already on it, appended so the existing order (and the first
+/// five the `Unknown model` warning shows) is unchanged. Derived from
+/// `ModelConfig::presets()`, never hand-typed (#1037).
+pub fn known_model_ids_with_presets(provider: &str) -> Vec<String> {
+    let mut ids: Vec<String> = known_models_for_provider(provider)
+        .iter()
+        .map(|id| id.to_string())
+        .collect();
+    for preset in yoagent::provider::ModelConfig::presets() {
+        if preset.provider == provider && !ids.contains(&preset.id) {
+            ids.push(preset.id);
+        }
+    }
+    ids
 }
 
 /// Get the default model for a given provider.

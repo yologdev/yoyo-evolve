@@ -148,6 +148,8 @@ mod tools_group_kill_tests;
 mod tools_search_flag_tests;
 #[cfg(test)]
 mod tools_user_deny_tests;
+#[cfg(test)]
+mod vendor_preset_tests;
 // Unconditional: the argument contract in here is compiled and table-tested by a
 // plain `cargo test`, which compiles none of `gasp` above. Only the half that
 // touches the store is behind the feature.

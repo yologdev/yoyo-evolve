@@ -113,15 +113,17 @@ yoagent's own preset: a 1,050,000-token window, 64K default `max_tokens` (128K m
 including the higher whole-request rate above 272K prompt tokens (`gpt-6.1-sol` has its own
 price, not `gpt-6-sol`'s). Other ids keep the generic OpenAI defaults.
 
-The same holds for four more exact ids on their own provider: `gemini-4-argon` and `gemini-3.8-flash`
+The same holds for six more exact ids on their own provider: `gemini-4-argon` and `gemini-3.8-flash`
 (`google`: 1,048,576-token window, 65,536 `max_tokens`, which is also the declared output maximum),
 `grok-4.7` (`xai`: 500,000-token window, 64K default `max_tokens`, and the whole-request rate at
-200K prompt tokens and above) and `mistral-large-4` (`mistral`: 1,000,000-token window, 32K default
-`max_tokens`). xAI and Mistral publish no output maximum, so yoyo does not warn about a higher
-`max_tokens` there. Gemini 4 Argon, Gemini 3.8 Flash and Mistral Large 4 are priced at the vendor's
+200K prompt tokens and above), `mistral-large-4` (`mistral`: 1,000,000-token window, 32K default
+`max_tokens`) and `glm-5.3` / `glm-5.3-flash` (`zai`: 1,000,000-token window, 128K `max_tokens`).
+These come from yoagent's own preset table (`ModelConfig::preset`), so they are also known ids:
+no `Unknown model` warning. xAI and Mistral publish no output maximum, and yoyo declares none for
+Z.ai either, so yoyo does not warn about a higher `max_tokens` on those three. Gemini 4 Argon, Gemini 3.8 Flash and Mistral Large 4 are priced at the vendor's
 **regular** rate, so while an introductory or launch price is running `/cost` can read up to twice
-the actual bill. Near-miss ids (`gemini-3.8-flash-lite`, `grok-4.7-mini`, `mistral-large-latest`)
-keep the generic defaults.
+the actual bill. Near-miss ids (`gemini-3.8-flash-lite`, `grok-4.7-mini`, `mistral-large-latest`,
+`glm-5.4`) keep the generic defaults.
 
 ### Models with no preset run on guessed limits
 
