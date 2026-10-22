@@ -1144,6 +1144,15 @@ def green_verdict_branch(newest_failure_ts, green: "GreenScan | None",
     # current is no evidence that CI is red, and asserting red from it is the
     # mirror of my own rule — "could not check" must never read as "checked;
     # clean", and equally must never read as "confirmed red".
+    # Day 236: the EMPTY page. Invariant: a failure is a completed run, so a
+    # completed page that cannot contain the failure this run already fetched
+    # is not current, and zero rows is the extreme of that. `page_is_stale`
+    # reads a missing newest row as "unknown" (right for rows=None, no page
+    # seen), which let `rows == 0` fall through to still-live: measured Day 236,
+    # the same argv returned 20, 0, 20 rows on three calls and the planner was
+    # told "these are live" over a green CI. `rows is None` is NOT this case.
+    if green.rows == 0:
+        return GREEN_BRANCH_STALE_PAGE
     if page_is_stale(green.newest_row_ts, newest_failure_ts):
         return GREEN_BRANCH_STALE_PAGE
     # Day 220: the TIE, which `page_is_stale` reads as fresh. It is either a
@@ -1190,6 +1199,14 @@ def green_since_verdict(newest_failure_ts, green: "GreenScan | None", now: datet
             "sometimes — only that CI is not red on these patterns now."
         )
     if branch == GREEN_BRANCH_STALE_PAGE:
+        if green.rows == 0:
+            return (
+                "green-since check could not run — the completed-runs listing came "
+                "back EMPTY, but a failure this same run already fetched "
+                f"({newest_failure_ts}) is itself a completed run, so the page cannot "
+                "be current and CI's state could not be determined. This claims "
+                "neither that the failures below are live nor that they are cured."
+            )
         if green.tie_check is not None and green.tie_check.state == TIE_CHECK_NEWER:
             return (
                 "green-since check could not run — the completed-runs listing "
@@ -1263,6 +1280,10 @@ def green_probe_receipt(scan: "CiScan | None", green: "GreenScan | None",
         # `page` answers the short/full question from the same `limit` the query
         # asked for, so the receipt cannot claim a horizon the probe never had.
         page = "n/a" if green.rows is None else ("full" if green.rows >= limit else "short")
+        # Day 236: name the empty-page case in the receipt itself, so a reading
+        # shows WHY stale-page fired without re-deriving it from green_rows=0.
+        if green.rows == 0 and scan is not None and scan.newest_failure_ts:
+            page = "empty-with-known-failure"
         successes = str(green.successes)
         unreadable = str(green.unreadable)
         success_ts = green.newest_success_ts or "none"
@@ -5950,6 +5971,67 @@ src/commands_config.rs
     assert_true(
         "receipt stays exactly ONE line with the new field",
         len(stale_receipt.splitlines()) == 1,
+    )
+    # Day 236: the EMPTY completed page. Measured: the green probe's exact argv
+    # returned 20, 0, 20 rows on three consecutive calls, and the 0 rendered
+    # "these are live" over a green CI. Table: (label, failure_ts, page payload,
+    # want_branch, sentence must contain, sentence must NOT contain).
+    empty_scan = newest_success_from_runs([], GREEN_PROBE_LIMIT)
+    assert_true(
+        "fixture: [] really yields a checked, zero-row scan (anti-vacuous)",
+        empty_scan.checked and empty_scan.rows == 0 and empty_scan.newest_row_ts is None,
+    )
+    # A newer cancelled row keeps the page fresh without a tie (a tie routes
+    # to the Day-220 cross-check, a different question).
+    short_red_runs = [
+        {"createdAt": "2026-08-26T05:00:00Z", "conclusion": "cancelled"},
+        {"createdAt": harness_fail, "conclusion": "failure"},
+        {"createdAt": "2026-08-25T00:00:00Z", "conclusion": "failure"},
+    ]
+    for label, fail_ts, runs, want_branch, must, must_not in [
+        (
+            "[] page + known failure -> stale-page, never 'these are live'",
+            harness_fail, [], GREEN_BRANCH_STALE_PAGE,
+            "came back EMPTY", "these are live",
+        ),
+        (
+            "near-miss: short page holding the failure, no success -> still-live",
+            harness_fail, short_red_runs, GREEN_BRANCH_STILL_LIVE,
+            "these are live", "came back EMPTY",
+        ),
+        (
+            "near-miss: [] page and NO known failure -> no-in-window-failures",
+            None, [], GREEN_BRANCH_NO_FAILURES, None, None,
+        ),
+    ]:
+        g = newest_success_from_runs(runs, GREEN_PROBE_LIMIT)
+        assert_eq(f"empty-page table: {label}", green_verdict_branch(fail_ts, g, rnow), want_branch)
+        sentence = green_since_verdict(fail_ts, g, rnow)
+        if must is None:
+            assert_true(f"empty-page table prose is None: {label}", sentence is None)
+        else:
+            assert_true(
+                f"empty-page table prose: {label}",
+                sentence is not None and must in sentence and must_not not in sentence,
+            )
+    assert_true(
+        "empty-page prose names the failure stamp it could not find on the page",
+        harness_fail in green_since_verdict(harness_fail, empty_scan, rnow),
+    )
+    empty_receipt = green_probe_receipt(
+        rscan, empty_scan, GREEN_BRANCH_STALE_PAGE, GREEN_PROBE_LIMIT
+    )
+    assert_true(
+        "receipt names page=empty-with-known-failure for the empty-page case",
+        "page=empty-with-known-failure " in empty_receipt
+        and f"branch={GREEN_BRANCH_STALE_PAGE} " in empty_receipt
+        and len(empty_receipt.splitlines()) == 1,
+    )
+    assert_true(
+        "near-miss: an empty page with no known failure still reads page=short",
+        "page=short " in green_probe_receipt(
+            CiScan(ok=True), empty_scan, GREEN_BRANCH_NO_FAILURES, GREEN_PROBE_LIMIT
+        ),
     )
     # The freshness evidence comes from EVERY parseable row, not only successes:
     # a page of pure failures still knows how fresh it is.
