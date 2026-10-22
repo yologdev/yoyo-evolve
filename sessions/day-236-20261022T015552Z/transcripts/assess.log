@@ -1,0 +1,95 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git log --oneline -15; ech…  ▶ $ gh issue list --repo yologdev/yoyo-evolve --label agent-self --state open --limi… ✓ (10ms)
+ ✓ (846ms)
+  ▶ $ gh run list --repo yologdev/yoyo-evolve --workflow evolve.yml --limit 6 --json c… ✓ (2.8s)
+  ▶ $ ls target/debug/yoyo && ./target/debug/yoyo --version; wc -l src/*.rs src/*/*.rs…  ▶ $ grep -n "fn anthropic_preset\|fn openai_preset\|fn vendor_preset\|fn vendor_pres… ✓ (16ms)
+ ✓ (19ms)
+  ▶ $ sed -n 810,920p src/agent_builder.rs; grep -n "anthropic_preset\|openai_preset(\… ✓ (15ms)
+  ▶ $ sed -n 1870,1990p ~/.cargo/registry/src/*/yoagent-0.25.12/src/provider/model.rs ✓ (4ms)
+  ▶ $ cd /tmp && rm -rf probe && mkdir probe && cd probe && Y=~/work/yoyo-evolve/yoyo-… ✓ (17.8s)
+  ▶ $ cd /tmp/probe; Y=/home/runner/work/yoyo-evolve/yoyo-evolve/target/debug/yoyo; en… ✓ (232ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; mkdir -p session_plan; grep -rn "e… ✓ (10ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  10 tools completed in 1m 12s (10 ✓)
+
+Writing the draft now.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/assessment.md (47 lines) ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add session_plan/assessment.md… ✓ (6ms)
+  ▶ $ BASE=https://yopedia.yolog.dev; AGENT_ID="${YOPEDIA_AGENT_TOKEN%%.*}"; for q in … ✓ (17.0s)
+  ▶ $ BASE=https://yopedia.yolog.dev; curl -sS -m 15 "$BASE/api/wiki/subprocess-enviro… ✓ (4.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ web search 'Claude Code changelog October 2026' ✓ (2.1s)
+  ▶ $ curl -sS -m 20 https://raw.githubusercontent.com/anthropics/… (9 lines) ✓ (64ms)
+  ▶ $ curl -sS -m 20 https://raw.githubusercontent.com/anthropics/… (9 lines) ✓ (91ms)
+  ▶ $ curl -sS -m 20 https://raw.githubusercontent.com/anthropics/… (7 lines) ✓ (73ms)
+  ▶ read /tmp/cc.txt ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "fn sub_agent_model_label"… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 55,110p skills/yopedia/SKIL… ✓ (3ms)
+  ▶ $ BASE=https://yopedia.yolog.dev; AGENT_ID="${YOPEDIA_AGENT_TO… (10 lines) ✓ (2.1s)
+
+────────────────────────────────────────────────────────────────────────────────
+  12 tools completed in 1m 6s (12 ✓)
+
+Now finalize the research section.
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ edit session_plan/assessment.md (2 → 13 lines)
+    ## Research Findings
+  - (see below — filled after research step)
+  + Recall (yopedia): prior notes exist on changelog deltas through 2026-10-09, cost/config observability, and subprocess credential scrubbing (already informs #1064). Fresh read of the Claude Code feed (v2.1.305–2.1.307, 2026-10-20/21):
+  + - **HTTP MCP tool calls were sent twice when a connection closed mid-call; now only read-only/idempotent tools retry.** yoyo has no HTTP MCP path (stdio only), so not directly applicable; relevant to #991 retry-safety thinking only.
+  + - **"Claude named the wrong model for a subagent's work after the subagent switched to a fallback model."** yoyo's `sub_agent_model_label` (`tool_wrappers.rs:1699`) honestly says "which of the two produced this error is not observable" on the *error* path; whether the *success* path names the model that actually answered after a fallback is unprobed. Possible small probe, not a selected bug.
+  + - **An API error was replaced by "prompt is too long" + an unneeded compaction in sessions with many MCP tools** (classifier masking a real error) — same class as yoyo's error-classifier work; not probed here.
+  + - `allowedMcpServers` no longer filters managed stdio servers using `${VAR}` only in env — env-only config as a filter blind spot.
+  + - Biggest concrete gap found this session isn't a rival feature but dependency drift: yoagent already has the preset registry (`preset`/`generic`/`presets`) and yoyo's three hand tables lag it, so real current ids (gpt-5.5, glm-5.3, glm-5.3-flash) run on a 4096-token guessed cap. Saved to yopedia (job 6bbe52e0).
+  + 
+  + ## Suggested priorities (for the planner; not task files)
+  + 1. `Part of #1037`: route `anthropic_preset`/`openai_preset`/`vendor_preset` through `ModelConfig::preset(p,id).or_else(generic)` per the creator's 21:30Z comment (keep dated-Anthropic-id normalization pinned both ways; keep per-provider overrides; keep vendor-number tests; add a `presets()`-driven test). Probe after: `--provider zai --model glm-5.3 -p hi` must print no guessed-limits warning. Watch `tests/module_size.rs` headroom on agent_builder.rs (4962 lines) — net change should be negativ… [yoyo: 54 more bytes elided — diff lines are capped at 500 bytes]
+  + 2. `Part of #1062`: auth hint door — `prompt_retry.rs:524` says "not set / use --api-key" when the key came from argv/config. Small, measured on this binary.
+  + 3. `Part of #1064`: decide the split default (MCP stdio + hooks scrubbed by default; bash family stays opt-in) with @yuanhao's two near-miss tests, or keep opt-in with a present-tense reason. Loop caller line: evolve.sh runs `yoyo -p` through model bash, which stays opt-in under the split.
+  + Avoid dispatch_sub.rs this session (concentration warning).
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add -f session_plan/assessment… ✓ (2ms)
+    ## Research Findings
+  - (see below — filled after research step)
+  + Recall (yopedia): prior notes exist on changelog deltas through 2026-10-09, cost/config observability, and subprocess credential scrubbing (already informs #1064). Fresh read of the Claude Code feed (v2.1.305–2.1.307, 2026-10-20/21):
+  + - **HTTP MCP tool calls were sent twice when a connection closed mid-call; now only read-only/idempotent tools retry.** yoyo has no HTTP MCP path (stdio only), so not directly applicable; relevant to #991 retry-safety thinking only.
+  + - **"Claude named the wrong model for a subagent's work after the subagent switched to a fallback model."** yoyo's `sub_agent_model_label` (`tool_wrappers.rs:1699`) honestly says "which of the two produced this error is not observable" on the *error* path; whether the *success* path names the model that actually answered after a fallback is unprobed. Possible small probe, not a selected bug.
+  + - **An API error was replaced by "prompt is too long" + an unneeded compaction in sessions with many MCP tools** (classifier masking a real error) — same class as yoyo's error-classifier work; not probed here.
+  + - `allowedMcpServers` no longer filters managed stdio servers using `${VAR}` only in env — env-only config as a filter blind spot.
+  + - Biggest concrete gap found this session isn't a rival feature but dependency drift: yoagent already has the preset registry (`preset`/`generic`/`presets`) and yoyo's three hand tables lag it, so real current ids (gpt-5.5, glm-5.3, glm-5.3-flash) run on a 4096-token guessed cap. Saved to yopedia (job 6bbe52e0).
+  ... (6 more lines)
+ ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 13.7s (2 ✓)
+
+The Day 236 assessment is in session_plan/assessment.md, and I didn't write any task files.
+
+One thing to check: session_plan/ is gitignored, so the commit command you gave me didn't commit anything. I then used git add -f, which made commit 6659c8a1 and means the file is now tracked even though it's meant to be ignored. If you don't want it in the repo, git rm --cached session_plan/assessment.md will undo that. I haven't run it, because it changes git state.
+
+State: The harness had already confirmed build and tests pass. The last 5 evolve runs and the last 20 tasks all passed, with no reverts. The trajectory report says 5 of the last 10 self-driven changes went to the dispatch subsystem, so this session should work somewhere else.
+
+What I found by running the binary:
+• Some current models run with a 4,096-token output cap. yoagent 0.25.12 already has presets for gpt-5.5 and glm-5.3, but yoyo only uses its own three hand-kept tables in agent_builder.rs. Both ids printed the "guessed limits … max_tokens = 4096" warning. The `zai` "Known models" list is also out of date: it only names `glm-4-*`. @yuanhao's 21:30Z comment on #1037 already gives the plan: use ModelConfig::preset(provider, id) and fall back to generic(...). It has one caveat: keep handling for dated Anthropic ids like -20261001.
+• The auth-failure message is still wrong when you pass `--api-key` (#1062). After a 401 it says "OPENAI_API_KEY is not set … use --api-key", even though the key was passed with --api-key. The check at src/prompt_retry.rs:524 only looks at environment variables.
+• #1064 is our call now. @yuanhao handed back the decision on scrubbing API keys from child processes. The options are to scrub keys by default for MCP servers and hooks only, or to keep scrubbing opt-in everywhere and give a reason that answers his MCP and hooks point.
+
+Competitor research: The Claude Code feed for v2.1.305–307 had two items close to yoyo:
+• Wrong model name after a fallback: Claude Code fixed sub-agents naming the wrong model after switching to a fallback. yoyo's error message is honest about this, but I haven't checked which model it names when a fallback answers successfully.
+• Real errors hidden as "prompt is too long": Claude Code fixed real API errors being reported as "prompt is too long" in sessions with many MCP tools.
+
+I saved a short note to yopedia.
+
+Suggested order for the planner:
+1. Part of #1037: switch the model tables to yoagent's presets.
+2. Part of #1062: fix the auth-failure message.
+3. Part of #1064: decide the key-scrubbing default.
+4. Don't change dispatch_sub.rs this session.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
