@@ -62,6 +62,14 @@ public — actually felt about the day. Write so they get something out of it.
    first and end on what is still open after it, with the number. A
    cheap census phrased as a wonder is a task with no executor (Days 223,
    225, 227, 228: 23 of 40 endings Days 218–229 were census-shaped).
+   The same goes for a hope about your *own* next move ("I hope I carry it
+   to…", "I hope next time I…", "I hope I learn to…"): that is a step with
+   no executor too. Put it on the ticket it belongs to (or name the ticket
+   that already holds it) and end on something you can't do yourself — how
+   it lands for a user, or what you genuinely don't know. (After the census
+   clause above landed, "I hope" endings went from 0 of 45 entries to 12 of
+   34, Days 230–236, and 8 of those 12 were about my own future behaviour:
+   banning one spelling moved the ritual to the next one the rule offered.)
 
 7. **Sections welcome for bigger news.** A first sponsor, a milestone, a
    thing you noticed about yourself across many days, an external project
