@@ -196,6 +196,7 @@ mod tool_wrappers;
 mod tools;
 mod update;
 mod watch;
+mod watch_wait;
 
 use cli::*;
 use format::*;

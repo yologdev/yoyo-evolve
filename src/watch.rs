@@ -1427,92 +1427,50 @@ pub(crate) fn watch_progress_mode(is_tty: bool, plain_output: bool) -> WatchProg
 /// repaints.  The full combined stdout+stderr is still collected and
 /// returned for the agent to analyse.
 pub fn run_watch_command(cmd: &str) -> (bool, String) {
-    use std::io::BufRead;
-    use std::process::{Command, Stdio};
-
     let progress =
         watch_progress_mode(io::stderr().is_terminal(), crate::format::is_plain_output());
 
-    let child = Command::new("sh")
-        .args(["-c", cmd])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn();
-
-    let mut child = match child {
+    // Readers on threads, wait on `sh`, then a bounded grace (#1063) — so a
+    // backgrounded grandchild holding stdout cannot stall /watch, the fix
+    // loop, or `AutoCheckTool`'s edit call. See `watch_wait`.
+    let on_line: Box<dyn Fn(usize) + Send> = Box::new(move |count| match progress {
+        WatchProgress::Repaint => {
+            eprint!("\r{DIM}  ⟳ {count} lines...{RESET}");
+            let _ = io::stderr().flush();
+        }
+        // Announce once, when output starts — no repaints for screen readers.
+        WatchProgress::StaticLine if count == 1 => {
+            eprintln!("{}", crate::format::plain_watch_progress_line());
+        }
+        _ => {}
+    });
+    let cap = match crate::watch_wait::run_capture(cmd, on_line) {
         Ok(c) => c,
         Err(e) => return (false, format!("Failed to run watch command: {e}")),
     };
 
-    // Collect stderr lines in a background thread.
-    let stderr_pipe = child.stderr.take().expect("stderr was piped");
-    let stderr_handle = std::thread::spawn(move || {
-        let reader = io::BufReader::new(stderr_pipe);
-        let mut lines = Vec::new();
-        for line in reader.lines() {
-            match line {
-                Ok(l) => lines.push(l),
-                Err(_) => break,
-            }
-        }
-        lines
-    });
-
-    // Stream stdout on the main thread, collecting lines.
-    let mut stdout_lines: Vec<String> = Vec::new();
-    if let Some(stdout_pipe) = child.stdout.take() {
-        let reader = io::BufReader::new(stdout_pipe);
-        for line in reader.lines() {
-            match line {
-                Ok(l) => {
-                    stdout_lines.push(l);
-                    match progress {
-                        WatchProgress::Repaint => {
-                            let count = stdout_lines.len();
-                            eprint!("\r{DIM}  ⟳ {count} lines...{RESET}");
-                            let _ = io::stderr().flush();
-                        }
-                        WatchProgress::StaticLine => {
-                            // Announce once, when output starts arriving —
-                            // no repaints for screen readers.
-                            if stdout_lines.len() == 1 {
-                                eprintln!("{}", crate::format::plain_watch_progress_line());
-                            }
-                        }
-                        WatchProgress::Silent => {}
-                    }
-                }
-                Err(_) => break,
-            }
-        }
-    }
-
-    let stderr_lines = stderr_handle.join().unwrap_or_default();
-
     // Clear the progress indicator if we repainted one (plain mode's static
     // line needs no clearing — clearing would itself be a `\r` repaint).
-    if progress == WatchProgress::Repaint && !stdout_lines.is_empty() {
+    if progress == WatchProgress::Repaint && !cap.stdout_lines.is_empty() {
         eprint!("\r{DIM}                          {RESET}\r");
         let _ = io::stderr().flush();
     }
 
-    let status = match child.wait() {
-        Ok(s) => s.success(),
-        Err(_) => false,
-    };
-
     // Combine stdout + stderr the same way the old implementation did.
-    let stdout_text = stdout_lines.join("\n");
-    let stderr_text = stderr_lines.join("\n");
-    let combined = if stderr_text.is_empty() {
+    let stdout_text = cap.stdout_lines.join("\n");
+    let stderr_text = cap.stderr_lines.join("\n");
+    let mut combined = if stderr_text.is_empty() {
         stdout_text
     } else if stdout_text.is_empty() {
         stderr_text
     } else {
         format!("{stdout_text}\n{stderr_text}")
     };
+    if cap.held_open {
+        combined.push_str("\n(a background process still holds the output; it keeps running, further output is not shown)");
+    }
 
-    (status, combined)
+    (cap.success, combined)
 }
 
 /// Try to extract a project learning from a successful watch-mode fix.
