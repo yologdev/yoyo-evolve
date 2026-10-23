@@ -35,7 +35,7 @@ yoyo supports 13+ providers out of the box. Pick the one that fits your budget a
 |----------|---------|---------------|-------|
 | `anthropic` | `ANTHROPIC_API_KEY` | `claude-opus-5-5` | Default. Best overall quality. |
 | `openai` | `OPENAI_API_KEY` | `gpt-6-sol` | GPT-6 presets (sol/astra/luna) and older GPT ids |
-| `google` | `GEMINI_API_KEY` or `GOOGLE_API_KEY` | `gemini-2.0-flash` | Gemini models |
+| `google` | `GEMINI_API_KEY` or `GOOGLE_API_KEY` | `gemini-3.8-flash` | Gemini models |
 | `openrouter` | `OPENROUTER_API_KEY` | `anthropic/claude-sonnet-4-20250514` | Multi-provider gateway |
 | `deepseek` | `DEEPSEEK_API_KEY` | `deepseek-chat` | Very cost-effective |
 | `groq` | `GROQ_API_KEY` | `llama-3.3-70b-versatile` | Fast inference |

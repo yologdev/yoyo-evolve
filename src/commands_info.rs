@@ -2687,8 +2687,15 @@ More text.
     #[test]
     fn test_model_context_window_new_models() {
         // Gemini 3.x — 1M
-        assert_eq!(model_context_window("gemini-3.0-pro"), Some(1_048_576));
-        assert_eq!(model_context_window("gemini-3.0-flash"), Some(1_048_576));
+        // Ids from Google's model page; `gemini-3.0-*` never appeared there (#1021).
+        assert_eq!(
+            model_context_window("gemini-3.1-pro-preview"),
+            Some(1_048_576)
+        );
+        assert_eq!(
+            model_context_window("gemini-3-flash-preview"),
+            Some(1_048_576)
+        );
 
         // Llama 4 variants — 128k
         assert_eq!(model_context_window("llama-4-maverick-17b"), Some(128_000));

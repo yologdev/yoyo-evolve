@@ -173,8 +173,8 @@ pub const KNOWN_MODELS: &[&str] = &[
     "o3-mini",
     "o4-mini",
     "o4-mini-high",
-    "gemini-3.0-pro",
-    "gemini-3.0-flash",
+    "gemini-4-argon",
+    "gemini-3.8-flash",
     "gemini-2.5-pro",
     "gemini-2.5-flash",
     "gemini-2.5-flash-lite",
@@ -1614,7 +1614,7 @@ mod tests {
         // Switch to google → should use gemini default
         handle_provider_switch("google", &mut config, &mut agent);
         assert_eq!(config.provider, "google");
-        assert_eq!(config.model, "gemini-2.5-flash");
+        assert_eq!(config.model, "gemini-3.8-flash");
     }
 
     #[test]

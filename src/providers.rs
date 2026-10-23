@@ -116,8 +116,6 @@ pub fn known_models_for_provider(provider: &str) -> &'static [&'static str] {
         "google" => &[
             "gemini-4-argon",
             "gemini-3.8-flash",
-            "gemini-3.0-pro",
-            "gemini-3.0-flash",
             "gemini-2.5-pro",
             "gemini-2.5-flash",
             "gemini-2.5-flash-lite",
@@ -247,7 +245,11 @@ pub fn default_model_for_provider(provider: &str) -> String {
         // slice of #1037, not yet made.
         // Sol over astra/luna because sol is the tier the reference peer defaults to.
         "openai" => "gpt-6-sol".into(),
-        "google" => "gemini-2.5-flash".into(),
+        // The google default is `gemini-3.8-flash` (#1021, Day 237) by the same
+        // three checks: `vendor_preset` covers it, the bundled table prices it,
+        // and its request default fits the declared ceiling (65,536). The old
+        // `gemini-2.5-flash` has no yoagent preset, so it ran on guessed limits.
+        "google" => "gemini-3.8-flash".into(),
         "openrouter" => "anthropic/claude-sonnet-4-6".into(),
         "ollama" => "llama3.2".into(),
         "xai" => "grok-4".into(),
@@ -441,6 +443,39 @@ mod tests {
             model_is_known_for_provider("openai", &model),
             "the default must not trip the unknown-model warning"
         );
+    }
+
+    /// The google default gets the same three checks (#1021, Day 237):
+    /// vendor preset, priced, within the declared output ceiling. Written
+    /// over whatever the default is, so moving it to an unchecked id goes red.
+    /// `gemini-2.5-flash` (the old default) fails the first check: yoagent
+    /// 0.25 has google presets only for `gemini-4-argon` and `gemini-3.8-flash`.
+    #[test]
+    fn google_default_model_is_preset_priced_and_within_its_output_maximum() {
+        let model = default_model_for_provider("google");
+        assert_eq!(model, "gemini-3.8-flash");
+        let preset = crate::agent_builder::vendor_preset("google", &model)
+            .expect("the google default must have a vendor preset, or it runs on guessed limits");
+        assert!(
+            preset.cost.is_some(),
+            "the google default must be priced, or /cost reports an estimate"
+        );
+        if let Some(max) =
+            crate::agent_builder::declared_output_ceiling("google", &model, preset.max_tokens)
+        {
+            assert!(
+                preset.max_tokens <= max,
+                "a no-config run sends {} max_tokens, above {model}'s {max}",
+                preset.max_tokens
+            );
+        }
+        assert!(
+            model_is_known_for_provider("google", &model),
+            "the default must not trip the unknown-model warning"
+        );
+        // Near miss: the old default really does fail check (a), so the move
+        // was forced by the checks, not by taste.
+        assert!(crate::agent_builder::vendor_preset("google", "gemini-2.5-flash").is_none());
     }
 
     #[test]

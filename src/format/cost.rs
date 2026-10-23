@@ -189,10 +189,10 @@ fn builtin_model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
     // Gemini 3.x (estimated, based on 2.5 pricing tiers)
     if model.contains("gemini-3") {
         if model.contains("pro") {
-            return Some((1.25, 0.0, 0.0, 10.00)); // gemini-3.0-pro (estimated)
+            return Some((1.25, 0.0, 0.0, 10.00)); // gemini-3.x pro, e.g. gemini-3-pro-preview (estimated)
         }
         // flash variants
-        return Some((0.15, 0.0, 0.0, 0.60)); // gemini-3.0-flash (estimated)
+        return Some((0.15, 0.0, 0.0, 0.60)); // gemini-3.x flash, e.g. gemini-3-flash-preview (estimated)
     }
     if model.contains("gemini-2.5-pro") {
         return Some((1.25, 0.0, 0.0, 10.00));
@@ -2745,16 +2745,18 @@ mod tests {
 
     #[test]
     fn test_pricing_gemini_30_pro() {
-        assert!(model_pricing("gemini-3.0-pro").is_some());
-        let (inp, _, _, out) = model_pricing("gemini-3.0-pro").unwrap();
+        // Was `gemini-3.0-pro`, an id Google never listed (#1021, Day 237).
+        assert!(model_pricing("gemini-3-pro-preview").is_some());
+        let (inp, _, _, out) = model_pricing("gemini-3-pro-preview").unwrap();
         assert!((inp - 1.25).abs() < 0.001);
         assert!((out - 10.00).abs() < 0.001);
     }
 
     #[test]
     fn test_pricing_gemini_30_flash() {
-        assert!(model_pricing("gemini-3.0-flash").is_some());
-        let (inp, _, _, out) = model_pricing("gemini-3.0-flash").unwrap();
+        // Was `gemini-3.0-flash`, an id Google never listed (#1021, Day 237).
+        assert!(model_pricing("gemini-3-flash-preview").is_some());
+        let (inp, _, _, out) = model_pricing("gemini-3-flash-preview").unwrap();
         assert!((inp - 0.15).abs() < 0.001);
         assert!((out - 0.60).abs() < 0.001);
     }

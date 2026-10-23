@@ -273,12 +273,11 @@ const PROVIDER_KEYS: &[&str] = &[
 /// one model, and a wrong entry would compare two different models' prices and
 /// call the difference drift — so this stays a hand-checked table rather than a
 /// fuzzy matcher over ids.
-const ID_ALIASES: &[(&str, &str)] = &[
-    // Google names its Gemini 3 family `gemini-3-*`; yoyo's own provider table
-    // ships `gemini-3.0-*`. Same model, two spellings.
-    ("gemini-3-pro", "gemini-3.0-pro"),
-    ("gemini-3-flash", "gemini-3.0-flash"),
-];
+///
+/// Empty since Day 237 (#1021): it held `gemini-3-pro`/`-flash` -> `gemini-3.0-*`,
+/// but no yoyo list ships `gemini-3.0-*` any more (Google's model page never
+/// named them), so the catalogue spelling is now the one yoyo prices.
+const ID_ALIASES: &[(&str, &str)] = &[];
 
 /// Strip a release-date suffix and any `provider/` prefix from a catalogue id.
 ///
@@ -911,8 +910,9 @@ fn the_mapping_covers_shipped_ids_and_refuses_unshipped_ones() {
     );
     assert_eq!(
         yoyo_id_for("google", "gemini-3-pro"),
-        Some("gemini-3.0-pro"),
-        "the alias table exists for exactly this: two spellings of one model"
+        Some("gemini-3-pro"),
+        "Google's own spelling is priced as itself; the old `gemini-3.0-pro` alias \
+         target left the known lists on Day 237 (#1021)"
     );
     // Superseded expectation (#1003): this pinned `None` — "a catalogue model yoyo
     // does not ship is a coverage gap" — while the widened `deepseek-flash` arm
@@ -1162,8 +1162,8 @@ fn estimated_arms_are_audited_by_the_same_path_with_no_skip_set() {
         ("openai", "gpt-5"),
         ("openai", "gpt-5-mini"),
         ("openai", "codex-mini"),
-        ("google", "gemini-3.0-pro"),
-        ("google", "gemini-3.0-flash"),
+        ("google", "gemini-3-pro-preview"),
+        ("google", "gemini-3-flash-preview"),
         ("xai", "grok-4"),
         ("xai", "grok-4-mini"),
         ("groq", "llama-4-maverick-17b"),
