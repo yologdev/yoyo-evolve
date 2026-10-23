@@ -486,34 +486,54 @@ pub fn print_doctor_report(checks: &[DoctorCheck]) {
     }
 }
 
-/// Build a contextual handoff hint from a slice of doctor checks.
+/// Build the footer printed under the doctor rows when anything is not Pass.
 ///
-/// Contextual guidance beats reference guidance: after `/doctor` reports its
-/// checks, if anything is Warn or Fail, point the user at the command that
-/// acts on it instead of leaving them to find `/fix` and `/health` on their
-/// own. Returns `None` on a fully-green run so the clean output stays pristine.
+/// Returns `None` on a fully-green run so the clean output stays pristine.
 ///
-/// The wording is deliberately product-safe — no cargo/clippy/CI assumptions,
-/// since the checks themselves already adapt per project type.
+/// #1074: this used to say "Try /fix to attempt repairs, or /health for a full
+/// check." for any non-Pass row. That pointer was wrong for every row doctor
+/// has: `/fix` re-runs the project's build/lint/test commands
+/// (`health_checks_for_project`), and no doctor row is one of those (version,
+/// git, API key, config, context, curl, memory dir, RTK, toolchain presence,
+/// skill cost). It was also printed to shell `yoyo doctor` users, who cannot
+/// type a slash command. So the footer names no command: it gives honest
+/// counts (failed vs warning, since both are counted) and points at the rows,
+/// which already carry the detail. If a doctor row ever becomes a check `/fix`
+/// re-runs, this is where a pointer would go, and it would then need to know
+/// whether it is printing to the REPL or the shell.
 pub fn doctor_handoff_hint(checks: &[DoctorCheck]) -> Option<String> {
-    let issues = checks
+    let fails = checks
         .iter()
-        .filter(|c| c.status != DoctorStatus::Pass)
+        .filter(|c| c.status == DoctorStatus::Fail)
         .count();
-    doctor_handoff_hint_from_count(issues)
+    let warns = checks
+        .iter()
+        .filter(|c| c.status == DoctorStatus::Warn)
+        .count();
+    doctor_handoff_hint_from_counts(fails, warns)
 }
 
-/// Format the handoff hint from a raw issue count (Warn + Fail).
+/// Format the footer from raw Fail and Warn counts.
 ///
 /// Split out so it's unit-testable without constructing `DoctorCheck`s.
-fn doctor_handoff_hint_from_count(issues: usize) -> Option<String> {
-    if issues == 0 {
-        return None;
-    }
-    let noun = if issues == 1 { "issue" } else { "issues" };
-    Some(format!(
-        "→ {issues} {noun} found. Try /fix to attempt repairs, or /health for a full check."
-    ))
+fn doctor_handoff_hint_from_counts(fails: usize, warns: usize) -> Option<String> {
+    let failed = match fails {
+        0 => None,
+        1 => Some("1 check failed".to_string()),
+        n => Some(format!("{n} checks failed")),
+    };
+    let warned = match warns {
+        0 => None,
+        1 => Some("1 warning".to_string()),
+        n => Some(format!("{n} warnings")),
+    };
+    let counts = match (failed, warned) {
+        (None, None) => return None,
+        (Some(f), None) => f,
+        (None, Some(w)) => w,
+        (Some(f), Some(w)) => format!("{f}, {w}"),
+    };
+    Some(format!("→ {counts}. See each row above for details."))
 }
 
 /// Handle the `/doctor` command.
@@ -524,9 +544,9 @@ pub fn handle_doctor(
 ) {
     let checks = run_doctor_checks(provider, model, restrictions);
     print_doctor_report(&checks);
-    // Contextual guidance beats reference guidance: after naming the fix
-    // command in the handoff hint, take the last step Claude Code takes — offer
-    // to apply the one safe, well-defined fix when one exists. Interactive-only
+    // Contextual guidance beats reference guidance: after the report, take the
+    // last step Claude Code takes — offer to apply the one safe, well-defined
+    // fix when one exists. Interactive-only
     // (TTY-gated) so piped/harness mode stays report-only and never blocks.
     maybe_offer_fix(&checks);
 }
@@ -548,7 +568,7 @@ pub struct DoctorFix {
 /// conservative (retreat size): we only return a fix for checks whose repair is
 /// well-defined, additive, non-destructive, and project-agnostic. Today that's
 /// exactly one — a missing `.yoyo/` memory dir, fixed by creating it. Every
-/// other Warn/Fail is left to the handoff hint (`/fix`, `/init`, …) because it
+/// other Warn/Fail is left to its row's own detail text because it
 /// either needs the agent or isn't a single safe shell command.
 ///
 /// Returns `None` on a green run and for any check we can't safely auto-fix, so
@@ -1631,7 +1651,7 @@ mod tests {
 
     #[test]
     fn test_handoff_hint_all_green_is_none() {
-        assert_eq!(doctor_handoff_hint_from_count(0), None);
+        assert_eq!(doctor_handoff_hint_from_counts(0, 0), None);
         let checks = vec![check(DoctorStatus::Pass), check(DoctorStatus::Pass)];
         assert_eq!(doctor_handoff_hint(&checks), None);
     }
@@ -1706,26 +1726,91 @@ mod tests {
     }
 
     #[test]
-    fn test_handoff_hint_single_warn_mentions_fix() {
-        let hint = doctor_handoff_hint_from_count(1).expect("1 issue -> Some");
-        assert!(hint.contains("/fix"), "hint should point at /fix: {hint}");
-        assert!(
-            hint.contains("/health"),
-            "hint should point at /health: {hint}"
-        );
-        assert!(hint.contains('1'), "hint should name the count: {hint}");
-        // singular noun
-        assert!(hint.contains("1 issue found"), "singular noun: {hint}");
+    fn test_handoff_hint_single_warn_names_count_not_fix() {
+        // Was `..._mentions_fix` until #1074: that test pinned the bug. No
+        // doctor row is a check `/fix` re-runs, so the hint must not name it.
+        let hint = doctor_handoff_hint_from_counts(0, 1).expect("1 warn -> Some");
+        assert_eq!(hint, "→ 1 warning. See each row above for details.");
+        assert!(!hint.contains("/fix"), "no /fix pointer: {hint}");
     }
 
     #[test]
     fn test_handoff_hint_multiple_fails_names_count() {
-        let hint = doctor_handoff_hint_from_count(2).expect("2 issues -> Some");
-        assert!(
-            hint.contains('2'),
-            "hint should mention issue count = 2: {hint}"
-        );
-        assert!(hint.contains("2 issues found"), "plural noun: {hint}");
+        let hint = doctor_handoff_hint_from_counts(2, 0).expect("2 fails -> Some");
+        assert_eq!(hint, "→ 2 checks failed. See each row above for details.");
+    }
+
+    /// #1074: the footer as a table over real doctor rows. `print_doctor_report`
+    /// is the one renderer behind both the REPL `/doctor` and the shell
+    /// `yoyo doctor` (dispatch_sub.rs calls the same `handle_doctor`), so one
+    /// expected string per row set covers both surfaces, and the property that
+    /// makes that safe is pinned separately below: the hint names no command.
+    #[test]
+    fn test_handoff_hint_table_over_real_rows() {
+        use DoctorStatus::*;
+        let fresh_dir_trio = vec![
+            named_check("Version", Pass),
+            named_check("Config file", Warn),
+            named_check("Project context", Warn),
+            named_check("Memory dir", Warn),
+        ];
+        let missing_tool_and_key = vec![
+            named_check("API key", Fail),
+            named_check("Git", Fail),
+            named_check("Config file", Warn),
+        ];
+        let one_of_each = vec![
+            named_check("Git", Fail),
+            named_check("Curl", Warn),
+            named_check("RTK", Pass),
+        ];
+        let all_pass = vec![named_check("Version", Pass), named_check("Git", Pass)];
+        let table: Vec<(&str, Vec<DoctorCheck>, Option<&str>)> = vec![
+            (
+                "fresh git-init dir: three warnings",
+                fresh_dir_trio,
+                Some("→ 3 warnings. See each row above for details."),
+            ),
+            (
+                "fails and a warning",
+                missing_tool_and_key,
+                Some("→ 2 checks failed, 1 warning. See each row above for details."),
+            ),
+            (
+                "singular both",
+                one_of_each,
+                Some("→ 1 check failed, 1 warning. See each row above for details."),
+            ),
+            // Near-miss / whole regression surface: a green run prints no
+            // footer at all, exactly as before #1074.
+            ("all pass", all_pass, None),
+            ("no rows", vec![], None),
+        ];
+        for (label, rows, want) in table {
+            let got = doctor_handoff_hint(&rows);
+            assert_eq!(got.as_deref(), want, "row set: {label}");
+        }
+    }
+
+    /// #1074: no doctor row is a build/lint/test check (those are what `/fix`
+    /// re-runs), and the shell `yoyo doctor` reader cannot type a slash
+    /// command, so the footer names no command at all, for any status mix.
+    #[test]
+    fn test_handoff_hint_never_names_a_command() {
+        for fails in 0..4 {
+            for warns in 0..4 {
+                let Some(hint) = doctor_handoff_hint_from_counts(fails, warns) else {
+                    assert_eq!((fails, warns), (0, 0), "only all-green is silent");
+                    continue;
+                };
+                for cmd in ["/fix", "/health", "/init", "/remember", "yoyo "] {
+                    assert!(
+                        !hint.contains(cmd),
+                        "footer must not name {cmd} ({fails} fail, {warns} warn): {hint}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
@@ -1737,13 +1822,18 @@ mod tests {
             check(DoctorStatus::Pass),
         ];
         let hint = doctor_handoff_hint(&checks).expect("2 non-pass -> Some");
-        assert!(hint.contains('2'), "should count only Warn+Fail: {hint}");
+        // Since #1074 the two non-Pass kinds are counted apart, and the two
+        // Pass rows are in neither count.
+        assert_eq!(
+            hint, "→ 1 check failed, 1 warning. See each row above for details.",
+            "should count only Warn+Fail"
+        );
     }
 
     #[test]
     fn test_handoff_hint_is_product_safe() {
         // No language/toolchain assumptions in the hint text.
-        let hint = doctor_handoff_hint_from_count(3).expect("Some");
+        let hint = doctor_handoff_hint_from_counts(1, 2).expect("Some");
         let lower = hint.to_lowercase();
         for forbidden in ["cargo", "clippy", "rust", "ci", "npm"] {
             assert!(

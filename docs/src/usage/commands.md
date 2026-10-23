@@ -35,9 +35,10 @@ All commands start with `/`. Type `/help` inside yoyo to see the full list.
 >
 > `doctor` honors `--provider` and `--model` if you want to point it at a non-default setup
 > (e.g. `yoyo doctor --provider openai`). Inside the REPL, the same checks are available
-> as `/doctor` and `/health`. When `/doctor` finds any Warn/Fail check, it prints a one-line
-> handoff pointing you at `/fix` (to attempt repairs) or `/health` (for a full check) — a
-> clean run stays quiet.
+> as `/doctor` and `/health`. When `doctor` finds any Warn/Fail check, it prints a one-line
+> count (e.g. `→ 3 warnings. See each row above for details.`); each row's own text carries
+> its detail. It does not point at `/fix`, because `/fix` re-runs your project's
+> build/lint/test commands and none of doctor's checks are those. A clean run stays quiet.
 >
 > `doctor` also reports a **Skill context cost** check: it sums the `SKILL.md` bytes of the
 > skills discovered under `.yoyo/skills/`, `~/.yoyo/skills/` and `/skill install`'s
