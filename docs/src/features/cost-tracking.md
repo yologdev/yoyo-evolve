@@ -111,7 +111,8 @@ tier applies. Haiku 5.5 is the only model yoyo currently prices with a tier.
 | Model | Input | Output |
 |-------|-------|--------|
 | Gemini 2.5 Pro | $1.25/MTok | $10/MTok |
-| Gemini 2.5 Flash | $0.15/MTok | $0.60/MTok |
+| Gemini 2.5 Flash | $0.30/MTok | $2.50/MTok |
+| Gemini 2.5 Flash-Lite | $0.10/MTok | $0.40/MTok |
 | Gemini 2.0 Flash | $0.10/MTok | $0.40/MTok |
 
 ### DeepSeek
@@ -126,8 +127,10 @@ Two things to read these numbers with. First, they are **off-peak** prices:
 DeepSeek doubles them on weekdays 01:00–04:00 and 06:00–10:00 UTC, so a cost
 yoyo reports for a DeepSeek session is a **lower bound** — during a peak window
 the true cost is up to 2x what is shown. Second, this table is a set of
-**hardcoded literals with no drift detection yet** (see #937): when a provider
-changes its prices, nothing here notices. `deepseek-v4-flash` (the id the evolve
+**hardcoded literals**: when a provider changes its prices, nothing changes
+here automatically. A drift alarm exists but is opt-in, because it fetches
+models.dev over the network: `cargo test --bin yoyo audit_table_against_models_dev
+-- --ignored` lists every row that disagrees. Open drift is tracked in #1012. `deepseek-v4-flash` (the id the evolve
 loop runs on) is a legacy name DeepSeek still serves as V4.1-Flash, so it is
 priced as `deepseek-flash`; `deepseek-r1`, `deepseek-v3` and `deepseek-v4-pro`
 are carried unchanged and, at the time of writing, have not been checked against
@@ -137,7 +140,7 @@ a second source.
 
 | Model | Input | Output |
 |-------|-------|--------|
-| Mistral Large | $2/MTok | $6/MTok |
+| Mistral Large | $0.50/MTok | $1.50/MTok |
 | Mistral Small | $0.10/MTok | $0.30/MTok |
 | Codestral | $0.30/MTok | $0.90/MTok |
 
