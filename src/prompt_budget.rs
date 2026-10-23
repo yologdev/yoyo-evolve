@@ -236,10 +236,14 @@ pub fn audit_log_usage(
     // is #848's "works in json mode" defect wearing a different hat.
     // `estimate_cost` is pure, so the second call is free.
     record_run_cost(crate::format::estimate_cost(usage, model));
+    // #1073: drained whether or not audit is on, so the store never outlives
+    // the run it describes. `usage` above stays this agent's OWN spend.
+    let sub_agents = crate::prompt::take_sub_agent_spend();
 
     audit_log_usage_when(
         is_audit_enabled(),
         usage,
+        &sub_agents,
         model,
         duration,
         num_turns,
@@ -260,6 +264,7 @@ pub fn audit_log_usage(
 pub(crate) fn audit_log_usage_when(
     enabled: bool,
     usage: &yoagent::Usage,
+    sub_agents: &yoagent::SubAgentSpend,
     model: &str,
     duration: Duration,
     num_turns: usize,
@@ -268,7 +273,10 @@ pub(crate) fn audit_log_usage_when(
     if !enabled {
         return;
     }
-    let record = usage_audit_record(usage, model, duration, num_turns, is_error);
+    let record = crate::prompt::attach_sub_agent_spend(
+        usage_audit_record(usage, model, duration, num_turns, is_error),
+        sub_agents,
+    );
     let _ = write_audit_line(&record);
 }
 
@@ -1100,11 +1108,55 @@ mod tests {
         audit_log_usage_when(
             true,
             usage,
+            &yoagent::SubAgentSpend::default(),
             model,
             Duration::from_millis(ms),
             turns,
             is_error,
         );
+    }
+
+    /// #1073, at the emission point (the line actually written): a run that
+    /// delegated gets a `sub_agents` object, and its own-spend fields are
+    /// exactly what a run that delegated nothing writes. The near-miss — no
+    /// delegation, no `sub_agents` key — is the second record.
+    #[test]
+    fn usage_record_carries_sub_agent_spend_apart_from_own_spend() {
+        with_audit_tempdir(|dir| {
+            let mut spend = yoagent::SubAgentSpend::default();
+            spend.usage.input = 4_000;
+            spend.usage.output = 500;
+            spend.cost_usd = Some(0.75);
+            spend.runs = 2;
+            for s in [&spend, &yoagent::SubAgentSpend::default()] {
+                audit_log_usage_when(
+                    true,
+                    &sample_usage(),
+                    s,
+                    "claude-sonnet-4-5",
+                    Duration::from_millis(10),
+                    3,
+                    false,
+                );
+            }
+            let mut lines = audit_lines(dir);
+            assert_eq!(lines.len(), 2, "{lines:?}");
+            assert_eq!(
+                lines[0]["sub_agents"],
+                serde_json::json!({
+                    "runs": 2, "input_tokens": 4_000, "output_tokens": 500,
+                    "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0,
+                    "cost_usd": 0.75,
+                })
+            );
+            assert!(lines[1].get("sub_agents").is_none(), "{}", lines[1]);
+            for l in lines.iter_mut() {
+                l.as_object_mut().unwrap().remove("ts");
+            }
+            let own = lines[0].as_object_mut().unwrap().remove("sub_agents");
+            assert!(own.is_some());
+            assert_eq!(lines[0], lines[1], "own spend must not absorb delegated");
+        });
     }
 
     #[test]
@@ -1244,6 +1296,7 @@ mod tests {
             audit_log_usage_when(
                 false,
                 &sample_usage(),
+                &yoagent::SubAgentSpend::default(),
                 "claude-sonnet-4-5",
                 Duration::from_secs(1),
                 1,

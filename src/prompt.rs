@@ -22,7 +22,9 @@ mod sigterm;
 pub use interrupt::{interrupted_exit_code, mark_single_shot, was_interrupted};
 mod stream_external_servers;
 mod stream_session_restored;
+mod sub_agent_spend;
 pub(crate) use stream_session_restored::record_session_restored;
+pub(crate) use sub_agent_spend::{attach_sub_agent_spend, take_sub_agent_spend};
 mod turn_prefix;
 mod write_preview;
 use retry_after_partial::{retry_blocked_by_streamed_partial, RETRY_SKIPPED_AFTER_PARTIAL_NOTE};
@@ -1093,6 +1095,7 @@ async fn handle_prompt_events(
                         state.handle_tool_execution_start(tool_call_id, tool_name, args, changes);
                     }
                     AgentEvent::ToolExecutionEnd { tool_call_id, is_error, result, tool_name, .. } => {
+                        sub_agent_spend::record_sub_agent_spend(&result); // #1073, both doors
                         state.handle_tool_execution_end(tool_call_id, tool_name, is_error, result, changes);
                     }
                     AgentEvent::ToolExecutionUpdate { tool_call_id, partial_result, .. } => {
@@ -1975,6 +1978,7 @@ async fn handle_stream_json_events(
                     AgentEvent::ToolExecutionEnd {
                         tool_call_id, tool_name, is_error, result,
                     } => {
+                        sub_agent_spend::record_sub_agent_spend(result); // #1073, both doors
                         // #808: a tool just finished — same clearing rule as the
                         // display path, so the two cannot drift.
                         text_since_last_tool.clear();
