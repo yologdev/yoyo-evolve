@@ -74,12 +74,10 @@ pub fn get_git_status_context() -> Option<String> {
 /// Directory-parameterized variant of [`get_git_status_context`].
 /// Lets tests point at a hermetic temp git repo instead of the live CWD.
 pub fn get_git_status_context_from(dir: &std::path::Path) -> Option<String> {
-    let branch = git_branch_in(dir)?;
-
-    let uncommitted = crate::git::run_git_in_dir(dir, &["status", "--porcelain"])
-        .ok()
-        .map(|s| s.lines().filter(|l| !l.is_empty()).count())
-        .unwrap_or(0);
+    // `status` failing means "not a repo"; a detached HEAD is still a repo (#1072).
+    let status = crate::git::run_git_in_dir(dir, &["status", "--porcelain"]).ok()?;
+    let branch = git_branch_in(dir).unwrap_or_else(|| "(detached HEAD)".to_string());
+    let uncommitted = status.lines().filter(|l| !l.is_empty()).count();
 
     let staged = crate::git::run_git_in_dir(dir, &["diff", "--cached", "--name-only"])
         .ok()
@@ -106,10 +104,9 @@ pub fn get_git_status_context_from(dir: &std::path::Path) -> Option<String> {
     Some(result)
 }
 
-/// Get the current branch name for a specific directory.
-/// Directory-parameterized sibling of `crate::git::git_branch()`.
+/// Branch name for `dir`; same reader as `crate::git::git_branch()` (git_branch.rs).
 fn git_branch_in(dir: &std::path::Path) -> Option<String> {
-    crate::git::run_git_in_dir(dir, &["rev-parse", "--abbrev-ref", "HEAD"]).ok()
+    crate::git::git_branch::current_branch_in(dir)
 }
 
 /// Get the most recently changed files from git log, deduplicated.
@@ -1050,7 +1047,7 @@ mod tests {
     fn test_get_git_status_context_contains_branch() {
         let result = get_git_status_context().expect("Should be in a git repo");
         // Get the actual branch name to verify it's in the output
-        let branch = crate::git::git_branch().expect("Should get branch name");
+        let branch = crate::git::git_branch().unwrap_or_else(|| "(detached HEAD)".into());
         assert!(
             result.contains(&format!("Branch: {branch}")),
             "Should contain actual branch name: {branch}"

@@ -241,9 +241,10 @@ pub fn run_git_output(args: &[&str]) -> Result<std::process::Output, String> {
         .map_err(|e| format!("git not found: {e}"))
 }
 
-/// Get the current git branch name, if we're in a git repo.
+#[path = "git_branch.rs"]
+pub(crate) mod git_branch;
 pub fn git_branch() -> Option<String> {
-    run_git(&["rev-parse", "--abbrev-ref", "HEAD"]).ok()
+    git_branch::current_branch_in(std::path::Path::new("."))
 }
 
 /// Get staged changes (git diff --cached).
