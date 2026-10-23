@@ -1467,3 +1467,67 @@ fn reconciled_openai_live_rows_bill_the_models_dev_price() {
     // which models.dev does not carry (not audited), so this slice left it alone.
     assert_eq!(price_of("gpt-5.5-mini"), Some((0.40, 0.0, 0.0, 1.60)));
 }
+
+/// #1012's second live slice: `mistral-large-latest`, `gemini-2.5-flash` and
+/// `gemini-2.5-flash-lite` are user-pickable (`known_models_for_provider`) and now
+/// carry models.dev's prices (2026-10-23), cache read included. Read through
+/// `price_of`, the same resolver `/cost` uses. `gemini-2.5-flash-lite` got its own
+/// arm because the `contains("gemini-2.5-flash")` arm used to swallow it.
+#[test]
+fn reconciled_mistral_and_gemini_live_rows_bill_the_models_dev_price() {
+    let rows: [(&str, &str, Rates); 3] = [
+        ("mistral", "mistral-large-latest", (0.5, 0.0, 0.05, 1.5)),
+        ("google", "gemini-2.5-flash", (0.3, 0.0, 0.03, 2.5)),
+        ("google", "gemini-2.5-flash-lite", (0.1, 0.0, 0.01, 0.4)),
+    ];
+    for (provider, id, expected) in rows {
+        assert!(
+            crate::providers::known_models_for_provider(provider).contains(&id),
+            "{id} is no longer in known_models_for_provider(\"{provider}\") — it was reconciled \
+             because it was LIVE (#1012); re-check the split before trusting the order"
+        );
+        let got = price_of(id).unwrap_or_else(|| panic!("{id} must be priced by /cost"));
+        assert!(
+            cells_within(got, expected, 1e-9),
+            "{id}: /cost resolves {got:?}, models.dev (2026-10-23) says {expected:?}"
+        );
+    }
+    // Near-misses: the dated mistral-large-2512 shares the arm and the price; and
+    // mistral-small-latest is deliberately NOT in this slice (it needs an exact arm,
+    // because mistral-small-2506 still matches the old price), so it stays put.
+    assert_eq!(price_of("mistral-large-2512"), Some((0.5, 0.0, 0.05, 1.5)));
+    assert_eq!(
+        price_of("mistral-small-latest"),
+        Some((0.10, 0.0, 0.0, 0.30))
+    );
+}
+
+/// Moved from `cost.rs`'s in-file tests (module-size gate) and re-priced for #1012:
+/// gemini-2.5-flash is $0.30/MTok input, $2.50/MTok output (models.dev, 2026-10-23).
+#[test]
+fn test_estimate_cost_gemini_25_flash() {
+    let usage = yoagent::Usage {
+        input: 1_000_000,
+        output: 1_000_000,
+        cache_read: 0,
+        cache_write: 0,
+        total_tokens: 0,
+    };
+    let cost = super::estimate_cost(&usage, "gemini-2.5-flash").unwrap();
+    assert!((cost - 2.80).abs() < 0.001, "gemini-2.5-flash cost: {cost}");
+}
+
+/// Moved from `cost.rs`'s in-file tests (module-size gate) and re-priced for #1012:
+/// mistral-large is $0.50/MTok input, $1.50/MTok output (models.dev, 2026-10-23).
+#[test]
+fn test_estimate_cost_mistral_large() {
+    let usage = yoagent::Usage {
+        input: 1_000_000,
+        output: 100_000,
+        cache_read: 0,
+        cache_write: 0,
+        total_tokens: 0,
+    };
+    let cost = super::estimate_cost(&usage, "mistral-large-latest").unwrap();
+    assert!((cost - 0.65).abs() < 0.001, "mistral-large cost: {cost}");
+}

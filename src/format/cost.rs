@@ -197,8 +197,12 @@ fn builtin_model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
     if model.contains("gemini-2.5-pro") {
         return Some((1.25, 0.0, 0.0, 10.00));
     }
+    // #1012: models.dev prices (2026-10-23); `-lite` must precede the flash arm that contains it.
+    if model.contains("gemini-2.5-flash-lite") {
+        return Some((0.10, 0.0, 0.01, 0.40));
+    }
     if model.contains("gemini-2.5-flash") {
-        return Some((0.15, 0.0, 0.0, 0.60));
+        return Some((0.30, 0.0, 0.03, 2.50));
     }
     if model.contains("gemini-2.0-flash") {
         return Some((0.10, 0.0, 0.0, 0.40));
@@ -260,7 +264,7 @@ fn builtin_model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
     // ── Mistral ───────────────────────────────────────────────────────
     // https://mistral.ai/products#pricing
     if model.contains("mistral-large") {
-        return Some((2.00, 0.0, 0.0, 6.00));
+        return Some((0.50, 0.0, 0.05, 1.50)); // #1012: models.dev (2026-10-23)
     }
     if model.contains("mistral-small") || model.contains("mistral-latest") {
         return Some((0.10, 0.0, 0.0, 0.30));
@@ -1823,20 +1827,6 @@ mod tests {
     }
 
     #[test]
-    fn test_estimate_cost_gemini_25_flash() {
-        let usage = yoagent::Usage {
-            input: 1_000_000,
-            output: 1_000_000,
-            cache_read: 0,
-            cache_write: 0,
-            total_tokens: 0,
-        };
-        // gemini-2.5-flash: $0.15/MTok input, $0.60/MTok output
-        let cost = estimate_cost(&usage, "gemini-2.5-flash").unwrap();
-        assert!((cost - 0.75).abs() < 0.001, "gemini-2.5-flash cost: {cost}");
-    }
-
-    #[test]
     fn test_estimate_cost_gemini_20_flash() {
         let usage = yoagent::Usage {
             input: 1_000_000,
@@ -1977,20 +1967,6 @@ mod tests {
     }
 
     // ── Mistral pricing tests ────────────────────────────────────────
-
-    #[test]
-    fn test_estimate_cost_mistral_large() {
-        let usage = yoagent::Usage {
-            input: 1_000_000,
-            output: 100_000,
-            cache_read: 0,
-            cache_write: 0,
-            total_tokens: 0,
-        };
-        // mistral-large: $2.00/MTok input, $6.00/MTok output
-        let cost = estimate_cost(&usage, "mistral-large-latest").unwrap();
-        assert!((cost - 2.6).abs() < 0.001, "mistral-large cost: {cost}");
-    }
 
     #[test]
     fn test_estimate_cost_mistral_small() {
