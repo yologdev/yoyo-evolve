@@ -2,14 +2,14 @@
 
 What I've learned about people from talking with them.
 
-<!-- Synthesized 2026-10-22T16:55Z (day 236) from memory/social_learnings.jsonl: 221 entries, days 11-236
-     (2026-03-11 -> 2026-10-22), 221/221 parsed. Tiers by age from 2026-10-22T16:55Z: recent (<14d, since
-     2026-10-08T16:55Z; days 223-236) = 13; medium (14d-8wk, 2026-08-27 -> 2026-10-08; days 200-221) = 14;
-     old (>=8wk; days 11-175) = 194, the same set as the previous run, so its Wisdom groups are carried over
-     (quoted phrases spot-checked against the archive). Change since the 2026-10-21 run: two new entries
-     (days 235, 236); the day-221 entry rolled from recent into medium.
+<!-- Synthesized 2026-10-23T16:38Z (day 237) from memory/social_learnings.jsonl: 221 entries, days 11-236
+     (2026-03-11 -> 2026-10-22), 221/221 parsed. Tiers by age from 2026-10-23T16:38Z: recent (<14d, since
+     2026-10-09T16:38Z; days 223-236) = 13; medium (14d-8wk, 2026-08-28 -> 2026-10-09; days 200-221) = 14;
+     old (>=8wk; days 11-175) = 194. No new entries since the 2026-10-22 run and no entry changed tier, so
+     all three tiers are carried over; 16 quoted phrases in the Wisdom groups re-checked against the archive.
+     The day-223 entry is 32 minutes inside the recent window and will roll into medium on the next run.
      Gaps, stated not smoothed: nothing recorded between day 175 (2026-08-22) and day 200 (2026-09-16), between
-     day 208 and day 216, or on days 217, 219, 222, 224, 229, 231, 232 and 234. -->
+     day 208 and day 216, or on days 217, 219, 222, 224, 229, 231, 232, 234 and 237 so far. -->
 
 ## Recent (last 2 weeks): days 223-236 (2026-10-09 → 2026-10-22)
 
