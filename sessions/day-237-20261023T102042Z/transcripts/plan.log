@@ -1,0 +1,57 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; mkdir -p sessio… ✓ (1.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue view 944 --comments | gre… ✓ (2.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh api repos/yologdev/yoyo-evolve/… ✓ (502ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh api repos/yologdev/yoyo-evolve/… ✓ (1.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue view 173 --repo yologdev/… ✓ (357ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue view 173 --repo yologdev/… ✓ (1.3s)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.25.12/; grep -n -i '#173\|usage.*sub\|sub-a…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git grep -n 'yoagent#173' -- src s… ✓ (5ms)
+ ✓ (8ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.25.12/; sed -n 1790,1825p CHANGELOG.md; gre… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git grep -n 'sub_agents\|total_cos… ✓ (22ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git grep -n -E '"type".{0,4}"usage… ✓ (22ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 150,230p src/prompt_budget.… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n -i 'protected' scripts/evo… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 2619,2625p scripts/evolve.s… ✓ (3ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.25.12/; awk 'NR<=1800 && /^## /{h=$0; n=NR}… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git grep -n 'audit_log_usage(' -- … ✓ (24ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 340,368p src/main.rs; git g… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git grep -n -- '--no-hints\|"hints… ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git log --oneline --grep='no-hints… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat > /tmp/iss… (15 lines) ✓ (1.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue view 1072 --json body --j… ✓ (358ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 505,520p tests/module_size.… ✓ (5ms)
+  ▶ write session_plan/task_01.md (62 lines)  ▶ write session_plan/task_02.md (44 lines) ✓ (0ms)
+ ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue comme… (22 lines) ✓ (1.1s)
+
+────────────────────────────────────────────────────────────────────────────────
+  25 tools completed in 3m 40s (25 ✓)
+
+The plan for Day 237 (09:11) is two tasks, both written to session_plan/. The commit step didn't record anything because session_plan/ is in .gitignore; the files are on disk where the next phase reads them.
+
+Task 1 (product, self-driven): Part of #1072
+• Bug: yoyo doctor names the branch wrong in two cases. On a fresh git init with no commits it says branch: detached, and on a real detached HEAD it says branch: HEAD. The cause is that the branch lookup in git_branch() uses a git command that fails on a new repo and prints the literal HEAD when detached.
+• Fix: one shared reader in a new file, src/git_branch.rs, using git symbolic-ref --short -q HEAD, which tells the two cases apart. The old lookup in src/git.rs and the copy in src/context.rs both become one-line calls to it.
+• Effect: /doctor comes out right with no edit to its own file. A new repo shows its branch name, and a detached HEAD falls through to the existing "detached" label.
+• Size limit: src/git.rs is already at its line ceiling in the module-size check, so the tests go in the new file.
+• Tests: temporary repos for four cases: new repo, normal repo (must not change), detached, and not a repo. A deliberate break-and-restore check confirms the tests catch the old behaviour.
+• Ledger: the other ~10 places that read the branch get a line each on #1072 saying what they showed before and what they show now.
+• Concentration: this task stays out of main and prompt, the parts of the code the trajectory flagged as getting too many recent changes.
+
+Task 2 (evolve, backlog drain): Fixes #944
+#944 is the oldest open issue, and four of its five rows were already done, decided, or moved to #1071. The fifth said sub-agent token counts were blocked upstream on yoagent#173. I checked: that ticket closed on 2026-09-25, and yoagent has reported sub-agent spend since 0.19. The totals are still undercounted, but the missing step is now yoyo's own: nothing in `src/` reads that data.
+• I filed that gap as #1073.
+• The task rewrites the "Totals are a floor" line in the trajectory script to cite #1073 instead of the closed upstream ticket.
+• It rewords the one comment in scripts/dream.sh that points at #944 as its tracker, since closing #944 would leave that pointer dead.
+• It posts the final ledger on #944, and the "Fixes" title closes it on push.
+
+Other actions this phase
+• I commented on #1071 that its "yoagent#173" line is out of date. The ask to @yuanhao is unchanged.
+• issue_responses.md puts off #1063 (/bg), #1064 and #1070 to the next session; the last two each need a decision with a reason, not a quick fix.
+• It flags #1041 to check for closing: CLAUDE.md says MCP prefixing shipped on Day 231, but the issue is still open.
+• It covers the outstanding promise on Discussion #420. The hints off-switch (--no-hints or hints = false) is in the current code, so the reply only needs to say so. I couldn't find the commit that added it in this shallow clone, so the reply shouldn't name one unless it can be found.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
