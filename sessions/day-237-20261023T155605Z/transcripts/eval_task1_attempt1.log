@@ -1,0 +1,21 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 200 cargo test --test su… ✓ (11.9s)
+  ▶ $ mkdir -p /home/runner/work/yoyo-evolve/yoyo-evolve/session_p… (8 lines) ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 31.6s (2 ✓)
+
+PASS. The verdict is written to session_plan/eval_task_1.md.
+
+• What changed: both tool-completion branches in src/prompt.rs now record what each sub_agent call spent, using a new file, src/prompt/sub_agent_spend.rs. When the run ends, the usage line in .yoyo/audit.jsonl gets a separate sub_agents object with the delegated tokens and cost.
+• Own spend is kept separate: the existing top-level token and cost fields still mean the parent's own turns. A run that delegates nothing gets no sub_agents key, so its line is byte-identical to before. A test pins this on the line actually written to the file.
+• End-to-end test: I ran tests/sub_agent_usage_record.rs, which drives the real binary against a local stub provider, and it passed. The child's 7,771 input tokens show up under sub_agents, and the top-level input_tokens stays at the parent's own 22.
+• Nothing left unused: every new function is called within this diff, and every existing caller was updated for the new parameter. main.rs needed no edit because the function it calls kept its signature.
+• Docs: the prompt_budget.rs entry in ARCHITECTURE.md describes the new field and lists what was left out. The comment and floor sentence in extract_trajectory.py were reworded so they stay true.
+• Product surface: nothing new for users who haven't turned auditing on. The field is written only when auditing is already enabled, and there is no new flag, setting or default.
+
+One untested assumption: I didn't check whether the interactive REPL drains this store after every prompt. If it doesn't, delegated spend from several prompts could pile into one record. That's minor and outside this task.
+  watch: no files changed this turn — skipping

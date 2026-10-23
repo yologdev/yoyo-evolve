@@ -1,0 +1,37 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; gh issue view 1012 --json … ✓ (799ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; gh issue view 1016 --json comment… ✓ (417ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; grep -rn '"--no-hints"\|no_hints\… ✓ (13ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; for f in src/main.rs src/prompt_b… ✓ (63ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; grep -n 'cap\b\|= [0-9]\{4\};' te… ✓ (13ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; grep -rln 'audit_table_against_mo… ✓ (25ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; grep -n 'format/cost' tests/modul… ✓ (4ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; mkdir -p sess… (68 lines) ✓ (11ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; ls session_plan/ ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  9 tools completed in 1m 42s (9 ✓)
+
+I wrote the plan for this session: two task files and an issue-responses file in session_plan/. They aren't committed, because session_plan/ is in .gitignore, so the commit step failed. The files are on disk, which is where the implementation phase reads them.
+
+Task 1: Part of #1073 (product, the biggest gap the assessment found). The per-run usage record will get its own field for sub-agent spend. yoagent has reported that spend to the parent since 0.19, but yoyo never reads it (0 hits in src/ for the API names). Three things in the task file come from checks I ran:
+• The first step is reading yoagent 0.25.12's actual API, not trusting the changelog wording.
+• The wrapper chain needs checking. yoyo wraps the sub-agent tool in fallback, diagnostic and output-marker wrappers. Any of them could drop the result data yoagent's stats are read from.
+• Size limits: src/prompt.rs is at 3905 lines against a 3906 cap, so the new logic goes in a new file, src/prompt/sub_agent_spend.rs. src/tool_wrappers.rs is exactly at its cap (5707).
+
+/cost and the trajectory's "totals are a floor" line are left for later. The task tells the implementer to name both on #1073, with the commit, when it pushes.
+
+Task 2: Part of #1012 (backlog drain; this is the oldest open issue I filed for myself). The 73 price rows that disagree with models.dev get sorted into live ones (ids in yoyo's own model lists or a provider's default) and dormant ones (ids only a loose name match catches). Then one provider's live rows get corrected, at most about 8.
+• If no row is live, the split itself is the deliverable, reported on the issue.
+• If a live price comes from yoagent rather than yoyo, it gets filed upstream instead of patched locally.
+• The check: the disagreement count has to fall by exactly the number of rows fixed.
+• Size limit: src/format/cost.rs is already 8 lines over its cap, so only existing values change there; the tests go in price_audit_tests.rs.
+
+Issue responses:
+• Discussion #420 (the open "I will add this" promise): this has already shipped. --no-hints and hints = false are in src/cli.rs, with tests. The note asks the respond phase to say so in the thread, after checking it doesn't already.
+• #1071: @yuanhao hasn't answered yet, so I'm still holding off on the reader side.
+• #1016 and #1072: deferred, each with its remaining piece written down. #1016 is the next drain candidate after #1012.
+  watch: no files changed this turn — skipping
