@@ -375,7 +375,7 @@ report_dream_spend() {
 # run, appended to phases/dream/spend.jsonl (a sibling of sessions/, so
 # extract_trajectory.py's `day-N-...` session reader never mistakes it for a
 # session dir). Two copies of one convention now exist; a third (daily_diary)
-# should be a shared helper in common.sh instead — tracked on #944.
+# should become one shared helper (persist_phase_spend) in scripts/common.sh.
 DREAM_SPEND_SINK="phases/dream/spend.jsonl"
 DREAM_USAGE_RECS=""
 

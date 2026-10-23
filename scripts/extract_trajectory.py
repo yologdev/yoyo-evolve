@@ -2535,15 +2535,17 @@ def render_usage_coverage(cov: UsageCoverage, state: str = AUDIT_DIR_OK) -> str:
 # yet" (dream on its cooldown today); unreadable / no worktree -> "could not
 # check". A row that recorded `"usage":"no_terminal_emit"` is a run that left
 # NO usage record — counted on its own, never summed as $0, so every total is
-# a floor. Sub-agent tokens are not in any record (yoagent#173), so the totals
-# are a floor even when every run recorded.
+# a floor. Sub-agent spend is not in any record either: yoagent has reported it
+# to the parent since 0.19 (SessionStats.sub_agents; yoagent#173 is closed),
+# but nothing in yoyo's src/ reads it into the usage record yet (#1073), so the
+# totals are a floor even when every run recorded.
 PHASE_SPEND_PHASES = ("social", "dream")
 PHASE_SPEND_WINDOW_DAYS = 7
 PHASE_SPEND_ROWS = "phase-spend-rows"
 PHASE_SPEND_NO_ROWS = "phase-spend-no-rows"
 PHASE_SPEND_COULD_NOT_CHECK = "phase-spend-could-not-check"
 PHASE_SPEND_FLOOR_LINE = (
-    "Totals are a floor: sub-agent tokens are not counted (yoagent#173)."
+    "Totals are a floor: usage records omit sub-agent spend (#1073)."
 )
 
 
