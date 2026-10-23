@@ -166,7 +166,7 @@ fn cost_table_reads_the_preset_price() {
     assert_eq!(model_pricing_with(&none, "gpt-6"), None);
     assert_eq!(
         model_pricing_with(&none, "gpt-5"),
-        Some((2.00, 0.0, 0.0, 8.00))
+        Some((1.25, 0.0, 0.125, 10.00))
     );
 }
 

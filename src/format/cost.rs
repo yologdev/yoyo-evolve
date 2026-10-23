@@ -167,20 +167,20 @@ fn builtin_model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
         return Some((2.00, 0.0, 0.0, 8.00));
     }
 
-    // GPT-5 family (estimated, based on comparable model tiers)
+    // GPT-5 family: gpt-5, gpt-5-mini, gpt-5.5 rows = models.dev (2026-10-23, #1012)
     // Note: gpt-5.5 must be checked before gpt-5 since "gpt-5.5".starts_with("gpt-5") is true
     if model.starts_with("gpt-5.5") {
         if model.contains("mini") {
             return Some((0.40, 0.0, 0.0, 1.60)); // gpt-5.5-mini (estimated)
         } else {
-            return Some((5.00, 0.0, 0.0, 20.00)); // gpt-5.5 (estimated)
+            return Some((5.00, 0.0, 0.50, 30.00)); // gpt-5.5
         }
     }
     if model.starts_with("gpt-5") {
         if model.contains("mini") {
-            return Some((0.40, 0.0, 0.0, 1.60)); // gpt-5-mini (estimated)
+            return Some((0.25, 0.0, 0.025, 2.00)); // gpt-5-mini
         } else {
-            return Some((2.00, 0.0, 0.0, 8.00)); // gpt-5 (estimated)
+            return Some((1.25, 0.0, 0.125, 10.00)); // gpt-5
         }
     }
 
@@ -1745,9 +1745,9 @@ mod tests {
             cache_write: 0,
             total_tokens: 0,
         };
-        // gpt-5: $2.00/MTok input, $8.00/MTok output
+        // gpt-5: $1.25/MTok input, $10.00/MTok output (models.dev, #1012)
         let cost = estimate_cost(&usage, "gpt-5").unwrap();
-        assert!((cost - 10.0).abs() < 0.01, "gpt-5 cost: {cost}");
+        assert!((cost - 11.25).abs() < 0.01, "gpt-5 cost: {cost}");
     }
 
     #[test]
@@ -1759,9 +1759,9 @@ mod tests {
             cache_write: 0,
             total_tokens: 0,
         };
-        // gpt-5-mini: $0.40/MTok input, $1.60/MTok output
+        // gpt-5-mini: $0.25/MTok input, $2.00/MTok output (models.dev, #1012)
         let cost = estimate_cost(&usage, "gpt-5-mini").unwrap();
-        assert!((cost - 2.0).abs() < 0.01, "gpt-5-mini cost: {cost}");
+        assert!((cost - 2.25).abs() < 0.01, "gpt-5-mini cost: {cost}");
     }
 
     #[test]
@@ -1773,9 +1773,9 @@ mod tests {
             cache_write: 0,
             total_tokens: 0,
         };
-        // gpt-5.5: $5.00/MTok input, $20.00/MTok output
+        // gpt-5.5: $5.00/MTok input, $30.00/MTok output (models.dev, #1012)
         let cost = estimate_cost(&usage, "gpt-5.5").unwrap();
-        assert!((cost - 25.0).abs() < 0.01, "gpt-5.5 cost: {cost}");
+        assert!((cost - 35.0).abs() < 0.01, "gpt-5.5 cost: {cost}");
     }
 
     #[test]

@@ -1433,3 +1433,37 @@ fn a_wrong_nonzero_cache_read_is_drift_not_the_coverage_gap() {
     assert_eq!(report.drifted.len(), 1, "it is drift, named");
     assert_eq!(report.drifted[0].0, "anthropic/claude-sonnet-5-5");
 }
+
+/// #1012 (Day 237): the first reconciled LIVE rows. A live row is an id a user can
+/// pick from `known_models_for_provider`, or a provider default, so it is what
+/// `/cost` bills real sessions at. These three were `drift` in the 2026-10-23 sweep
+/// and now carry models.dev's prices, cache read included (yoagent's openai-compat
+/// usage subtracts cached tokens from `input`, so a 0.0 cache_read billed them free).
+///
+/// Read through [`price_of`], the resolver `/cost` uses, never a table literal.
+/// The membership check pins the reason these rows went first: if one stops being
+/// pickable, the "live" claim in #1012's split is false and this test says so.
+#[test]
+fn reconciled_openai_live_rows_bill_the_models_dev_price() {
+    let rows: [(&str, Rates); 3] = [
+        ("gpt-5", (1.25, 0.0, 0.125, 10.0)),
+        ("gpt-5-mini", (0.25, 0.0, 0.025, 2.0)),
+        ("gpt-5.5", (5.0, 0.0, 0.5, 30.0)),
+    ];
+    let known = crate::providers::known_models_for_provider("openai");
+    for (id, expected) in rows {
+        assert!(
+            known.contains(&id),
+            "{id} is no longer in known_models_for_provider(\"openai\") — it was reconciled \
+             first because it was LIVE (#1012); re-check the split before trusting the order"
+        );
+        let got = price_of(id).unwrap_or_else(|| panic!("{id} must be priced by /cost"));
+        assert!(
+            cells_within(got, expected, 1e-9),
+            "{id}: /cost resolves {got:?}, models.dev (2026-10-23) says {expected:?}"
+        );
+    }
+    // Near-miss: gpt-5.5-mini shares the gpt-5.5 prefix but has its own `mini` arm,
+    // which models.dev does not carry (not audited), so this slice left it alone.
+    assert_eq!(price_of("gpt-5.5-mini"), Some((0.40, 0.0, 0.0, 1.60)));
+}
