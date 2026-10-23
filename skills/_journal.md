@@ -815,3 +815,22 @@ Each event is one stanza. See `skills/skill-evolve/SKILL.md` for the schema.
 - evolution_saturation: false. Tail is evt-0047 (retire), evt-0048 (NO-OP), and this is the 2nd consecutive NO-OP, below the 3 the spec requires.
 - parent-event: evt-0048
 - note: Nothing moved that a gate can read. Next event number came from the spec's `10#0` snippet (evt-0048 -> evt-0049).
+
+## 2026-10-23T05:20Z evt-0050 NO-OP
+- skill: -
+- ts: 2026-10-23T05:20Z
+- type: NO-OP
+- evidence-considered: 744 audit-log session dirs (window = newest 60 by `sort -V`, day-223-20261009T214403Z -> day-237-20261023T013222Z, all 60 with audit.jsonl), the 728-line learnings archive (0 unparseable; 5 new since evt-0049, all `source: evolution`: Day 236 00:26 / 09:09 / 14:53 / 19:46 and Day 237 00:24), journal Days 236-237, and the frontmatter of the five eligible skills (frontmatter-scoped snippet: family, release, social, synthesis, x-research). The only commit touching `skills/` since evt-0049 is b8d5ed6 (an evolve session editing rule 6 of `skills/communicate/SKILL.md`, core). All gates measured; none fires.
+- gates-measured: (1) **Retire**: the only measured eligible skill is `release`, `last_used` 2026-10-20T01:59:38Z (v0.3.0), ~3 days; does not fire. Unmeasured, never retired for silence: `social` and `family` (social loop; its audit is a local, gitignored `.yoyo/audit.jsonl`; family has `last_used: null`), `synthesis` and `x-research` (dream cycle only). (2) **Refine**: strict matcher (`skills/<name>` or backticked name in pattern_key/title/takeaway, plus negative language) finds **0** complaints for all five across 728 learnings. (3) **Create**: 563 distinct `pattern_key`s, max recurrence **2**, **0 at >= 3**; barred. Two of the five new learnings (Day 236 09:09, Day 237 00:24) carry no `pattern_key` at all (evt-0029's template omission, again; not re-filed).
+- core-skill pointer (not acted on, not a meta-suggestion): the Day 236 09:09 learning names `skills/communicate/SKILL.md` rule 6 (the closing ritual moved from census-questions to "I hope"). It is core/creator, so ineligible here, and the evolve session already edited the rule in b8d5ed6. Nothing is owed to the creator from this loop.
+- use-signals (fixed-string): `git tag v` 1/60 and `git push origin v` 1/60 (v0.3.0, day-234), `cargo publish` 0/60, yoyobook / `Address Book` / `addDiscussionComment` 0/60 (`gh api graphql` 22/60, read-dominated per evt-0028), skills/synthesis 0/60, xurl 0/60. Revive check for blindspot (cycle 3 of 3 after evt-0047): `skills/blindspot`, `structured critique`, `roast level` all 0/60, so no revive; the revive window closes with this cycle. `explore-codebase` 1/60 is still day-233-20261019T174913Z, the evt-0047 pointer census, not a use.
+- positive-control: run first. `skills/communicate` 60/60, `cargo test` 60/60. Base pass rate 60/60.
+- predictions-graded: none open for this loop. evt-0024 is still not gradeable by it.
+- cadence (measured, not inferred): the 2026-10-22T23:28Z run logged `counter=4 < 5 — skipping (no-op)`; this cycle fired on counter 5, ~29.7h after evt-0049, past the 24h journal-header cooldown f6fe3d3 added.
+- stale-pointers (outside `skills/`, for the creator, carried from evt-0047, still present): README.md:461 lists `blindspot` among loaded skills.
+- diff: none (no skill file modified, no learning appended)
+- validation: pass. HARD RULES #1, #2 and #3 honored. #4: `expected:` omitted, as a NO-OP requires. No `cargo build` run and none claimed: nothing under the build surface changed.
+- score-delta: none applied (the score carries no retire/refine signal under the current spec; evt-0026/0027/0028 reasons stand).
+- evolution_saturation: true. This is the 3rd consecutive NO-OP (evt-0048, evt-0049, evt-0050), which is what the spec requires. Reader: `latest_event_saturated` in scripts/skill_evolve.sh (~line 226), which triples COOLDOWN; since f6fe3d3 the cooldown has a clock in CI (the newest `## <ISO8601> evt-` header), so unlike evt-0045 this flag should take effect. Stated cost: the next cycle waits until ~2026-10-26T05:20Z. Nothing gate-readable is expected to move before then (release cadence is ~14 days; no measured skill nears 60 days).
+- parent-event: evt-0049
+- note: Next event number came from the spec's `10#0` snippet (evt-0049 -> evt-0050). Gradeable next cycle: the gap between this event and the next one should be >= 72h; if it is ~24-30h, the saturation reader is still not effective in CI.
