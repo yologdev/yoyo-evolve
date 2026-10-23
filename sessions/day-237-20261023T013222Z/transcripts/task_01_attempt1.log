@@ -1,0 +1,69 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git log --oneli…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 240,340p src/commands_run.r… ✓ (11ms)
+ ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 150,240p src/commands_run.r… ✓ (16ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "process_group\|stdin(\|ki… ✓ (12ms)
+  ▶ write src/watch_wait.rs (235 lines) ✓ (1m 53s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -i 's/^mod watch;$/mod watch;\… ✓ (35.3s)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 3m 26s (6 ✓)
+
+The door test reproduces the 5.0s wait in yoyo itself. Next I'll rewire run_watch_command to go through the new helper.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (56 lines) ✓ (1.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1425,1475p src/watch.rs; ti… ✓ (32.2s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 42.3s (2 ✓)
+
+watch.rs went from 4486 to 4444 lines. Now the full gate:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt -- --check && cargo clip… ✓ (2m 23s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test --test lock_recovery_ch… ✓ (275ms)
+  2 tools completed in 2m 28s (2 ✓)
+
+A gate I didn't know about caught it. I'll route both through the chokepoint:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -i 's/shared\.lock()\.unwrap_o… ✓ (4m 17s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Everything is green. The door test failing at 5.0s before I rewired it is the positive control. Next, the ARCHITECTURE.md paragraph:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (8 lines) ✓ (52ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add -A && … (31 lines) ✓ (50ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue view 1063 --json state,ti… ✓ (1.1s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 27.7s (3 ✓)
+
+/watch and the auto-check that runs after the model's edits no longer hang when the check command starts something in the background. Before the change, sleep 5 & echo hi took 5.0s through yoyo's own run_watch_command, and a test pinned that wait. Now it returns in under 3.5s with hi and exit 0. Build, all tests, clippy and fmt pass, and it's committed as 00d1dfc6 with "Part of #1063".
+
+What changed:
+• A new file, src/watch_wait.rs, runs the command the way /run already does: it reads output on separate threads, waits for sh to exit, then gives the readers up to 2 more seconds and keeps whatever they read.
+• run_watch_command now calls that helper. Its return type is the same, and src/watch.rs went from 4486 to 4444 lines, so it didn't grow.
+• One fix covers all three places that run a check: the check after each turn, the re-check in the fix loop, and the auto-check after the model's edits (tool_wrappers.rs:749). That last one used to stall the model's edit itself. I checked the three call sites and didn't edit any of them.
+• If a background process is still holding the output when the 2 seconds run out, it keeps running (same as /run), and the output ends with a note saying the rest wasn't captured. That way the model is told output is missing.
+
+Differences from `/run`'s version (listed in the commit body):
+• Copied: the threads, waiting on sh first, the 2s grace, and keeping partial output.
+• Same in both: input is inherited from the terminal, not cut off, and nothing puts the command in its own process group.
+• Not copied: printing each line to the terminal and the output size cap. /watch never did either: it shows a line counter instead, and the auto-check cuts long output on its own. I couldn't reuse /run's reader for the same reason.
+• One small behaviour change: output that isn't valid UTF-8 is now converted instead of stopping the read early. Valid UTF-8 output is captured exactly as before.
+
+Tests: the background case, plain echo hi, a failure that writes to both streams and exits 3, the background case with output sent to /dev/null, Windows line endings, the line counter, and one test through run_watch_command itself. One gate I hadn't known about (tests/lock_recovery_chokepoint.rs) failed my first version because I recovered mutex locks by hand. I switched to the shared sync_util::lock_or_recover and it passed.
+
+ARCHITECTURE.md's watch.rs entry has a new paragraph on this. I commented on #1063 with the sha and the three fixed places. /bg (src/commands_bg.rs) is still open there: its output gets read later, so it needs its own grace.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 0/1 changed files were in top-10 predictions (0.0% accuracy)
+     Surprises (not predicted): src/watch_wait.rs
