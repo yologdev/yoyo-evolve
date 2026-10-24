@@ -179,24 +179,32 @@ would be a refusal. `YOYO_ASK_OUTSIDE_READS=0` turns the fence off,
 reads are then refused). `bash` is not covered: it can still `cat` the
 same file. Details: [Permissions](../configuration/permissions.md).
 
-## Keeping provider keys out of the model's bash (opt-in)
+## Keeping provider keys out of subprocesses
 
-By default the model's `bash` tool inherits yoyo's environment, including
-your provider API key, so a prompt injection that gets the model to run
-`echo $ANTHROPIC_API_KEY` can read it. Set `YOYO_SUBPROCESS_ENV_SCRUB=1`
-(or `true`) and yoyo removes every provider credential variable it knows
+yoyo removes every provider credential variable it knows
 (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `API_KEY`, the AWS/Bedrock keys and
 the rest of yoagent's and yoyo's provider tables) from the environment of
-each command the model's bash runs. yoyo itself keeps its key.
+some of the programs it starts. yoyo itself keeps its key; only the child's
+environment is edited. One variable, `YOYO_SUBPROCESS_ENV_SCRUB`, controls
+it, with a different default per kind of program:
 
-- **Only the model's `bash` tool is covered today.** Hooks, `/run`, `/bg`,
-  `/watch`, MCP servers and sub-agent bash still inherit the full
-  environment (tracked in
+- **Shell hooks (`[hooks]` in `.yoyo.toml`): scrubbed by default.** A hook is
+  a program your config or the repository wrote, and it should not get your
+  API key for free. Set `YOYO_SUBPROCESS_ENV_SCRUB=0` (or `false`) to let
+  hooks inherit the key again. Any other value, including an empty one or a
+  typo, keeps hooks scrubbed. Non-credential variables (`PATH`, `HOME`,
+  `TOOL_NAME`, `TOOL_PARAMS`, your own variables) still reach the hook.
+- **The model's `bash` tool: opt-in.** By default it inherits yoyo's
+  environment, including your provider key, so a prompt injection that gets
+  the model to run `echo $ANTHROPIC_API_KEY` can read it. Set
+  `YOYO_SUBPROCESS_ENV_SCRUB=1` (or `true`) to scrub it. It stays opt-in
+  because anything that needs the key from inside bash, such as running
+  yoyo (or another tool that calls your provider) from yoyo's own bash,
+  fails with the scrub on.
+- **Not covered yet:** `/run`, `!`, `/bg`, `/watch`, MCP stdio servers and
+  sub-agent bash still inherit the full environment (tracked in
   [#1064](https://github.com/yologdev/yoyo-evolve/issues/1064)).
-- `GITHUB_TOKEN` and `GH_TOKEN` are kept, so `gh` still works in bash.
-- Anything that needs the key from inside bash, such as running yoyo (or
-  another tool that calls your provider) from yoyo's own bash, fails with
-  the scrub on. That is the point, and it is why the scrub is off by default.
+- `GITHUB_TOKEN` and `GH_TOKEN` are always kept, so `gh` still works.
 
 ## What happens in practice
 

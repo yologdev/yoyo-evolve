@@ -729,10 +729,14 @@ impl ShellHook {
     /// Run the shell command with the given environment variables.
     /// Returns Ok((exit_code, stderr_output)) or Err on timeout/spawn failure.
     /// Stderr is captured so post-hooks can use it as feedback to the agent.
+    /// `scrub` names variables removed from the child's environment, applied
+    /// last so neither inheritance nor `env_vars` can hand a hook a provider
+    /// key (#1064; callers pass `subprocess_env::hook_scrub_vars()`).
     fn run_command(
         &self,
         env_vars: &[(&str, &str)],
         stdin_payload: &str,
+        scrub: &[&str],
     ) -> Result<(i32, String), String> {
         use std::io::{Read, Write};
         use std::process::Command;
@@ -743,6 +747,7 @@ impl ShellHook {
         for (key, value) in env_vars {
             cmd.env(key, value);
         }
+        crate::subprocess_env::apply_scrub_std(&mut cmd, scrub);
 
         // Spawn and wait with timeout.
         //
@@ -838,7 +843,11 @@ impl Hook for ShellHook {
         // nothing", which is a different fact. The key is omitted entirely.
         let stdin_payload = hook_stdin_payload(tool_name, params, None, HOOK_STDIN_MAX_BYTES);
 
-        match self.run_command(&env_vars, &stdin_payload) {
+        match self.run_command(
+            &env_vars,
+            &stdin_payload,
+            &crate::subprocess_env::hook_scrub_vars(),
+        ) {
             Ok((0, _)) => Ok(None), // Success — proceed with tool execution
             // The hook's own stderr is the *reason* the gate exists to convey:
             // `maybe_hook` puts this string into `Blocked by hook: {reason}`,
@@ -878,7 +887,11 @@ impl Hook for ShellHook {
         // away the whole point of offering it.
         let stdin_payload =
             hook_stdin_payload(tool_name, params, Some(output), HOOK_STDIN_MAX_BYTES);
-        match self.run_command(&env_vars, &stdin_payload) {
+        match self.run_command(
+            &env_vars,
+            &stdin_payload,
+            &crate::subprocess_env::hook_scrub_vars(),
+        ) {
             Ok((_, stderr)) => {
                 if stderr.trim().is_empty() {
                     Ok(PostHookResult::passthrough(output))
@@ -927,7 +940,11 @@ impl Hook for ShellHook {
         // is a property of the env channel, and the stdin channel holds 32× more.
         let stdin_payload =
             hook_stdin_payload_with_error(tool_name, params, Some(error), HOOK_STDIN_MAX_BYTES);
-        match self.run_command(&env_vars, &stdin_payload) {
+        match self.run_command(
+            &env_vars,
+            &stdin_payload,
+            &crate::subprocess_env::hook_scrub_vars(),
+        ) {
             Ok((_, stderr)) => {
                 if stderr.trim().is_empty() {
                     Ok(PostHookResult::passthrough(""))
@@ -1371,6 +1388,10 @@ pub fn maybe_hook(tool: Box<dyn AgentTool>, hooks: &Arc<HookRegistry>) -> Box<dy
         })
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "hooks_scrub_tests.rs"]
+mod hooks_scrub_tests;
 
 #[cfg(test)]
 mod tests {

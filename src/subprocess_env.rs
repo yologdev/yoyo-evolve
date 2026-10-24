@@ -21,7 +21,15 @@
 //! yoyo's own `--provider github` reads `GITHUB_TOKEN`: with that provider and
 //! the scrub on, the key the child keeps is the provider key.
 //!
-//! **Scope today: only the model's bash tool.** Hooks, `/run`, `/bg`,
+//! **Scope today: the model's bash tool (opt-in) and shell hooks (on by
+//! default).** Hooks (`[hooks]` in `.yoyo.toml`, run by `ShellHook` in
+//! `hooks.rs`) are a different population from the model's bash: a hook is a
+//! program the *repository* or the user's config wrote, and it never needs
+//! the provider key to do its job, so the scrub is on for hooks unless
+//! `YOYO_SUBPROCESS_ENV_SCRUB=0` (or `false`) turns it off
+//! ([`hook_scrub_enabled_from`]). The model's bash keeps the opt-in decision
+//! ([`scrub_enabled_from`]) unchanged, because a user running yoyo (or a
+//! provider-calling test suite) from inside it needs the key. `/run`, `/bg`,
 //! `/watch`, MCP stdio servers, and sub-agent child bash (built from
 //! yoagent's own `BashTool`, not this constructor) still inherit the full
 //! environment; they stay on #1064.
@@ -48,6 +56,37 @@ pub(crate) fn scrub_enabled_from(value: Option<&str>) -> bool {
 /// The scrub flag as the process environment sets it right now.
 pub(crate) fn scrub_enabled() -> bool {
     scrub_enabled_from(std::env::var(SCRUB_ENV_VAR).ok().as_deref())
+}
+
+/// Is the scrub on for **shell hooks** for this value of [`SCRUB_ENV_VAR`]?
+/// The inverse default of [`scrub_enabled_from`]: unset scrubs, and only an
+/// explicit `0` or `false` (any case, trimmed) opts out. Any other value,
+/// including empty or a typo, keeps the scrub on, so a mistyped opt-out
+/// fails closed rather than handing a repo-authored hook the key.
+pub(crate) fn hook_scrub_enabled_from(value: Option<&str>) -> bool {
+    match value {
+        Some(v) => {
+            let v = v.trim();
+            !(v == "0" || v.eq_ignore_ascii_case("false"))
+        }
+        None => true,
+    }
+}
+
+/// The names a shell hook's child should have stripped, for this value of
+/// [`SCRUB_ENV_VAR`]: [`credential_vars`] unless the user opted out.
+pub(crate) fn hook_scrub_vars_from(value: Option<&str>) -> Vec<&'static str> {
+    if hook_scrub_enabled_from(value) {
+        credential_vars()
+    } else {
+        Vec::new()
+    }
+}
+
+/// [`hook_scrub_vars_from`] as the process environment sets it right now.
+/// Read at each hook spawn, so the answer cannot go stale mid-session.
+pub(crate) fn hook_scrub_vars() -> Vec<&'static str> {
+    hook_scrub_vars_from(std::env::var(SCRUB_ENV_VAR).ok().as_deref())
 }
 
 /// Every credential variable the scrub removes: yoagent's own list
@@ -90,6 +129,14 @@ pub(crate) fn apply_scrub(cmd: &mut tokio::process::Command, names: &[&str]) {
     }
 }
 
+/// [`apply_scrub`] for a `std::process::Command` (the hook spawn site is
+/// synchronous). The parent's environment is untouched.
+pub(crate) fn apply_scrub_std(cmd: &mut std::process::Command, names: &[&str]) {
+    for name in names {
+        cmd.env_remove(name);
+    }
+}
+
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
@@ -113,6 +160,39 @@ mod tests {
         for (value, want) in table {
             assert_eq!(scrub_enabled_from(*value), *want, "value {value:?}");
         }
+    }
+
+    /// One table, both consumers: the model's bash stays opt-in (unset means
+    /// no scrub, byte-identical to before), while hooks scrub unless opted
+    /// out. Empty and unrecognised values split the same way: off for bash,
+    /// on for hooks (fail closed).
+    #[test]
+    fn bash_and_hook_scrub_decisions_per_value() {
+        // (value, bash scrubs, hook scrubs)
+        let table: &[(Option<&str>, bool, bool)] = &[
+            (None, false, true),
+            (Some("1"), true, true),
+            (Some("true"), true, true),
+            (Some("0"), false, false),
+            (Some("false"), false, false),
+            (Some(" FALSE "), false, false),
+            (Some(""), false, true),
+            (Some("no"), false, true),
+        ];
+        for (value, bash, hook) in table {
+            assert_eq!(scrub_enabled_from(*value), *bash, "bash, value {value:?}");
+            assert_eq!(
+                hook_scrub_enabled_from(*value),
+                *hook,
+                "hook, value {value:?}"
+            );
+            assert_eq!(
+                hook_scrub_vars_from(*value).is_empty(),
+                !*hook,
+                "hook vars, value {value:?}"
+            );
+        }
+        assert!(hook_scrub_vars_from(None).contains(&"ANTHROPIC_API_KEY"));
     }
 
     #[test]
