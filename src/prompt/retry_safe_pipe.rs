@@ -224,12 +224,35 @@ impl RetrySafeGate {
         }
     }
 
-    /// Ctrl+C: text the filter is still holding (an attempt in flight, or a
-    /// failed one awaiting its verdict), so the interrupt keeps what the model
-    /// already produced (#993). Empty when the filter is off.
-    pub(super) fn take_held_text(&mut self) -> String {
+    /// Text the filter is still holding (an attempt in flight, or a failed
+    /// one awaiting its verdict). Empty when the filter is off.
+    fn take_held_text(&mut self) -> String {
         let mut text = std::mem::take(&mut self.failed_text);
         text.push_str(&std::mem::take(&mut self.open_text));
+        text
+    }
+
+    /// #993/#1016: every byte of model text the loop has not printed yet, in
+    /// wire order, each exactly once: first text already RELEASED into the
+    /// queue (a finished attempt is released all at once and the loop pops
+    /// one event per `select!`, which polls its arms in random order, so a
+    /// signal arm can win with the queue non-empty), then text still HELD.
+    /// Keyed on what is left, not on which signal or panic ended the loop:
+    /// the interrupt path and [`Drop`] both call this. Empty when the filter
+    /// is off (the queue is only filled while filtering).
+    pub(super) fn take_unprinted_text(&mut self) -> String {
+        let mut text: String = self
+            .queue
+            .drain(..)
+            .filter_map(|e| match e {
+                AgentEvent::MessageUpdate {
+                    delta: StreamDelta::Text { delta },
+                    ..
+                } => Some(delta),
+                _ => None,
+            })
+            .collect();
+        text.push_str(&self.take_held_text());
         text
     }
 }
@@ -246,18 +269,7 @@ impl Drop for RetrySafeGate {
         if !std::thread::panicking() || self.filter.is_none() {
             return;
         }
-        let mut text: String = self
-            .queue
-            .drain(..)
-            .filter_map(|e| match e {
-                AgentEvent::MessageUpdate {
-                    delta: StreamDelta::Text { delta },
-                    ..
-                } => Some(delta),
-                _ => None,
-            })
-            .collect();
-        text.push_str(&self.take_held_text());
+        let text = self.take_unprinted_text();
         if !text.is_empty() {
             let _ = self.panic_sink.write_all(text.as_bytes());
             let _ = self.panic_sink.flush();
@@ -633,6 +645,85 @@ mod tests {
         assert!(gate.queue.is_empty(), "the open attempt is held");
         assert_eq!(gate.take_held_text(), "ABC");
         assert_eq!(gate.take_held_text(), "", "taken once");
+    }
+
+    /// The loop's view: pop ONE event, as one `select!` iteration does.
+    fn pop_one(gate: &mut RetrySafeGate) -> Option<AgentEvent> {
+        gate.queue.pop_front()
+    }
+
+    /// #1016 (row from the 2026-10-15T01:04Z comment): an attempt that got
+    /// its `MessageEnd` is released into the queue all at once; the loop pops
+    /// one event per `select!`, so a signal arm can win while the rest sit
+    /// unprinted. Probed before the fix: the interrupt flush returned `""`.
+    #[test]
+    fn interrupt_flush_keeps_released_but_unprinted_text() {
+        let mut gate = RetrySafeGate::new(true);
+        gate.feed(Some(start()));
+        gate.feed(Some(text("REL")));
+        gate.feed(Some(text("EASED")));
+        gate.feed(Some(end(StopReason::Stop)));
+        assert!(matches!(
+            pop_one(&mut gate),
+            Some(AgentEvent::MessageStart { .. })
+        ));
+        assert_eq!(
+            gate.queue.len(),
+            3,
+            "anti-vacuous: text sits released, unprinted"
+        );
+        assert_eq!(gate.take_unprinted_text(), "RELEASED");
+        assert_eq!(gate.take_unprinted_text(), "", "taken once");
+    }
+
+    /// Wire order: a finished attempt's released text comes before the next
+    /// attempt's held text, and neither is lost.
+    #[test]
+    fn interrupt_flush_puts_released_text_before_held_text() {
+        let mut gate = RetrySafeGate::new(true);
+        for e in [start(), text("FIRST_"), end(StopReason::Stop)] {
+            gate.feed(Some(e));
+        }
+        gate.feed(Some(start()));
+        gate.feed(Some(text("SECOND")));
+        assert_eq!(gate.take_unprinted_text(), "FIRST_SECOND");
+    }
+
+    /// Near-miss: text the loop already printed is not printed again.
+    #[test]
+    fn interrupt_flush_after_the_loop_drained_the_queue_is_empty() {
+        let mut gate = RetrySafeGate::new(true);
+        for e in [start(), text("DONE"), end(StopReason::Stop)] {
+            gate.feed(Some(e));
+        }
+        while pop_one(&mut gate).is_some() {}
+        assert_eq!(gate.take_unprinted_text(), "");
+    }
+
+    /// Near-miss: a retried attempt is cleared by `ProviderRetry`, never
+    /// released, so an interrupt during the retry keeps only the live one.
+    #[test]
+    fn interrupt_flush_never_releases_a_retried_attempt() {
+        let mut gate = RetrySafeGate::new(true);
+        for e in [
+            start(),
+            text("PARTIAL_"),
+            end(StopReason::Error),
+            retry(),
+            start(),
+            text("LIVE"),
+        ] {
+            gate.feed(Some(e));
+        }
+        assert_eq!(gate.take_unprinted_text(), "LIVE");
+    }
+
+    /// Near-miss: nothing held, nothing queued -> nothing to write (the
+    /// interrupt path's bytes are unchanged from before).
+    #[test]
+    fn interrupt_flush_with_nothing_left_is_empty() {
+        assert_eq!(RetrySafeGate::new(true).take_unprinted_text(), "");
+        assert_eq!(RetrySafeGate::new(false).take_unprinted_text(), "");
     }
 
     #[test]

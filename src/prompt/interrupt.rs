@@ -41,7 +41,8 @@ fn interrupted_exit_code_from(terminated: Option<i32>, interrupted: bool) -> Opt
 
 /// #993/#1015: the one policy for a turn cut short by a signal (Ctrl+C or,
 /// on a pipe, SIGTERM): stop the spinner, abort the agent, flush the text
-/// the retry-safe gate still holds (it was produced before the signal, and
+/// the retry-safe gate has not printed yet, both released-but-queued and
+/// still held (#1016; it was produced before the signal, and
 /// the unfiltered stream would already have shown it), close the line, and
 /// print the interrupt note. Both `select!` arms call this; neither copies it.
 pub(super) fn finish_interrupted_turn(
@@ -54,9 +55,10 @@ pub(super) fn finish_interrupted_turn(
         s.stop();
     }
     agent.abort();
-    let held = gate.take_held_text();
-    if !held.is_empty() {
-        state.handle_message_update_text(&held);
+    // #1016: released-but-unprinted queue text first, then held text.
+    let unprinted = gate.take_unprinted_text();
+    if !unprinted.is_empty() {
+        state.handle_message_update_text(&unprinted);
     }
     if state.in_text {
         super::write_stream_text("\n");
