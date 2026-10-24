@@ -1550,8 +1550,36 @@ fn reconciled_mistral_glm_rows_bill_the_models_dev_price() {
     }
     // Near-misses: the arms are exact, so ids the fuzzy glm-5 arm still owns keep
     // its 0.7/0.7 estimate (drift on those is a later slice, not this one).
-    assert_eq!(price_of("glm-5"), Some((0.70, 0.0, 0.0, 0.70)));
+    assert_eq!(price_of("glm-5-turbo"), Some((0.70, 0.0, 0.0, 0.70)));
     assert_eq!(price_of("zai-glm-5-4"), Some((0.70, 0.0, 0.0, 0.70)));
+}
+
+/// #1012 (Day 238, second slice): the zai-provider GLM rows that the vendor's own
+/// page (docs.z.ai/guides/overview/pricing, read 2026-10-24) and models.dev agree on.
+/// Before this they billed at the fuzzy `glm-5` / `glm-4.7` arms' 0.7/0.7. None is in
+/// yoyo's zai picker, so only a typed `--model` reaches them.
+#[test]
+fn reconciled_zai_glm_rows_bill_the_vendor_price() {
+    let rows: [(&str, Rates); 6] = [
+        ("glm-5", (1.0, 0.0, 0.2, 3.2)),
+        ("glm-5.1", (1.4, 0.0, 0.26, 4.4)),
+        ("glm-5.2", (1.4, 0.0, 0.26, 4.4)),
+        ("glm-5.3-flashx", (0.37, 0.0, 0.075, 1.25)),
+        ("glm-4.7", (0.6, 0.0, 0.11, 2.2)),
+        ("glm-4.7-flashx", (0.07, 0.0, 0.01, 0.4)),
+    ];
+    for (id, expected) in rows {
+        let got = price_of(id).unwrap_or_else(|| panic!("{id} must be priced by /cost"));
+        assert!(
+            cells_within(got, expected, 1e-9),
+            "{id}: /cost resolves {got:?}, z.ai and models.dev (2026-10-24) say {expected:?}"
+        );
+    }
+    // Near-misses on the same two fuzzy arms: glm-4-plus is in the zai picker and
+    // models.dev does not list it; glm-4.7-flash is Free on z.ai's page, and billing
+    // it $0 is its own decision, not this slice's.
+    assert_eq!(price_of("glm-4-plus"), Some((0.70, 0.0, 0.0, 0.70)));
+    assert_eq!(price_of("glm-4.7-flash"), Some((0.70, 0.0, 0.0, 0.70)));
 }
 
 /// Moved from `cost.rs`'s in-file tests (module-size gate) and re-priced for #1012:
@@ -1582,4 +1610,64 @@ fn test_estimate_cost_mistral_large() {
     };
     let cost = super::estimate_cost(&usage, "mistral-large-latest").unwrap();
     assert!((cost - 0.65).abs() < 0.001, "mistral-large cost: {cost}");
+}
+
+/// Moved from `cost.rs`'s in-file tests (module-size gate, #1012).
+#[test]
+fn test_estimate_cost_glm4_plus() {
+    let usage = yoagent::Usage {
+        input: 1_000_000,
+        output: 1_000_000,
+        cache_read: 0,
+        cache_write: 0,
+        total_tokens: 0,
+    };
+    // glm-4-plus: $0.70/MTok input, $0.70/MTok output
+    let cost = super::estimate_cost(&usage, "glm-4-plus").unwrap();
+    assert!((cost - 1.40).abs() < 0.001, "glm-4-plus cost: {cost}");
+}
+
+/// Moved from `cost.rs`'s in-file tests (module-size gate, #1012).
+#[test]
+fn test_estimate_cost_glm4_air() {
+    let usage = yoagent::Usage {
+        input: 1_000_000,
+        output: 1_000_000,
+        cache_read: 0,
+        cache_write: 0,
+        total_tokens: 0,
+    };
+    // glm-4-air: $0.07/MTok input, $0.07/MTok output
+    let cost = super::estimate_cost(&usage, "glm-4-air").unwrap();
+    assert!((cost - 0.14).abs() < 0.001, "glm-4-air cost: {cost}");
+}
+
+/// Moved from `cost.rs`'s in-file tests (module-size gate, #1012).
+#[test]
+fn test_estimate_cost_glm4_flash() {
+    let usage = yoagent::Usage {
+        input: 1_000_000,
+        output: 1_000_000,
+        cache_read: 0,
+        cache_write: 0,
+        total_tokens: 0,
+    };
+    // glm-4-flash: $0.01/MTok input, $0.01/MTok output
+    let cost = super::estimate_cost(&usage, "glm-4-flash").unwrap();
+    assert!((cost - 0.02).abs() < 0.001, "glm-4-flash cost: {cost}");
+}
+
+/// Moved from `cost.rs`'s in-file tests (module-size gate) and re-priced for #1012.
+#[test]
+fn test_estimate_cost_glm5() {
+    let usage = yoagent::Usage {
+        input: 1_000_000,
+        output: 1_000_000,
+        cache_read: 0,
+        cache_write: 0,
+        total_tokens: 0,
+    };
+    // glm-5: $1.00/MTok input, $3.20/MTok output (z.ai + models.dev, 2026-10-24, #1012)
+    let cost = super::estimate_cost(&usage, "glm-5").unwrap();
+    assert!((cost - 4.20).abs() < 0.001, "glm-5 cost: {cost}");
 }
