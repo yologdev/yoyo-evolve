@@ -1529,6 +1529,31 @@ fn reconciled_mistral_small_and_flash_variants_bill_the_models_dev_price() {
     assert_eq!(price_of("gemini-2.5-flash"), Some((0.30, 0.0, 0.03, 2.50)));
 }
 
+/// #1012 (Day 238): models.dev's mistral catalogue carries four GLM rows that the
+/// fuzzy `contains("glm-5")` arm billed at its 0.7/0.7 estimate. Three share one
+/// price; `zai-glm-5-3-flash` is far cheaper, so it gets its own exact arm. None of
+/// the four is in yoyo's mistral picker: they are reached only by a typed `--model`.
+#[test]
+fn reconciled_mistral_glm_rows_bill_the_models_dev_price() {
+    let rows: [(&str, Rates); 4] = [
+        ("glm-5-2", (1.4, 0.0, 0.14, 4.4)),
+        ("zai-glm-5-2", (1.4, 0.0, 0.14, 4.4)),
+        ("zai-glm-5-3", (1.4, 0.0, 0.14, 4.4)),
+        ("zai-glm-5-3-flash", (0.15, 0.0, 0.03, 0.5)),
+    ];
+    for (id, expected) in rows {
+        let got = price_of(id).unwrap_or_else(|| panic!("{id} must be priced by /cost"));
+        assert!(
+            cells_within(got, expected, 1e-9),
+            "{id}: /cost resolves {got:?}, models.dev (2026-10-24) says {expected:?}"
+        );
+    }
+    // Near-misses: the arms are exact, so ids the fuzzy glm-5 arm still owns keep
+    // its 0.7/0.7 estimate (drift on those is a later slice, not this one).
+    assert_eq!(price_of("glm-5"), Some((0.70, 0.0, 0.0, 0.70)));
+    assert_eq!(price_of("zai-glm-5-4"), Some((0.70, 0.0, 0.0, 0.70)));
+}
+
 /// Moved from `cost.rs`'s in-file tests (module-size gate) and re-priced for #1012:
 /// gemini-2.5-flash is $0.30/MTok input, $2.50/MTok output (models.dev, 2026-10-23).
 #[test]

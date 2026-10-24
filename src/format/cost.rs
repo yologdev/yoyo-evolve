@@ -314,6 +314,12 @@ fn builtin_model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
     if model.contains("glm-4-long") {
         return Some((0.14, 0.0, 0.0, 0.14));
     }
+    if model == "glm-5-2" || model == "zai-glm-5-2" || model == "zai-glm-5-3" {
+        return Some((1.40, 0.0, 0.14, 4.40)); // #1012: models.dev mistral rows (2026-10-24)
+    }
+    if model == "zai-glm-5-3-flash" {
+        return Some((0.15, 0.0, 0.03, 0.50)); // #1012: models.dev (2026-10-24)
+    }
     if model.contains("glm-5") {
         return Some((0.70, 0.0, 0.0, 0.70));
     }
