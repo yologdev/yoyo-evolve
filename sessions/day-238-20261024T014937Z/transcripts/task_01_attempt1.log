@@ -1,0 +1,117 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | head; grep …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,80p tests/config_fifo.r… ✓ (5ms)
+ ✓ (17ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 165,250p src/context.rs; … ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/context.rs; grep -n '"… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "context" tests/module_s… ✓ (7ms)
+  ▶ write src/instruction_size.rs (103 lines)  ▶ edit src/main.rs (1 → 2 lines)
+    mod image_cap;
+  + mod instruction_size;
+  ▶ edit src/context.rs (5 → 12 lines)
+                if !content.is_empty() {
+  +                 // Loud, never quiet-gated, and not a cap (#1070).
+  +                 let plain = crate::format::is_plain_output();
+  +                 if let Some(msg) =
+  +                     crate::instruction_size::oversized_instruction_warning(name, content.len(), plain)
+  +                 {
+  +                     eprintln!("{YELLOW}{msg}{RESET}");
+  +                 }
+                    if !context.is_empty() {
+                        context.push_str("\n\n");
+                    }
+ ✓ (2m 22s)
+ ✓ (6m 48s)
+    mod image_cap;
+  + mod instruction_size;
+ ✓ (10m 36s)
+                if !content.is_empty() {
+  +                 // Loud, never quiet-gated, and not a cap (#1070).
+  +                 let plain = crate::format::is_plain_output();
+  +                 if let Some(msg) =
+  +                     crate::instruction_size::oversized_instruction_warning(name, content.len(), plain)
+  +                 {
+  +                     eprintln!("{YELLOW}{msg}{RESET}");
+  +                 }
+  ... (3 more lines)
+  ▶ write tests/instruction_size.rs (108 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (3m 17s)
+ ✓ (3m 17s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test instruction_si… ✓ (20.2s)
+
+────────────────────────────────────────────────────────────────────────────────
+  11 tools completed in 15m 22s (11 ✓)
+
+The 200 KB stdout fills the pipe buffer while the copied helper polls try_wait without draining — a deadlock, not a yoyo hang. I'll drain via wait_with_output on a thread with a timeout.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (26 lines) ✓ (2.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test instruction_si… ✓ (157ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.3s (2 ✓)
+
+Working — the count is of the trimmed content that reaches the prompt (trailing newline dropped). I'll make the fixture end without a newline so file size and loaded size agree.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's|let tail = format!("\\… ✓ (2.0s)
+
+Now the positive control, atomically and serially:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/instruction_size.rs /tmp/… ✓ (1m 24s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me confirm the binary test specifically went red under the control (output was elided):
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's|    if bytes <= INSTRU… ✓ (10.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (9 lines) ✓ (2m 40s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (19.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (205ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i '23s/let mut child/let ch… ✓ (7m 4s)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 10m 32s (5 ✓)
+
+Everything passes: fmt, clippy, and every cargo test binary, including module_size, so context.rs's 9 added lines fit inside its grace band. Committing:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (32 lines) ✓ (18ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The commit is in. Before I cite #1045 and #1070, I'll check their state, then post the residue comment the task asks for.
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 1045 --json state,… ✓ (596ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue com… (9 lines) ✓ (1.1s)
+  2 tools completed in 17.1s (2 ✓)
+
+I've committed the warning as 9b476be5, titled "Part of #1070". Any project instruction file over 150,000 bytes now prints a yellow warning on stderr when it loads. The full cargo test suite, clippy, fmt --check and the build all pass.
+
+What changed
+• `src/instruction_size.rs` (new): sets the 150,000-byte threshold and has one pure function that builds the warning. The message names the file, its size and an estimated token count (bytes/4), says the whole file goes with every request, and suggests trimming or splitting it. With plain on it uses no glyphs, and the file name is sanitized before printing.
+  • Unit tests: 150,000 bytes is silent; 150,001 warns; 41,713 (this repo's CLAUDE.md) is silent; 2,160,001 warns. Each row is checked with plain on and off, and the 2,160,001 row is checked against the full expected string in both. One more test checks the name sanitizing on bytes.
+• `src/context.rs`: calls the function as each instruction file loads (9 lines added). The warning ignores quiet mode, and the file still loads unchanged — it warns, it doesn't cap. The size counted is the trimmed text that actually reaches the prompt.
+• `tests/instruction_size.rs` (new): runs the real binary.
+  • A 200,000-byte CLAUDE.md produces the warning, and the file's last line still appears in the printed system prompt.
+  • A 41,713-byte one produces no warning.
+• Docs: one sentence added to docs/src/configuration/system-prompts.md.
+
+Things I ran into
+• The copied test helper deadlocks on big output. The run_yoyo_env helper from tests/config_fifo.rs waits for the process without reading its output. With about 200 KB of stdout the pipe fills and the run hangs until the 20-second deadline. My copy reads the output on a separate thread instead. The original in config_fifo.rs still has this problem, but only with large output.
+• Off-by-one in my first fixture. It ended with a newline, which the loader trims, so the warning reported 199,999 bytes. The fixture now has no trailing newline, so the file size and the loaded size match.
+
+Breaking it on purpose: I made the function always return no warning and ran the tests once, restoring the file in the same step. The binary test and all four unit tests that expect a warning failed by name, and the 41,713-byte test still passed. After restoring, everything passed and no NEUTERED marker is left.
+
+Left for later: I commented on #1070 with the sha. That comment went up before the harness pushes, so it points at a commit that is still local for now. Three parts are still open:
+• Capping or truncating large files, which hasn't been decided.
+• Showing the file as a share of the model's context window, which I left out because the loader doesn't know which model is in use.
+• A shared message for /context and /doctor, tracked in #1045, which I checked is still open.
+
+  (interrupted)

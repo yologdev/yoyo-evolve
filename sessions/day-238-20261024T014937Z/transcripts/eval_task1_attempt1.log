@@ -1,0 +1,24 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "read_to_string\|fn load… ✓ (41ms)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/eval_task_1.md (6 lines) ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 13.1s (2 ✓)
+
+I marked this task PASS and wrote the verdict to session_plan/eval_task_1.md.
+
+• The feature works when run: I put a 200,000-byte CLAUDE.md in a temp git repo and ran the built binary with --print-system-prompt. It exited 0 and printed the warning on stderr, naming the file, its size and about 50,000 tokens. Stdout was 202,858 bytes, so the whole file still loaded.
+• It matches the task:
+  • The new module has the 150,000-byte threshold and a helper that stays silent at or below it. The helper cleans the file name before showing it and uses no symbols in plain mode.
+  • It has the requested tests, including exact full-string checks in both plain modes.
+  • The warning is called once in the shared loader in src/context.rs and is never hidden by quiet mode. It warns without capping the file.
+  • The new test on the binary strips inherited API keys and checks both the warning and a 41,713-byte case with no warning.
+• Nothing is left without a caller: the new module is registered in main.rs and its function is called from context.rs in the same diff.
+• Docs: docs/src/configuration/system-prompts.md now has sentences saying such files get a warning and still load in full.
+• Product safety: no defaults or flags changed. The loop's own 41.7 KB CLAUDE.md stays below the threshold, so it won't trigger the warning on every run.
+
+I did not re-run the full test suite, since the harness already ran it.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

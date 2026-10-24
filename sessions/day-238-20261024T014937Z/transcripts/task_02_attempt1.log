@@ -1,0 +1,80 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --short | head;… ✓ (14ms)
+  ▶ $ sed -n 240,290p src/format/cost.rs; sed -n 1965,1990p src/format/cost.rs; (timeo… ✓ (725ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; sed -n 13,87p /tmp/before.txt | g… ✓ (7ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; sed -n 60,90p src/format/cost.rs;… ✓ (9ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; grep -n "#\[test\]" -A3 src/forma… ✓ (6ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; sed -n 1465,1540p src/format/cost… ✓ (15ms)
+  ▶ $ curl -s https://models.dev/api.json | python3 -c ' (5 lines) ✓ (231ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; python3 - <<'… (55 lines) ✓ (31.1s)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 1m 15s (8 ✓)
+
+Red for the right reason. Now the arms in cost.rs:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; python3 - <<'… (27 lines) ✓ (1.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+cost.rs is at 3597, under the 3605 cap. Now the targeted tests, then the after-audit:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; git diff src/format/cost.rs | hea… ✓ (31.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; cp src/format/cost.rs /tmp/cost.b… ✓ (1m 2s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 41s (2 ✓)
+
+With the old price put back in the new arm, the pin failed by name; after the restore it passed again. Now the docs check and the full gate:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; grep -n -i "mistral-small\|flash-… ✓ (4m 5s)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; cargo test 2>&1 | grep -cE "FAILE… ✓ (3m 18s)
+  2 tools completed in 7m 36s (2 ✓)
+
+The docs list the Mistral Small row, and it is now wrong for -latest, so I'm splitting it. Gemini Flash Image and TTS also get rows:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; python3 - <<'… (33 lines) ✓ (43ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Committed. Now the #1012 comment the plan asked for:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; gh issue view… (13 lines) ✓ (1.9s)
+
+/cost now prices mistral-small-latest at $0.15 in, $0.015 cached, $0.60 out, the current models.dev price. Before this it billed at the older mistral-small-2506 rate ($0.10 / $0.30). Build, clippy, fmt and the full cargo test all pass, and it's committed as a6e28da7 (Part of #1012).
+
+What changed
+• Mistral: src/format/cost.rs gets a new arm that matches mistral-small-latest and mistral-small-2603 by exact name. It sits before the old catch-all mistral-small arm. 2603 was in the same drift row before the change, at the same models.dev price as latest, so I named it in advance as the second id this arm would fix. mistral-small-2506 still matches models.dev at $0.10 / $0.30 and keeps that price.
+• Gemini (step 3): there was room under the line cap, so gemini-2.5-flash-image (output $30/MTok) and gemini-2.5-flash-preview-tts ($0.50 in / $10 out) now have exact-match arms too. Before, the plain gemini-2.5-flash arm caught both and billed them at $0.30 / $2.50.
+• Size: cost.rs is at 3597 lines against the 3605 cap.
+
+Price audit against models.dev
+
+| | matched | drifted |
+|---|---|---|
+| Before | 39 | 62 |
+| After | 43 | 58 |
+
+The other fields (114 compared, 13 differing only in cache-read price, 60 unpriced, 174 catalogue rows) didn't change, so models.dev didn't move during the work. The drift count fell by exactly the four ids I named before the run, and nothing newly drifted.
+
+Tests
+• A new test in price_audit_tests.rs checks all four prices through price_of, the same lookup /cost uses. It also checks that mistral-small-2506 and plain gemini-2.5-flash keep their old prices.
+• Positive control, run as one mutate→test→restore command: with the old price put back in the new arm, the test failed by name. With the price restored, it passed.
+• Two existing tests asserted the outdated -latest price:
+  • The previous slice's check said -latest would stay at the old price until this slice, so I removed it.
+  • test_estimate_cost_mistral_small still asserts the $0.10 / $0.30 price, now on mistral-small-2506, which really is that price.
+
+Docs and tracker
+• docs/src/features/cost-tracking.md now has two Mistral Small rows (latest/2603 and other ids) and rows for Gemini Flash Image and TTS.
+• I commented on #1012 with the before/after numbers, the sha, and next candidates. 58 drifted rows remain, the next ones being the zai-glm rows sharing one price and the Gemini 3.x Flash family. The next slice has only 8 lines of room in cost.rs, so its tests should go in price_audit_tests.rs.
+• I posted that comment before the push. The commit is local until the harness pushes it.
+  watch: no files changed this turn — skipping
