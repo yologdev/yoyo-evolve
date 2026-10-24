@@ -378,6 +378,15 @@ fn load_project_context_inner(
         if let Ok(content) = read {
             let content = content.trim();
             if !content.is_empty() {
+                // Loud, never quiet-gated, and not a cap (#1070).
+                let plain = crate::format::is_plain_output();
+                if let Some(msg) = crate::instruction_size::oversized_instruction_warning(
+                    name,
+                    content.len(),
+                    plain,
+                ) {
+                    eprintln!("{YELLOW}{msg}{RESET}");
+                }
                 if !context.is_empty() {
                     context.push_str("\n\n");
                 }
