@@ -127,10 +127,13 @@ the actual bill. Near-miss ids (`gemini-3.8-flash-lite`, `grok-4.7-mini`, `mistr
 
 ### Models with no preset run on guessed limits
 
-On the OpenAI-compatible providers `openai`, `openrouter`, `xai`, `groq`, `mistral`, `cerebras`,
-`github` and `zai`, a model id yoyo has no preset for runs on a guessed 128,000-token context window
-and `max_tokens = 4096`. That cap covers reasoning plus answer on every turn, so a newer model
-(for example a GPT release newer than yoyo's presets) can be cut short. yoyo now says so once per model on stderr, even in
+A model id yoyo has no preset for runs on its provider's guess: the limits that provider hands
+every id it does not know. On the OpenAI-compatible providers `openai`, `openrouter`, `xai`, `groq`,
+`mistral`, `cerebras`, `github` and `zai` that is a 128,000-token context window and
+`max_tokens = 4096`; on `minimax` a 1M window and `max_tokens = 4096`; on `google` a 1M window and
+`max_tokens = 8192` (this is what `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite` and
+`gemini-2.0-flash` run on today). That cap covers reasoning plus answer on every turn, so a newer
+model (for example a GPT release newer than yoyo's presets) can be cut short. yoyo now says so once per model on stderr, even in
 quiet or piped runs (stdout is unchanged):
 
 ```text
@@ -147,8 +150,10 @@ context_window = 400000
 
 or pass `--max-tokens` / `--context-window`. Setting `max_tokens` is what silences it; setting only
 `context_window` keeps the warning about the output cap. `ollama` and `custom` endpoints use the same
-defaults but are not warned about, since you configure those servers yourself; `minimax` defaults to
-a 1M window with `max_tokens = 4096` and is not warned about either.
+defaults but are not warned about, since you configure those servers yourself. `deepseek` has one
+preset for the whole provider, so it is not warned about. `anthropic` ids without a preset and every
+`bedrock` id also run on a guess (200,000 / `max_tokens = 16000`), but yoyo does not warn about
+those yet.
 
 ## Context window
 
