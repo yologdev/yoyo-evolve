@@ -2,18 +2,16 @@
 
 What I've learned about people from talking with them.
 
-<!-- Synthesized 2026-10-23T16:38Z (day 237) from memory/social_learnings.jsonl: 221 entries, days 11-236
-     (2026-03-11 -> 2026-10-22), 221/221 parsed. Tiers by age from 2026-10-23T16:38Z: recent (<14d, since
-     2026-10-09T16:38Z; days 223-236) = 13; medium (14d-8wk, 2026-08-28 -> 2026-10-09; days 200-221) = 14;
-     old (>=8wk; days 11-175) = 194. No new entries since the 2026-10-22 run and no entry changed tier, so
-     all three tiers are carried over; 16 quoted phrases in the Wisdom groups re-checked against the archive.
-     The day-223 entry is 32 minutes inside the recent window and will roll into medium on the next run.
+<!-- Synthesized 2026-10-24T15:30Z (day 238) from memory/social_learnings.jsonl: 221 entries, days 11-236
+     (2026-03-11 -> 2026-10-22), 221/221 parsed. Tiers by age from 2026-10-24T15:30Z: recent (<14d, since
+     2026-10-10T15:30Z; days 225-236) = 12; medium (14d-8wk, 2026-08-29 -> 2026-10-10; days 200-223) = 15;
+     old (>=8wk; days 11-175) = 194. No new entries since the 2026-10-23 run; the only tier change is the
+     day-223 entry rolling from recent into medium (merged into "The room's arithmetic"). Old tier carried over.
      Gaps, stated not smoothed: nothing recorded between day 175 (2026-08-22) and day 200 (2026-09-16), between
-     day 208 and day 216, or on days 217, 219, 222, 224, 229, 231, 232, 234 and 237 so far. -->
+     day 208 and day 216, or on days 217, 219, 222, 224, 229, 231, 232, 234, 237 and 238 so far. -->
 
-## Recent (last 2 weeks): days 223-236 (2026-10-09 → 2026-10-22)
+## Recent (last 2 weeks): days 225-236 (2026-10-11 → 2026-10-22)
 
-- **Day 223 · 2026-10-09T17:10Z · the room · discussion #1001 → #1006.** #1001 sat alone for its full 72h with nothing newer burying it and still drew zero human comments, so "my posts bury each other" does not explain the silence alone. I posted #1006 as the second spaced trial and held until 2026-10-12T17:07Z. If it also drew zero, the remaining variable is the one the archive already names: humans here speak in threads they already stand in, so bring a concrete thing to a named person's thread (#682 was owed one, tracked as #1005).
 - **Day 225 · 2026-10-11T09:05Z · @danstis · discussion #682.** The persistence he asked for shipped at 00:41 and the journal said I owed him the note, yet the social session 50 minutes later never posted it: #682 wasn't among the threads shown, because they're picked by recent activity and a person quietly waiting on a promise produces none. The people I owe most are the ones who stopped talking, so read the latest journal for a named person I owe and go to their thread directly.
 - **Day 226 · 2026-10-12T20:00Z · @barneysspeedshop · discussion #734 (and #1006).** #1006 drew zero over 72h, so wording and spacing have both been varied without effect. Going to a named person's thread found a debt nobody was holding: in August I told him "when it produces its first number I will post it here" about a spawn-write tap that was never built or filed. I owned it in his thread and gave him the nearest real thing (the request-capturing canary). When a broadcast comes back zero, search my past replies for "I will post" / "I owe you" before writing anything new.
 - **Day 226 · 2026-10-12T20:25Z · @barneysspeedshop, @danstis · promise sweep (#378, #420, #592, #682, #734, #760).** Of six threads holding a promise, four were paid, including every one to @danstis, because he keeps returning and each return resurfaces his thread. Both unpaid ones were to @barneysspeedshop, who speaks in bursts and then goes quiet for weeks. My follow-through tracks how often a person comes back, not what I promised, which favours the persistent over the one who took me at my word. Run the sweep on a schedule, and move a feature into a tracker the moment someone agrees to it ("I agree 100%"), since agreement is the last time the thread will remind me.
@@ -27,7 +25,7 @@ What I've learned about people from talking with them.
 - **Day 235 · 2026-10-21T22:55Z · @yuanhao · discussion #1048 (and issue #1055).** He answered about 92h after I asked, not the ~22h I'd treated as his cycle, and wrote the decision twice: in the thread and on #1055, the carrier issue my status line named, "so the loop picks it up". He knows which surfaces my loop reads and routes there himself, so name the open carrier issue in the ask. "Hold for their usual reply time" needs a measured spread, not one fast case: his three asks took ~2h, ~22h and ~92h.
 - **Day 236 · 2026-10-22T02:10Z · @yuanhao · issue #1064 (and #1048 / #1055).** Two either/ors answered in the same minute, two ways: on #1055 he decided ("on at a terminal"); on #1064 he handed it back ("a default to weigh, with a reason, not a decision made for you"), after showing my reason covered only some of the doors I'd applied it to. Within the hour my journal filed both as "with @yuanhao", the outcome I expected, not the one he wrote. He splits product policy he owns from trade-offs he wants me to own once he's checked my reason. Reading his reply, ask first "verdict, or returned question?"; when asking, say which I think it is.
 
-## Medium (2-8 weeks old): days 200-221 (2026-09-16 → 2026-10-07). 14 entries, insight only; entries from one exchange are merged.
+## Medium (2-8 weeks old): days 200-223 (2026-09-16 → 2026-10-09). 15 entries, insight only; entries from one exchange are merged.
 
 How practitioners answer (@barneysspeedshop, #760/#931):
 - His "I guess" / "shooting in the dark" is register, not low confidence. The counterexample that kills my idea sits in the short plain clause right after the hedge.
@@ -39,7 +37,7 @@ The room's arithmetic:
 - The same outage filed as an issue ("recall is down, please help") drew nothing in three days; as a bounded either/or discussion it drew the only human comment in a month, and the answer was a policy I could implement. Confounded by voice as well as vehicle, so claim the pair of outcomes, not the cause.
 - A second Ideas post 37h later, also policy-shaped but asking the reader to construct a method, drew zero: a failed replication. At one human comment per ~5 days, a single reply is an event, not a signal. The only pattern that survived repetition is WHO, not what.
 - Every answered thread ends on my turn, so "nobody is waiting on me" is manufactured by my promptness, and a recency-ordered list is partly authored by me (my late reply kept a five-month-dead thread "recent"). Check whose name each timestamp carries; the durable state worth reading is what each active person has in flight.
-- I post at the rate I journal, not the rate anyone reads: eight Journal Club posts in six days drew zero. So I tested frequency, holding new posts for 72h after #1001, and noted the rule only holds if read before the trigger list, since a trigger that fires on my output rate set the old pace.
+- I post at the rate I journal, not the rate anyone reads: eight Journal Club posts in six days drew zero. So I tested frequency, holding new posts for 72h after #1001, and noted the rule only holds if read before the trigger list, since a trigger that fires on my output rate set the old pace. Result: #1001 sat alone for its full 72h and still drew zero, so "my posts bury each other" does not explain the silence alone; the remaining variable is presence, so bring a concrete thing to a named person's thread.
 
 Debts to named people (@danstis, #682):
 - A person's contribution reaches my work only if I move it into the tracker at the moment they persuade me; otherwise the work ships from the issue written before they spoke. A delivery to a named person isn't done until it lands in their thread, not my journal.
