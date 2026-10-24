@@ -1109,6 +1109,166 @@ fi
 check "evolve.sh: the wrap-up runs the auto-label before its commit" \
     "$(awk '/^label_unlabelled_self_issues$/{l=NR} /^commit_scope_gate "\$WRAPUP_SCOPE" wrapup$/{c=NR} END{print (l && c && l<c) ? "yes" : "no"}' "$SCRIPT")" "yes"
 
+# ── synthesize.yml: skip unchanged archives; record spend (#944, #1071) ─────
+SYN="$ROOT/scripts/synthesize_state.sh"
+SYN_WF="$ROOT/.github/workflows/synthesize.yml"
+syn_case() { # $1 = setup commands run in a temp repo dir; then $2 = command → its output, newlines as ' ; '
+    ( set +e; d=$(mktemp -d); cd "$d" || exit 1; mkdir -p memory dreams .yoyo
+      SYNTH_WORK_DIR="$d/work"; export SYNTH_WORK_DIR
+      source "$SYN"; eval "$1"; eval "$2" 2>/dev/null | tr '\n' ';' | sed 's/;/ ; /g; s/ ; $//'
+      cd /; rm -rf "$d" )
+}
+if require "synthesize_state.sh exists" "$( [ -f "$SYN" ] && echo yes)"; then
+    SYN_SETUP='echo a > memory/learnings.jsonl; echo b > memory/social_learnings.jsonl; : > dreams/dream_log.jsonl; echo "# Active Learnings" > memory/active_learnings.md; echo "# Active Social Learnings" > memory/active_social_learnings.md'
+    check "synthesize plan: first run (no state) synthesizes every non-empty archive" \
+        "$(syn_case "$SYN_SETUP" 'synth_plan | grep -E "^(run_|skip)"')" "run_learnings=true ; run_social=true ; run_dreams=false ; skip=false"
+    check "synthesize plan: an archive unchanged since its last synthesis is skipped" \
+        "$(syn_case "$SYN_SETUP; synth_record learnings \$(synth_sha memory/learnings.jsonl)" 'synth_plan | grep -E "^(run_|skip)"')" "run_learnings=false ; run_social=true ; run_dreams=false ; skip=false"
+    check "synthesize plan: a changed archive runs again" \
+        "$(syn_case "$SYN_SETUP; synth_record learnings \$(synth_sha memory/learnings.jsonl); echo more >> memory/learnings.jsonl" 'synth_plan | grep -E "^run_learnings"')" "run_learnings=true"
+    check "synthesize plan: nothing changed -> the whole job skips" \
+        "$(syn_case "$SYN_SETUP; synth_record learnings \$(synth_sha memory/learnings.jsonl); synth_record social \$(synth_sha memory/social_learnings.jsonl)" 'synth_plan | grep -E "^skip"')" "skip=true"
+    check "synthesize plan: a manual run (FORCE) synthesizes every non-empty archive" \
+        "$(syn_case "$SYN_SETUP; synth_record learnings \$(synth_sha memory/learnings.jsonl)" 'FORCE=true synth_plan | grep -E "^run_"')" "run_learnings=true ; run_social=true ; run_dreams=false"
+    check "synthesize record: a second record replaces the key, keeps the others" \
+        "$(syn_case 'synth_record learnings aaa; synth_record social bbb; synth_record learnings ccc' 'cat memory/.synthesize_inputs')" "learnings ccc ; social bbb"
+    SYN_USAGE='synth_usage_mark learnings; printf "%s\n" "{\"type\":\"tool\"}" "{\"type\":\"usage\",\"cost_usd\":1.5}" >> .yoyo/audit.jsonl; synth_usage_collect learnings ran; synth_usage_mark social; synth_usage_collect social failed'
+    check "synthesize spend: one row; usage per step; a step with no usage is no_terminal_emit; skipped steps named" \
+        "$(syn_case "$SYN_USAGE" 'synth_spend_row | python3 -c "import json,sys; r=json.load(sys.stdin); print(r[\"phase\"], r[\"steps\"], [u[\"cost_usd\"] for u in r[\"usage_records\"]])"')" "synthesize {'learnings': 'ran', 'social': 'failed, no_terminal_emit', 'dreams': 'skipped'} [1.5]"
+    check "synthesize spend: steps that ran but recorded nothing -> usage no_terminal_emit, never zero" \
+        "$(syn_case 'synth_usage_mark learnings; synth_usage_collect learnings ran' 'synth_spend_row | python3 -c "import json,sys; r=json.load(sys.stdin); print(r.get(\"usage\"), \"usage_records\" in r)"')" "no_terminal_emit False"
+    check "synthesize spend: no step ran -> no row" "$(syn_case '' 'synth_spend_row')" ""
+    check "synthesize plan: an unchanged archive whose active file is missing runs again" \
+        "$(syn_case "$SYN_SETUP; synth_record learnings \$(synth_sha memory/learnings.jsonl); rm memory/active_learnings.md" 'synth_plan | grep -E "^run_learnings"')" "run_learnings=true"
+    SYN_OK='synth_output_ok learnings && echo ok || echo no'
+    check "synthesize output: a fresh file with its header counts as regenerated" \
+        "$(syn_case 'echo old > memory/active_learnings.md.bak; printf "# Active Learnings\nnew\n" > memory/active_learnings.md' "$SYN_OK")" "ok"
+    check "synthesize output: exit 0 but the file was not rewritten (same as backup) is not success" \
+        "$(syn_case 'printf "# Active Learnings\nold\n" > memory/active_learnings.md; cp memory/active_learnings.md memory/active_learnings.md.bak' "$SYN_OK")" "no"
+    check "synthesize output: a wrong header or an empty file is not success" \
+        "$(syn_case 'printf "Here is the file\n" > memory/active_learnings.md' "$SYN_OK") $(syn_case ': > memory/active_learnings.md' "$SYN_OK")" "no no"
+    check "synthesize spend: a step that started but never finished is counted as interrupted, with its usage" \
+        "$(syn_case 'synth_usage_mark learnings; printf "%s\n" "{\"type\":\"usage\",\"cost_usd\":2}" >> .yoyo/audit.jsonl; synth_claim_interrupted "learnings social"' 'synth_spend_row | python3 -c "import json,sys; r=json.load(sys.stdin); print(r[\"steps\"], [u[\"cost_usd\"] for u in r[\"usage_records\"]])"')" "{'learnings': 'interrupted', 'social': 'not_run', 'dreams': 'skipped'} [2]"
+    check "synthesize spend: planned steps that never started -> no row" \
+        "$(syn_case 'synth_claim_interrupted "learnings social"' 'synth_spend_row')" ""
+    check "synthesize spend: a row that cannot be built says so, never 'no step ran'" \
+        "$(syn_case 'synth_usage_mark learnings; synth_usage_collect learnings ran; python3() { return 1; }' 'synth_persist_spend learnings 2>&1')" "Spend sink: FAILED at step build-row ;  row not persisted."
+fi
+for k in learnings social dreams; do
+    check "synthesize.yml: the $k step runs only when its archive changed, with YOYO_AUDIT on" \
+        "$(awk -v k="$k" '/^      - name: /{blk=""} {blk=blk $0 "\n"} /^        run: \|/{ if (blk ~ ("run_" k " == .true.") && blk ~ /YOYO_AUDIT: "1"/) n++ } END{print n+0}' "$SYN_WF")" "1"
+done
+for k in learnings social dreams; do
+    check "synthesize.yml: the $k step marks its own key and needs real output to record its hash" \
+        "$(grep -c "synth_usage_mark $k\$" "$SYN_WF")$(grep -c "yoyo < \"\$PROMPT\" && synth_output_ok $k; then" "$SYN_WF")" "11"
+done
+check "synthesize.yml: the spend step is told which steps were planned" \
+    "$(grep -c 'synth_persist_spend "\$PLANNED"' "$SYN_WF")" "1"
+check "synthesize.yml: the spend row is recorded even when a step failed (always())" \
+    "$(grep -A3 'name: Record spend on audit-log' "$SYN_WF" | grep -c "if: always() && steps.check.outputs.skip == 'false'")" "1"
+check "synthesize.yml: the input-hash state is committed with the active files" \
+    "$(grep -c 'dreams/active_dream_arc.md memory/.synthesize_inputs; do' "$SYN_WF")" "1"
+
+# ── synthesize.yml end-to-end: step bodies run against a stub yoyo ──────────
+syn_has() { case "$1" in *"$2"*) echo yes ;; *) echo no ;; esac; }
+syn_step() { # $1 = step name → "ENV k: v" and "RUN line" from the shipped workflow
+    awk -v n="      - name: $1" '
+        $0 == n {on=1; next}
+        on && /^      - name: /{exit}
+        on && /^          [A-Z_]+: /{ sub(/^ +/,""); print "ENV " $0; next }
+        on && /^        run: \|/{body=1; next}
+        on && body { if ($0 !~ /^          / && $0 != "") exit; sub(/^          /,""); print "RUN " $0 }' "$SYN_WF"
+}
+syn_run() { # $1 = yoyo exit for learnings, $2 social, $3 dreams → state + spend row
+    ( set +e; d=$(mktemp -d); cd "$d" || exit 1; mkdir -p memory dreams .yoyo bin scripts; cp "$SYN" scripts/
+      echo a > memory/learnings.jsonl; echo b > memory/social_learnings.jsonl; echo c > dreams/dream_log.jsonl
+      export SYNTH_WORK_DIR="$d/work" RUNNER_TEMP="$d"
+      printf '#!/bin/sh\nshift; exec "$@"\n' > bin/timeout
+      # Stub yoyo: one usage record per call only under YOYO_AUDIT=1 (cost = 1,2,3 by call order); exits $YOYO_RC.
+      # Stub yoyo: writes the file its prompt names, starting with the header the prompt
+      # gives; one usage record per call only under YOYO_AUDIT=1 (cost 1,2,3 by call order); exits $YOYO_RC.
+      cat > bin/yoyo <<'STUB'
+#!/bin/sh
+p=$(cat)
+n=$(($(cat .yoyo/n 2>/dev/null || echo 0)+1)); echo $n > .yoyo/n
+[ "$YOYO_AUDIT" = 1 ] && echo "{\"type\":\"usage\",\"cost_usd\":$n}" >> .yoyo/audit.jsonl
+f=$(printf '%s\n' "$p" | sed -n 's/.*Write the result to \([^ ]*\.md\)\. Start with:.*/\1/p' | head -1)
+h=$(printf '%s\n' "$p" | awk '/Start with:/{getline; print; exit}' | sed 's/^ *//')
+[ -n "$f" ] && printf '%s\nbody %s\n' "$h" "$n" > "$f"
+exit "$YOYO_RC"
+STUB
+      chmod +x bin/*; export PATH="$d/bin:$PATH"
+      plan=$( . "$SYN"; synth_plan 2>/dev/null )
+      for kr in "learnings:$1:Synthesize active learnings" "social:$2:Synthesize active social learnings" "dreams:$3:Synthesize active dream arc"; do
+          rc=${kr#*:}; name=${rc#*:}; rc=${rc%%:*}
+          step=$(syn_step "$name")
+          ( while IFS= read -r l; do
+                [ -n "$l" ] || continue; kv=${l#ENV }; k=${kv%%:*}
+                v=$(printf '%s' "$kv" | sed -n 's/.*steps\.check\.outputs\.\([a-z_]*\).*/\1/p')
+                if [ -n "$v" ]; then export "$k=$(printf '%s\n' "$plan" | sed -n "s/^$v=//p")"
+                else export "$k=$(printf '%s' "${kv#*: }" | sed 's/ *#.*//; s/^"//; s/"$//')"; fi
+            done <<< "$(printf '%s\n' "$step" | grep '^ENV ' | grep -v 'secrets\.')"
+            printf '%s\n' "$step" | sed -n 's/^RUN //p' > step.sh
+            YOYO_RC=$rc bash step.sh >/dev/null 2>&1 )
+      done
+      echo "state=$(tr '\n' ',' < memory/.synthesize_inputs 2>/dev/null)"
+      ( . "$SYN"; synth_spend_row ) | python3 -c 'import json,sys; r=json.load(sys.stdin); print("steps=%s" % ",".join("%s:%s" % kv for kv in r["steps"].items())); print("costs=%s" % [u["cost_usd"] for u in r.get("usage_records",[])])' 2>/dev/null || echo "row=none"
+      cd /; rm -rf "$d" )
+}
+E_SA=$(printf 'a\n' | shasum -a 256 | cut -d' ' -f1); E_SB=$(printf 'b\n' | shasum -a 256 | cut -d' ' -f1); E_SC=$(printf 'c\n' | shasum -a 256 | cut -d' ' -f1)
+if require "synthesize.yml step bodies extracted" "$(syn_step 'Synthesize active learnings' | grep '^RUN ')"; then
+E_OK=$(syn_run 0 0 0); E_MIX=$(syn_run 0 1 0)
+check "synthesize e2e: all succeed -> each key records its OWN archive sha" "$(syn_has "$E_OK" "state=dreams $E_SC,learnings $E_SA,social $E_SB,")" "yes"
+check "synthesize e2e: each step collects only its own usage record"       "$(syn_has "$E_OK" "costs=[1, 2, 3]")" "yes"
+check "synthesize e2e: a failed step records no sha, others do"           "$(syn_has "$E_MIX" "state=dreams $E_SC,learnings $E_SA,")" "yes"
+check "synthesize e2e: a failed step is still counted, with its usage"    "$(syn_has "$E_MIX" "steps=learnings:ran,social:failed,dreams:ran")" "yes"
+check "synthesize e2e: the failed step's usage is in the row"             "$(syn_has "$E_MIX" "costs=[1, 2, 3]")" "yes"
+fi
+
+# ── synthesize: the spend row reaches audit-log (bare origin, one rejected push) ─
+syn_sink_case() { # $1 = with-branch|no-branch  [$2 = reject-once]
+    ( set +e
+      export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t GIT_CONFIG_NOSYSTEM=1
+      d=$(mktemp -d) && cd "$d"; export HOME="$d/home" RUNNER_TEMP="$d" && mkdir -p "$HOME"
+      git init -q --bare -b main origin.git
+      git init -q -b main seed && cd seed
+      echo a > tracked.txt && git add tracked.txt && git commit -qm init
+      git remote add origin "$d/origin.git" && git push -q origin main
+      if [ "$1" = with-branch ]; then
+          git checkout -q --orphan audit-log && git rm -rq --cached . && rm -f tracked.txt
+          mkdir -p sessions/day-1-x && echo '{}' > sessions/day-1-x/outcome.json
+          git add sessions && git commit -qm audit && git push -q origin audit-log
+      fi
+      if [ "${2:-}" = reject-once ]; then
+          printf '#!/bin/sh\n[ -f "%s/rejected" ] && exit 0\ntouch "%s/rejected"; exit 1\n' "$d" "$d" > "$d/origin.git/hooks/pre-receive"
+          chmod +x "$d/origin.git/hooks/pre-receive"
+      fi
+      cd "$d" && git clone -q origin.git work 2>/dev/null && cd work
+      echo b > tracked.txt && git add tracked.txt && echo u > untracked.txt
+      before="$(git status --porcelain)|$(git ls-files -s)|$(git rev-parse HEAD)"
+      export SYNTH_WORK_DIR="$d/w"; source "$SYN"
+      synth_usage_mark learnings; echo '{"type":"usage","cost_usd":1.5}' >> "$d/w/a"; SYNTH_AUDIT_FILE="$d/w/a" synth_usage_collect learnings ran
+      for _ in $(seq "${3:-1}"); do synth_persist_spend learnings 2>&1; echo "rc=$?"; done
+      after="$(git status --porcelain)|$(git ls-files -s)|$(git rev-parse HEAD)"
+      [ "$before" = "$after" ] && echo "main=same" || echo "main=CHANGED"
+      echo "worktrees=$(git worktree list | wc -l | tr -d ' ')"
+      if git --git-dir="$d/origin.git" rev-parse -q --verify refs/heads/audit-log >/dev/null; then
+          rows=$(git --git-dir="$d/origin.git" show "audit-log:phases/synthesize/spend.jsonl" 2>/dev/null || true)
+          echo "rows=$(printf '%s' "$rows" | grep -c . || true)"; printf '%s\n' "$rows" | sed 's/^/ROW /'
+          git --git-dir="$d/origin.git" cat-file -e audit-log:sessions/day-1-x/outcome.json && echo "sessions=kept"
+      fi
+      cd /; rm -rf "$d" ) 2>&1
+}
+P_SA=$(syn_sink_case with-branch); P_SD=$(syn_sink_case no-branch); P_SF=$(syn_sink_case with-branch reject-once)
+check "synthesize sink: one row on origin/audit-log"           "$(syn_has "$P_SA" 'rows=1')" "yes"
+check "synthesize sink: the row is phase synthesize with usage" "$(syn_has "$P_SA" 'ROW {"ts"')$(syn_has "$P_SA" '"phase":"synthesize","steps":{"learnings":"ran"')$(syn_has "$P_SA" '"cost_usd":1.5')" "yesyesyes"
+check "synthesize sink: earlier audit-log content kept"         "$(syn_has "$P_SA" 'sessions=kept')" "yes"
+check "synthesize sink: main untouched, temp worktree removed"  "$(syn_has "$P_SA" 'main=same')$(syn_has "$P_SA" 'worktrees=1')" "yesyes"
+check "synthesize sink: no audit-log branch -> skipped, rc 0, none created" "$(syn_has "$P_SD" 'Spend sink: skipped')$(syn_has "$P_SD" 'rc=0')$(syn_has "$P_SD" 'rows=')" "yesyesno"
+P_S2=$(syn_sink_case with-branch "" 2)
+check "synthesize sink: two runs -> two rows (appended, not overwritten)" "$(syn_has "$P_S2" 'rows=2')" "yes"
+check "synthesize sink: one rejected push -> retry lands one row" "$(syn_has "$P_SF" 'rows=1')$(syn_has "$P_SF" 'FAILED')" "yesno"
+
 check "skill_evolve.sh: diff-scope guard lists a retire by its attic path (-M)" \
     "$(grep -c 'CHANGED_FILES=$(git diff --name-only -M ' "$SE")" "1"
 

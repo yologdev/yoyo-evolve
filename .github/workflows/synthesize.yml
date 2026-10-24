@@ -16,20 +16,14 @@ jobs:
 
       - name: Check if synthesis needed
         id: check
+        env:
+          # A manual run synthesizes every non-empty archive.
+          FORCE: ${{ github.event_name == 'workflow_dispatch' }}
         run: |
-          LEARNINGS_COUNT=$(grep -c '.' memory/learnings.jsonl 2>/dev/null) || LEARNINGS_COUNT=0
-          SOCIAL_COUNT=$(grep -c '.' memory/social_learnings.jsonl 2>/dev/null) || SOCIAL_COUNT=0
-          DREAM_COUNT=$(grep -c '.' dreams/dream_log.jsonl 2>/dev/null) || DREAM_COUNT=0
-          echo "learnings=$LEARNINGS_COUNT" >> "$GITHUB_OUTPUT"
-          echo "social=$SOCIAL_COUNT" >> "$GITHUB_OUTPUT"
-          echo "dreams=$DREAM_COUNT" >> "$GITHUB_OUTPUT"
-          if [ "$LEARNINGS_COUNT" -eq 0 ] && [ "$SOCIAL_COUNT" -eq 0 ] && [ "$DREAM_COUNT" -eq 0 ]; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "No archive entries — skipping synthesis."
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-            echo "Learnings: $LEARNINGS_COUNT entries, Social: $SOCIAL_COUNT entries, Dreams: $DREAM_COUNT entries"
-          fi
+          # Skip each step whose archive is unchanged since its last synthesis
+          # (memory/.synthesize_inputs); see scripts/synthesize_state.sh.
+          source scripts/synthesize_state.sh
+          synth_plan >> "$GITHUB_OUTPUT"
 
       - name: Install Rust toolchain
         if: steps.check.outputs.skip != 'true'
@@ -64,11 +58,15 @@ jobs:
           cp dreams/active_dream_arc.md dreams/active_dream_arc.md.bak 2>/dev/null || true
 
       - name: Synthesize active learnings
-        if: steps.check.outputs.skip != 'true'
+        if: steps.check.outputs.run_learnings == 'true'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          YOYO_AUDIT: "1"   # usage records for the spend row (#944, #1071)
+          ARCHIVE_SHA: ${{ steps.check.outputs.sha_learnings }}
         run: |
+          source scripts/synthesize_state.sh
+          synth_usage_mark learnings
           PROMPT=$(mktemp)
           cat > "$PROMPT" <<'SYNTHEOF'
           You are synthesizing yoyo's learning archive into an active context file.
@@ -88,7 +86,11 @@ jobs:
           Self-reflection — what I've learned about how I work, what I value, and how I'm growing.
           SYNTHEOF
 
-          if ! timeout 600 yoyo < "$PROMPT"; then
+          if timeout 600 yoyo < "$PROMPT" && synth_output_ok learnings; then
+            synth_usage_collect learnings ran
+            synth_record learnings "$ARCHIVE_SHA"
+          else
+            synth_usage_collect learnings failed
             echo "::error::Learnings synthesis failed/timed out — active_learnings.md NOT regenerated (kept stale backup)"
             if [ -f memory/active_learnings.md.bak ]; then
               cp memory/active_learnings.md.bak memory/active_learnings.md
@@ -101,11 +103,15 @@ jobs:
           rm -f "$PROMPT"
 
       - name: Synthesize active social learnings
-        if: steps.check.outputs.skip != 'true'
+        if: steps.check.outputs.run_social == 'true'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          YOYO_AUDIT: "1"   # usage records for the spend row (#944, #1071)
+          ARCHIVE_SHA: ${{ steps.check.outputs.sha_social }}
         run: |
+          source scripts/synthesize_state.sh
+          synth_usage_mark social
           PROMPT=$(mktemp)
           cat > "$PROMPT" <<'SYNTHEOF'
           You are synthesizing yoyo's social learning archive into an active context file.
@@ -125,7 +131,11 @@ jobs:
           What I've learned about people from talking with them.
           SYNTHEOF
 
-          if ! timeout 600 yoyo < "$PROMPT"; then
+          if timeout 600 yoyo < "$PROMPT" && synth_output_ok social; then
+            synth_usage_collect social ran
+            synth_record social "$ARCHIVE_SHA"
+          else
+            synth_usage_collect social failed
             echo "::error::Social synthesis failed/timed out — active_social_learnings.md NOT regenerated (kept stale backup)"
             if [ -f memory/active_social_learnings.md.bak ]; then
               cp memory/active_social_learnings.md.bak memory/active_social_learnings.md
@@ -138,11 +148,15 @@ jobs:
           rm -f "$PROMPT"
 
       - name: Synthesize active dream arc
-        if: steps.check.outputs.skip != 'true' && steps.check.outputs.dreams != '0'
+        if: steps.check.outputs.run_dreams == 'true'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          YOYO_AUDIT: "1"   # usage records for the spend row (#944, #1071)
+          ARCHIVE_SHA: ${{ steps.check.outputs.sha_dreams }}
         run: |
+          source scripts/synthesize_state.sh
+          synth_usage_mark dreams
           PROMPT=$(mktemp)
           cat > "$PROMPT" <<'SYNTHEOF'
           You are synthesizing yoyo's dream archive into an active context file.
@@ -166,9 +180,11 @@ jobs:
           The trajectory of my dreaming — every cycle, compressed. Recent in full, older by theme.
           SYNTHEOF
 
-          if ! timeout 600 yoyo < "$PROMPT" \
-             || [ ! -s dreams/active_dream_arc.md ] \
-             || ! head -1 dreams/active_dream_arc.md | grep -q '^# Active Dream Arc'; then
+          if timeout 600 yoyo < "$PROMPT" && synth_output_ok dreams; then
+            synth_usage_collect dreams ran
+            synth_record dreams "$ARCHIVE_SHA"
+          else
+            synth_usage_collect dreams failed
             echo "::error::Dream arc synthesis failed/timed out or invalid output — active_dream_arc.md NOT regenerated (kept stale backup)"
             if [ -f dreams/active_dream_arc.md.bak ]; then
               cp dreams/active_dream_arc.md.bak dreams/active_dream_arc.md
@@ -191,7 +207,7 @@ jobs:
           # Stage each active file that exists (untracked-aware, so a fork's
           # first-ever arc/memory file gets committed, not silently skipped —
           # git diff --quiet reports "no change" for an UNtracked file).
-          for f in memory/active_learnings.md memory/active_social_learnings.md dreams/active_dream_arc.md; do
+          for f in memory/active_learnings.md memory/active_social_learnings.md dreams/active_dream_arc.md memory/.synthesize_inputs; do
             if [ -f "$f" ]; then git add "$f"; fi
           done
           if git diff --cached --quiet 2>/dev/null; then
@@ -203,3 +219,16 @@ jobs:
           # the rebase refuses locally ("You have unstaged changes") — #558.
           git pull --rebase --autostash || { echo "ERROR: Rebase failed — likely a concurrent push. Will retry next run."; git rebase --abort 2>/dev/null; exit 1; }
           git push
+
+      - name: Record spend on audit-log
+        # Runs whatever the synthesis steps did, so a failed or timed-out step
+        # is still counted. Fail-soft: never fails the job.
+        if: always() && steps.check.outputs.skip == 'false'
+        env:
+          PLANNED: >-
+            ${{ steps.check.outputs.run_learnings == 'true' && 'learnings' || '' }}
+            ${{ steps.check.outputs.run_social == 'true' && 'social' || '' }}
+            ${{ steps.check.outputs.run_dreams == 'true' && 'dreams' || '' }}
+        run: |
+          source scripts/synthesize_state.sh
+          synth_persist_spend "$PLANNED"

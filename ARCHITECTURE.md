@@ -1671,3 +1671,37 @@ It covers evolve sessions only.
 **Not counted:** ignored files (the handoff's `git add -A` never carried them). **Branches:** nothing deletes one (no `branch -d/-D` anywhere in spawn). **Residue, filed:** a *clean*, still-running `--bg` worker older than 1h can still be swept from under itself — nothing records live workers' worktree paths (#1057).
 
 **Positive control:** dropping `uncommitted == 0` from the clean test (atomic mutate→test→restore, marker on the line) reddened `dirty_worktree_is_kept_with_its_uncommitted_file` and `stale_sweep_keeps_dirty_and_removes_clean` by name; restored, 10/10 green.
+
+### `.github/workflows/synthesize.yml` + `scripts/synthesize_state.sh` — 2026-10-25 (#1071, Discussion #1079, #944)
+
+**Spend row.** Synthesis was the one recurring loop with no spend record: its three `timeout 600 yoyo < "$PROMPT"` calls ran without `YOYO_AUDIT`, and the workflow is protected, so yoyo could not add one.
+- Each step now runs with `YOYO_AUDIT: "1"`.
+- `synth_usage_mark` and `synth_usage_collect` keep the `"type":"usage"` records each step appends to `.yoyo/audit.jsonl`.
+- A final `always()` step appends one row per run to `audit-log:phases/synthesize/spend.jsonl`, as `{"ts","phase":"synthesize","steps":{key: "ran|failed|skipped[, no_terminal_emit]"},"usage_records":[...]}`. A run that left no usage record writes `"usage":"no_terminal_emit"`, never a zero.
+- This is the shape `extract_trajectory.py`'s phase reader takes for social and dream; extra keys are ignored. The persist is a copy of `scripts/social.sh`'s `persist_social_spend`: a detached temp worktree, one retry on a rejected push, fail-soft.
+- Its reader side (`PHASE_SPEND_PHASES`) is yoyo's half of #1071.
+
+**Skip-when-unchanged.** Every step re-read its whole archive daily. `learnings.jsonl` is 1.49 MB, about 370K tokens, read in an agent loop that resends the growing context. The only skip was "all three archives empty", which never happens.
+- `memory/.synthesize_inputs` (tracked, committed with the active files) records each archive's sha256 as of its last **successful** synthesis.
+- `synth_plan` skips a step whose archive still has that hash, and the whole job when none changed. A manual dispatch forces every non-empty archive.
+- A failed or restored step records nothing, so it runs again next time.
+
+**Hardened in review (same commit):**
+- **The exit code is not success.** yoyo in piped mode exits 0 even when the model never wrote its file: a turn limit, an answer in chat, or a stub. Recording the hash on exit 0 alone would have locked a bad run in until the archive changed; before this commit it simply retried the next day. `synth_output_ok` requires the active file to be non-empty, to start with its header, and to differ from the pre-step backup. All three steps use it.
+- **The skip also needs the active file.** A deleted or empty active file is regenerated even when its archive is unchanged.
+- **A step killed mid-run is still counted.** `synth_usage_mark <key>` notes that the step started. The spend step is told which steps were planned (`PLANNED`), so a planned step that started but left no outcome is recorded as `interrupted` with the usage after the last mark, and one that never started is `not_run`.
+- **A Python failure building the row says `FAILED at step build-row`**, never "no synthesis step ran".
+
+**Measured expectation, stated:** over the 14 days before this change, `learnings.jsonl` changed on 14 days, `social_learnings.jsonl` on 8 and `dream_log.jsonl` on 2. So the skip mostly saves the dream and social steps; the expensive learnings step still runs daily. The new spend row is what says whether that step needs an incremental design.
+
+**Tests** (`tests/harness_logic.sh`):
+- **unit:** the plan (first run, unchanged, changed, nothing changed, force, active file missing); `synth_record` replacing a key; `synth_output_ok` (fresh, same as backup, wrong header, empty); the spend row (with usage, without usage, interrupted, not run, no step run, build-row failure);
+- **end to end:** each step's `env:` and `run:` body is extracted from the workflow and run in a temp repo against a stub `yoyo`, which writes the file its prompt names and emits a usage record under `YOYO_AUDIT`. Each key must record its **own** archive's hash, collect only its own usage, and a failed step must record no hash but still be counted;
+- **persist:** a bare origin with and without `audit-log`, and with one rejected push. One row lands, earlier content is kept, main is untouched, two runs give two rows, and the retry lands.
+
+**Positive controls:**
+- ignoring the recorded hash, appending instead of replacing, and dropping the `no_terminal_emit` marking each fail their checks;
+- wiring the learnings step to `sha_social` fails the end-to-end hash checks;
+- trusting exit 0 alone fails the wiring check.
+
+The end-to-end and persist tests were written by the test-coverage reviewer and adapted.
