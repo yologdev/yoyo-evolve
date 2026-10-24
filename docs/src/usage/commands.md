@@ -261,7 +261,7 @@ Output is capped at 256KB per job to prevent memory issues. Jobs display colored
 
 A job finishes when its shell exits, even if it started something in the background that is still running (`/bg run 'server & echo started'`). yoyo gives the output readers two seconds to drain, then records the shell's exit code. If a background process still holds the job's output, `/bg output` shows the line `[yoyo: the shell exited, but a background process it started still holds the output; anything it writes is appended below]`, and anything that process writes later is still captured below it, up to the cap. That process is not killed.
 
-Known gap: `/bg kill` marks the job killed but does not currently stop its shell process (#1077).
+`/bg kill <id>` stops the job: on Linux and macOS each job runs in its own process group, and kill sends SIGKILL to the whole group, so the shell and anything it started (including `cmd &` children that are still in the group) stop together. `/bg list` then shows what happened, `✗ exit -9 (SIGKILL)`. That is different from a shell that exits on its own: there, a background process it started keeps running, as described above. Jobs read no terminal input (stdin is empty), and a job still running when you quit yoyo is stopped with it. On Windows, kill stops the shell process only.
 
 ### `/web` — Fetch and read web pages
 

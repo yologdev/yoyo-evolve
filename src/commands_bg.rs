@@ -32,6 +32,11 @@ pub struct BackgroundJob {
     /// `finished` must stamp this, or the elapsed column falls back to the
     /// live clock and starts reporting "time since launch" as "runtime".
     pub runtime: Arc<std::sync::Mutex<Option<std::time::Duration>>>,
+    /// The job shell's process group (#1077), shared between the waiter and
+    /// `kill`. The waiter takes and disarms it the moment `sh` is reaped, so a
+    /// normal exit never signals the group (#1063: a backgrounded grandchild
+    /// outlives its shell); `kill` takes it and SIGKILLs the whole group.
+    group: Arc<std::sync::Mutex<Option<crate::tools::GroupKill>>>,
 }
 
 /// Tracks all background jobs and their associated task handles.
@@ -67,6 +72,7 @@ impl BackgroundJobTracker {
             finished: Arc::clone(&finished),
             exit_code: Arc::clone(&exit_code),
             runtime: Arc::clone(&runtime),
+            group: Arc::new(std::sync::Mutex::new(None)),
         };
 
         // Spawn the process in a tokio task
@@ -76,9 +82,10 @@ impl BackgroundJobTracker {
         let code = Arc::clone(&exit_code);
         let rt = Arc::clone(&runtime);
         let job_start = job.started_at;
+        let group = Arc::clone(&job.group);
 
         let handle = tokio::spawn(async move {
-            run_background_command(&cmd_string, out, fin, code, rt, job_start).await;
+            run_background_command(&cmd_string, out, fin, code, rt, job_start, group).await;
         });
 
         {
@@ -133,14 +140,40 @@ impl BackgroundJobTracker {
     }
 
     /// Kill a running job. Returns true if the job existed and was killed.
+    ///
+    /// On unix this SIGKILLs the job's whole process group — `sh` and
+    /// everything it started that stayed in the group — and then lets the
+    /// waiter record what actually happened (`-9 (SIGKILL)`), the same group
+    /// kill `StreamingBashTool` does on a timeout (#1077). It used to abort the
+    /// task only, which dropped a `Child` without killing it: the job read
+    /// "killed" while `sh` kept running.
     pub async fn kill(&self, id: u32) -> bool {
-        // Abort the tokio task
         let handle = {
             let mut handles = lock_or_recover(&self.handles);
             handles.remove(&id)
         };
 
         if let Some(h) = handle {
+            // Non-unix has no group to signal; the abort below and
+            // `kill_on_drop` stop `sh` there.
+            #[cfg(unix)]
+            if let Some(mut group) = {
+                let jobs = lock_or_recover(&self.jobs);
+                jobs.get(&id).and_then(|j| lock_or_recover(&j.group).take())
+            } {
+                group.kill_now();
+                // The waiter now reaps `sh` and records its real status; the
+                // readers see EOF at once because the group holding the pipes
+                // is gone (bounded by the readers' own grace).
+                let deadline = Instant::now() + BG_READER_GRACE + KILL_SETTLE;
+                while !h.is_finished() && Instant::now() < deadline {
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+            }
+            // Backstop: if the waiter has not finished (no group recorded,
+            // non-unix, or something escaped the group and holds the pipe),
+            // abort it. Dropping the task drops the `Child`, and
+            // `kill_on_drop(true)` kills `sh` (`start_kill` on non-unix).
             h.abort();
             // Mark the job as finished
             let jobs = lock_or_recover(&self.jobs);
@@ -205,6 +238,10 @@ pub struct JobSnapshot {
 /// exactly what they meant, and it is the command's business.
 const BG_READER_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
 
+/// Extra time `kill` allows the waiter to reap a SIGKILLed shell, on top of
+/// `BG_READER_GRACE`, before falling back to aborting the task.
+const KILL_SETTLE: std::time::Duration = std::time::Duration::from_secs(1);
+
 /// In-band marker appended to a job's output when `sh` exited but something
 /// it started still holds stdout/stderr (#1063).
 pub(crate) const BG_HELD_OPEN_NOTE: &str = "[yoyo: the shell exited, but a background process it started still holds the output; anything it writes is appended below]";
@@ -217,15 +254,29 @@ async fn run_background_command(
     exit_code: Arc<std::sync::Mutex<Option<i32>>>,
     runtime: Arc<std::sync::Mutex<Option<std::time::Duration>>>,
     started_at: Instant,
+    group: Arc<std::sync::Mutex<Option<crate::tools::GroupKill>>>,
 ) {
     use tokio::io::AsyncReadExt;
-    use tokio::process::Command;
 
-    let child = Command::new("sh")
+    // Own process group on unix (#1077), so `/bg kill` can signal `sh` and
+    // everything it started in one `killpg`, as `StreamingBashTool` does. A
+    // background group that reads the terminal is stopped by SIGTTIN and
+    // would sit "running" forever, so stdin is null on unix, the same pairing
+    // as `StreamingBashTool` and yoagent.
+    #[cfg_attr(not(unix), allow(unused_mut))]
+    let mut std_cmd = std::process::Command::new("sh");
+    #[cfg(unix)]
+    {
+        std::os::unix::process::CommandExt::process_group(&mut std_cmd, 0);
+        std_cmd.stdin(std::process::Stdio::null());
+    }
+    let child = tokio::process::Command::from(std_cmd)
         .arg("-c")
         .arg(command)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
+        // Backstop: an aborted job task drops the `Child`; kill `sh` then too.
+        .kill_on_drop(true)
         .spawn();
 
     let mut child = match child {
@@ -240,6 +291,8 @@ async fn run_background_command(
             return;
         }
     };
+
+    *lock_or_recover(&group) = Some(crate::tools::GroupKill::new(child.id()));
 
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
@@ -302,6 +355,11 @@ async fn run_background_command(
     // died. Same order as `/run` (`RUN_READER_GRACE`) and `/watch`
     // (`watch_wait::WATCH_READER_GRACE`).
     let wait_result = child.wait().await;
+    // `sh` is reaped: disarm, so neither a later `kill` nor a drop signals a
+    // group that now holds only processes a normal exit leaves alone (#1063).
+    if let Some(mut g) = lock_or_recover(&group).take() {
+        g.disarm();
+    }
     let deadline = tokio::time::Instant::now() + BG_READER_GRACE;
     let mut held_open = false;
     for mut task in [stdout_task, stderr_task] {
@@ -1230,3 +1288,7 @@ mod tests {
         assert_ne!(elapsed_column(&s), "1h0m");
     }
 }
+
+#[cfg(test)]
+#[path = "commands_bg_kill_tests.rs"]
+mod commands_bg_kill_tests;

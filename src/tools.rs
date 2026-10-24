@@ -657,13 +657,13 @@ impl AgentTool for StreamingBashTool {
 /// TERM-then-KILL grace) so the parent's bash and a sub-agent's bash agree on
 /// what a timeout kills once yoyo is on that release. No-op off Unix, where
 /// `child.kill()` alone remains the behaviour.
-struct GroupKill {
+pub(crate) struct GroupKill {
     #[cfg(unix)]
     pgid: Option<libc::pid_t>,
 }
 
 impl GroupKill {
-    fn new(pid: Option<u32>) -> Self {
+    pub(crate) fn new(pid: Option<u32>) -> Self {
         #[cfg(not(unix))]
         let _ = pid;
         Self {
@@ -673,7 +673,7 @@ impl GroupKill {
     }
 
     /// Kill the group now and disarm, so the drop does not signal again.
-    fn kill_now(&mut self) {
+    pub(crate) fn kill_now(&mut self) {
         #[cfg(unix)]
         if let Some(pgid) = self.pgid.take() {
             // SAFETY: `killpg` takes two integers and touches no memory of
@@ -684,7 +684,7 @@ impl GroupKill {
         }
     }
 
-    fn disarm(&mut self) {
+    pub(crate) fn disarm(&mut self) {
         #[cfg(unix)]
         {
             self.pgid = None;
