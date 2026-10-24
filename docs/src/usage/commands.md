@@ -259,6 +259,10 @@ The `/bg` command lets you launch shell commands in the background, monitor thei
 
 Output is capped at 256KB per job to prevent memory issues. Jobs display colored status: green for success, red for failure, yellow for running.
 
+A job finishes when its shell exits, even if it started something in the background that is still running (`/bg run 'server & echo started'`). yoyo gives the output readers two seconds to drain, then records the shell's exit code. If a background process still holds the job's output, `/bg output` shows the line `[yoyo: the shell exited, but a background process it started still holds the output; anything it writes is appended below]`, and anything that process writes later is still captured below it, up to the cap. That process is not killed.
+
+Known gap: `/bg kill` marks the job killed but does not currently stop its shell process (#1077).
+
 ### `/web` — Fetch and read web pages
 
 The `/web` command fetches a URL and extracts readable text content, stripping away HTML tags, scripts, styles, and navigation. This is useful for quickly pulling in documentation, error explanations, API references, or any web content without getting raw HTML.

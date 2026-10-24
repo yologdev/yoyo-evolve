@@ -195,6 +195,20 @@ pub struct JobSnapshot {
     pub runtime: Option<std::time::Duration>,
 }
 
+/// How long the readers may keep draining after `sh` exits before the job is
+/// marked finished. 2s, the same as `/run` and `/watch`. A longer grace was
+/// considered (because `/bg output` is read later) and declined: here the
+/// grace does not decide what is captured — a still-open reader keeps
+/// appending after the job is marked finished — it only decides how long a
+/// job whose shell has already exited keeps showing as "running". The
+/// grandchild holding the pipe is never killed: a user's `server &` may be
+/// exactly what they meant, and it is the command's business.
+const BG_READER_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// In-band marker appended to a job's output when `sh` exited but something
+/// it started still holds stdout/stderr (#1063).
+pub(crate) const BG_HELD_OPEN_NOTE: &str = "[yoyo: the shell exited, but a background process it started still holds the output; anything it writes is appended below]";
+
 /// Run a shell command, streaming output into the shared buffer.
 async fn run_background_command(
     command: &str,
@@ -282,12 +296,35 @@ async fn run_background_command(
         }
     });
 
-    // Wait for both readers to finish
-    let _ = stdout_task.await;
-    let _ = stderr_task.await;
+    // Wait on `sh` FIRST, then give the readers a bounded grace (#1063).
+    // Reading to EOF first meant a backgrounded grandchild (`server &`), which
+    // inherits these pipes, kept the job "running" with no exit code until it
+    // died. Same order as `/run` (`RUN_READER_GRACE`) and `/watch`
+    // (`watch_wait::WATCH_READER_GRACE`).
+    let wait_result = child.wait().await;
+    let deadline = tokio::time::Instant::now() + BG_READER_GRACE;
+    let mut held_open = false;
+    for mut task in [stdout_task, stderr_task] {
+        if tokio::time::timeout_at(deadline, &mut task).await.is_err() {
+            // Deliberately NOT aborted (the one difference from `/run` and
+            // `/watch`, whose readers stop keeping lines once the caller stops
+            // listening): `/bg output` is read later from a buffer that
+            // outlives this task, so the reader keeps appending until EOF,
+            // under the same MAX_OUTPUT_BYTES cap. Dropping the JoinHandle
+            // detaches it; it ends when the last holder of the pipe exits.
+            held_open = true;
+        }
+    }
+    if held_open {
+        let mut out = output.lock().await;
+        if !out.is_empty() && !out.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push_str(BG_HELD_OPEN_NOTE);
+        out.push('\n');
+    }
 
-    // Wait for the process to exit
-    match child.wait().await {
+    match wait_result {
         Ok(status) => {
             let mut code = lock_or_recover(&exit_code);
             // Was `status.code().unwrap_or(-1)` — a signal death and "could not
@@ -644,6 +681,102 @@ mod tests {
         assert_eq!(job.exit_code, Some(3));
         // The rendered status carries the bare number, exactly as before #878.
         assert_eq!(crate::tools::describe_exit_code(3), "3");
+    }
+
+    /// Poll for up to `limit`; `true` if the job finished in time.
+    async fn finished_within(
+        tracker: &BackgroundJobTracker,
+        id: u32,
+        limit: std::time::Duration,
+    ) -> bool {
+        let start = std::time::Instant::now();
+        while start.elapsed() < limit {
+            if tracker.is_finished(id) {
+                return true;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        tracker.is_finished(id)
+    }
+
+    /// #1063: a backgrounded grandchild inherits the job's pipes, so reading
+    /// to EOF before `wait()` kept the job "running" with no exit code until
+    /// the grandchild died. The emission point is what `/bg list` and
+    /// `/bg output` read: `finished`, `exit_code` and the output buffer.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn bg_finishes_when_sh_exits_even_if_a_grandchild_holds_the_pipe() {
+        let tracker = create_tracker();
+        let id = tracker.launch("sleep 8 & echo hi");
+        assert!(
+            finished_within(&tracker, id, std::time::Duration::from_secs(4)).await,
+            "job must finish when sh exits, not when the backgrounded sleep does"
+        );
+        let job = tracker.list().into_iter().find(|j| j.id == id).unwrap();
+        assert_eq!(job.exit_code, Some(0));
+        let out = tracker.get_output(id).await.unwrap();
+        assert!(out.starts_with("hi\n"), "{out:?}");
+        // The cut is marked in band, so `/bg output` does not look complete.
+        assert!(out.contains(BG_HELD_OPEN_NOTE), "{out:?}");
+    }
+
+    /// The deliberate difference from `/run` and `/watch`: what the
+    /// grandchild writes after the grace is still kept, below the note, so
+    /// `/bg output` read later shows it.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn bg_keeps_appending_what_the_grandchild_writes_after_the_note() {
+        let tracker = create_tracker();
+        let id = tracker.launch("(sleep 3; echo late) & echo hi");
+        assert!(finished_within(&tracker, id, std::time::Duration::from_secs(3)).await);
+        let mut out = String::new();
+        for _ in 0..100 {
+            out = tracker.get_output(id).await.unwrap();
+            if out.contains("late") {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        assert_eq!(out, format!("hi\n{BG_HELD_OPEN_NOTE}\nlate\n"));
+    }
+
+    /// Near-miss: an ordinary job records its exit code and output exactly
+    /// as before, byte-identical, with no note.
+    #[tokio::test]
+    async fn bg_ordinary_job_output_is_byte_identical_and_unmarked() {
+        let tracker = create_tracker();
+        let id = tracker.launch("echo hi; exit 3");
+        wait_for_finish(&tracker, id).await;
+        let job = tracker.list().into_iter().find(|j| j.id == id).unwrap();
+        assert_eq!(job.exit_code, Some(3));
+        assert_eq!(tracker.get_output(id).await.unwrap(), "hi\n");
+    }
+
+    /// Near-miss: output written right before `sh` exits is all kept — the
+    /// grace drains what is in flight, and there is no note because the
+    /// pipes reached EOF.
+    #[tokio::test]
+    async fn bg_output_written_just_before_exit_is_all_kept() {
+        let tracker = create_tracker();
+        let id = tracker
+            .launch("i=0; while [ $i -lt 2000 ]; do echo line$i; i=$((i+1)); done; echo last >&2");
+        wait_for_finish(&tracker, id).await;
+        let out = tracker.get_output(id).await.unwrap();
+        assert!(out.contains("line1999\n"), "lost the tail of stdout");
+        assert!(out.contains("last\n"), "lost stderr written at exit");
+        assert_eq!(out.matches("line").count(), 2000);
+        assert!(!out.contains(BG_HELD_OPEN_NOTE), "{out:?}");
+    }
+
+    /// Near-miss: a grandchild whose output is redirected away holds no pipe,
+    /// so the job finishes promptly with no note.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn bg_redirected_grandchild_is_not_marked_held() {
+        let tracker = create_tracker();
+        let id = tracker.launch("sleep 8 >/dev/null 2>&1 & echo hi");
+        assert!(finished_within(&tracker, id, std::time::Duration::from_secs(2)).await);
+        assert_eq!(tracker.get_output(id).await.unwrap(), "hi\n");
     }
 
     #[test]
