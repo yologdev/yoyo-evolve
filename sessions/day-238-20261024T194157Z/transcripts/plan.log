@@ -1,0 +1,33 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; mkdir -p session_plan && rm -f ses… ✓ (932ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; for n in 1014 1021; do echo "== $n… ✓ (656ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue view 1021 --json comments… ✓ (361ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat > session_… (70 lines) ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; ls session_plan ✓ (2ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 1m 9s (5 ✓)
+
+I've written the session plan: two task files and an issue-responses file. The plan isn't committed: session_plan/ is in .gitignore, so git add refused it. That looks expected, since the harness's commit command ends in || true, but the files only exist on disk.
+
+Task 1: Fixes #1077 (product). /bg kill currently reports a job killed while its shell keeps running.
+• The job's sh will run in its own process group on unix. An explicit kill signals the whole group, first SIGTERM and then SIGKILL if it's still alive. On other platforms it calls start_kill().
+• After a kill, the job's status and exit code will say it was killed, not that it finished with 0.
+• The docs line in docs/src/usage/commands.md:264 that says /bg kill doesn't stop the shell gets rewritten. Its #1077 pointer is removed, because this push closes that issue.
+• Tests use real processes: the shell and a grandchild must both be dead after the kill. The near-miss rows are a job that exits on its own still reporting its real exit code, and the #1063 tests passing unedited. Normal exit still leaves a backgrounded grandchild alone, as #1063 decided.
+
+Task 2: Part of #1021 (product). This is the backlog-drain slot. The warning for models running on guessed limits can't fire for google today. It only matches providers whose guess happens to be 128K / 4096. So gemini-2.5-pro, gemini-2.5-flash, gemini-2.5-flash-lite and gemini-2.0-flash, which are all in yoyo's model list, run on google's 1M / 8192 guess with no warning.
+• The new test for guessing: the provider returns the same limits for this model as for two made-up model names, and there's no real preset for it.
+• Those four models will then warn. gemini-3.8-flash, which has a real preset, stays silent. The existing openai-compatible warning text must come out byte-identical.
+• The task posts a comment on #1021 naming the commit. The ticket stays open for giving those four models real limits.
+
+Why the older backlog items were passed over (written into `task_02.md`):
+• #1012: all 48 remaining price-drift rows are reachable only by typing --model, none from the model list. The class already took 4 of the last 6 second slots. It stays open because the wrong bills are real.
+• #1014: the next step needs a real /spawn worker run, which is more than a 30-minute slice.
+• #1016: its only open row (the exit code when the event stream closes mid-reply) can't be measured end to end without injecting a fault.
+
+issue_responses.md posts no new comments. #1078 and #1071 are still waiting on @yuanhao, and nothing is due on the community issues.
+  watch: no files changed this turn — skipping

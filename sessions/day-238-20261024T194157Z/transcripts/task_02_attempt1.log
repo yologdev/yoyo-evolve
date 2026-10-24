@@ -1,0 +1,146 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; wc -l src/model_limits_not… ✓ (6ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; cat src/model_limits_note.rs; gre… ✓ (6ms)
+  ▶ read src/model_limits_note.rs (250 lines)  ▶ $ grep -n "unknown_model_limits_note\|OPENAI_BASE_FALLBACK_PROVIDERS" -r src | gre… ✓ (2ms)
+ ✓ (15ms)
+  ▶ $ sed -n 1680,1800p src/agent_builder.rs; grep -n "fn create_model_config\|fn vend… ✓ (5ms)
+  ▶ $ sed -n 870,1080p src/agent_builder.rs; wc -l src/agent_builder.rs; grep -n "agen… ✓ (5ms)
+  ▶ $ sed -n 1080,1180p src/agent_builder.rs; grep -n "KNOWN_PROVIDERS" src/providers.… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 41.4s (7 ✓)
+
+Let me measure the population first with a throwaway probe.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n 1,25p src/providers.rs; sed -n 116,124p src/providers… (21 lines) ✓ (22.6s)
+  ▶ $ cargo test --bin yoyo probe_tmp_table -- --nocapture 2>&1 | grep -E "PROBE" | ca… ✓ (99ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cargo test --bin yoyo probe_tmp_table -- --nocapture 2>&1 | grep -E "PROBE" > /t…  ▶ read /tmp/probe.txt  ▶ read /tmp/gl.txt ✗ (0ms)
+    │ Cannot access /tmp/probe.txt: No such file or directory (os error 2)
+ ✗ (0ms)
+    │ Cannot access /tmp/gl.txt: No such file or directory (os error 2)
+ ✓ (99ms)
+  ▶ $ pwd; cargo test --bin yoyo probe_tmp_table -- --nocapture 2>&1 | grep -E "PROBE"… ✓ (96ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/probe_out.txt ✓ (0ms)
+  ▶ $ rm probe_out.txt; python3 - <<'EOF' (7 lines) ✓ (26ms)
+  ▶ $ grep -n "guessed limits\|unknown_model_limits\|OPENAI_BASE_FALLBACK" ARCHITECTUR… ✓ (6ms)
+  ▶ $ sed -n 120,160p docs/src/configuration/models.md ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  10 tools completed in 2m 8s (8 ✓, 2 ✗)
+
+Now tests first. Updating the test module:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 - <<'EOF' (135 lines) ✓ (17ms)
+  ▶ $ grep -n "Population guard\|fn openai_base_fallback\|fn note_for\|Consumer-side r… ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 8.6s (2 ✓)
+
+I cut the register test along with the range — restoring it (never delete tests):
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ git show HEAD:src/model_limits_note.rs | sed -n '/Consumer-side register/,/^    … ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ python3 - <<'EOF' (60 lines) ✓ (17ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 30.0s (2 ✓)
+
+Now the production change: provenance predicate replacing the value list, plus a one-call emitter so the google arm can be wired without growing agent_builder.rs.
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 - <<'EOF' (96 lines) ✓ (17ms)
+
+Now wire the call sites in build_agent:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "An id with no preset runs on the base config" -B2 -A26 src/agent_builde… ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ grep -n "fn call_site_is_not_quiet_gated" -A10 src/model_limits_note.rs ✓ (7ms)
+  ▶ $ python3 - <<'EOF' (62 lines) ✓ (32.0s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 52.8s (3 ✓)
+
+Module green. Full suite + clippy:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo clippy --all-targets -- -D warnings 2>&1 | grep -E "^(warning|error)" -A5 … ✓ (3m 2s)
+  ▶ $ cargo test 2>&1 | grep -E "^test result" | grep -v " 0 failed" ; echo "--- non-o… ✓ (2m 34s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5m 57s (2 ✓)
+
+All green, and agent_builder.rs shrank by 7 lines. Positive control — revert to the old value-list membership, atomic and serial, with a marker:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cp src/model_limits_note.rs /tmp_mln.bak 2>/dev/null || cp s… (10 lines) ✓ (51.2s)
+  ▶ $ cp src/model_limits_note.rs ../mln.bak; python3 - <<'EOF' (8 lines) ✓ (26.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ python3 - <<'EOF' (25 lines) ✓ (19ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 42s (3 ✓)
+
+ARCHITECTURE.md has no entry for this file; adding a short one, since that's where history belongs:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "^## \|^### " ARCHITECTURE.md | grep -i "src/m\|src/l\|src/n" | head ✓ (5ms)
+  ▶ $ sed -n 1380,1392p ARCHITECTURE.md | cut -c1-300 ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ grep -n "^### \`src" ARCHITECTURE.md | head -5 | cut -c1-160 ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 20.3s (3 ✓)
+
+Not strictly ordered; I'll put it next to the most recent provider-adjacent entry, before line 1386.
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 - <<'EOF' (18 lines)  ▶ $ cargo fmt -- --check && cargo clippy --all-targets -- -D warnings 2>&1 | tail -1… ✓ (27ms)
+ ✓ (3m 33s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3m 47s (2 ✓)
+
+All four checks green. Commit, then the #1021 comment naming the sha:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ git add -A && git commit -q -m "Day 238 (18:36): Part of #10… (19 lines) ✓ (502ms)
+  ▶ $ gh issue comment 1021 --body "Day 238, b57d1e07 (Part of #10… (6 lines) ✓ (868ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 22.7s (2 ✓)
+
+The guessed-limits warning now fires for google. gemini-2.5-pro, gemini-2.5-flash, gemini-2.5-flash-lite and gemini-2.0-flash each print the standard warning on stderr, giving the limits they actually run on: a 1M window and max_tokens = 8192. Build, all tests, clippy with -D warnings and the fmt check all pass. Committed as b57d1e07, "Part of #1021".
+
+What changed
+• How a guessing id is detected. The old check was a hand list of providers matched against == 128K && == 4096. Now an id counts as guessing when it gets the same limits as two made-up ids (zz-unknown-a, zz-unknown-b), those two agree, and no real preset covers it. "Real preset" means declared_output_ceiling (the anthropic and openai presets, plus deepseek's single preset for the whole provider) or vendor_preset. The hand list OPENAI_BASE_FALLBACK_PROVIDERS is gone.
+• The google path never called the warning at all, which the plan didn't mention. So changing the check alone wouldn't have been enough. I added one helper, warn_once_if_guessing, and call it from both the google and OpenAI-compatible branches of build_agent. That made agent_builder.rs 7 lines shorter.
+
+Tests (in src/model_limits_note.rs)
+• The four gemini ids each warn, checked against the full exact text with assert_eq!.
+• Still silent: gemini-3.8-flash, gemini-4-argon, the anthropic default, deepseek, ollama and custom.
+• The text for an unknown openai id is unchanged byte for byte.
+• A check that the two made-up ids really get the same limits on every provider, so the new check can't pass by accident.
+• A list of which providers' unknown ids warn, checked by name.
+• Positive control: I put the old hand list back inside the check, with a NEUTERED marker. Exactly the four tests that depend on the new check failed by name. I then restored it, the tests passed again and no marker was left.
+
+Rows that moved in the register test, which I updated rather than deleted:
+• minimax's default, MiniMax-M2.7, now warns. It runs on 1M / 4096, and it is the case the Day-224 lesson said the old check was leaving out.
+• bedrock's default now counts as guessing (200K / 16000) but no warning is printed for it (see below).
+
+Not covered by this change, and noted on #1021:
+• The anthropic and bedrock branches still don't call the warning. Anthropic ids without a preset and every bedrock id run on a 200K / 16000 guess, and nobody tells the user.
+• Giving the four gemini-2.x ids real limits, or deciding whether they belong on the known list at all.
+
+I also corrected docs/src/configuration/models.md, which said minimax isn't warned about and listed only the OpenAI-compatible providers. I added an ARCHITECTURE.md entry for src/model_limits_note.rs, which didn't have one. I posted on #1021 naming the commit and quoting the 01:30:35Z note it carries out.
+  watch: no files changed this turn — skipping

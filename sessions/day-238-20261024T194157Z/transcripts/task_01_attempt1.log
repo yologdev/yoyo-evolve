@@ -1,0 +1,148 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_bg.rs && grep…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "GroupKill\|killpg\|fn k… ✓ (7ms)
+ ✓ (23ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,240p src/commands_bg.rs… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 130,175p src/commands_bg.… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 270,305p src/commands_bg.… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '^- `commands_bg.rs`' AR… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "const.*CAP\|MAX_LINES\|… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "1500\|2000\|cap\b\|CAP"… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "BackgroundJob {" src/ … ✓ (10ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  9 tools completed in 1m 19s (9 ✓)
+
+Tests first.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn bg_redirected_grandc… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_bg_kill_tests.rs (169 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/c… (7 lines) ✓ (1m 54s)
+ ✓ (1m 54s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 2m 22s (3 ✓)
+
+Red for exactly the three new kill tests; near-misses green. Now the fix — widen GroupKill visibility in tools.rs:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (12 lines) ✓ (22ms)
+
+Now the job carries the group handle, spawn goes into its own group, and kill uses it.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (137 lines) ✓ (20ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (24 lines) ✓ (27.7s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 42.7s (2 ✓)
+
+All 63 /bg tests pass. Now the positive control: I neuter the group kill, run the tests, and restore, all in one atomic command:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/commands_bg.rs /tmp/bg.ba… ✓ (59.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/commands_bg.rs /tmp/bg.ba… ✓ (1m 27s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 37s (2 ✓)
+
+Both controls went red for the right tests, and everything is green again after the restore (0 NEUTERED markers left). Next, docs and the #1077 pointers:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git grep -n '#1077\b' src docs s… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The src/ hits are history comments describing the fixed behaviour, so they stay. That leaves the docs line:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (19 lines) ✓ (37ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Before I commit the claim "a job still running when yoyo exits is stopped with it", I want to check it. It only holds if destructors run at exit:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "BackgroundJobTracker::… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "run_repl" src/main.rs |… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1488,1510p src/main.rs; g… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build … (23 lines) ✓ (8.5s)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 28.2s (4 ✓)
+
+My pkill -f "sleep 7171" matched its own bash command line and killed it. Rerunning without it:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp && cat > /tmp/probe.py <<'EOF' (24 lines) ✓ (9.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Measured on this build: the job's sleep is running before /quit and gone after it. Now the same pty probe for /bg kill and /bg list:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp && sed -e 's|^os.write(fd,b./quit\\r.); drain(4)|os.write(fd,b"/bg kill … ✓ (15.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/and a job still runnin… ✓ (1m 32s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test '*' 2>&1 | gre… ✓ (8.4s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 2m 10s (3 ✓)
+
+The #[path] mod does compile the file, but the gate doesn't see it under that name. Checking how the sibling test files are wired:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "tools_group_kill_tests… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1390,1395p src/hooks.rs; … ✓ (4ms)
+  2 tools completed in 5.9s (2 ✓)
+
+The gate matches on the mod name, so I'll rename the module to match the file:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/^mod kill_tests;$/mod … ✗ (2m 0s)
+    │ Command timed out after 120s
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -3 src/commands_bg.rs; carg… ✓ (2m 32s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (15.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 5m 5s (2 ✓, 1 ✗)
+
+All green: fmt, clippy, and the full cargo test (rc=0). Committing:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (34 lines) ✓ (39ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+/bg kill now actually stops the job, and /bg list reports what really happened. It's committed as 65837418, titled "Fixes #1077", so the push will close that ticket. fmt, clippy (-D warnings) and the full cargo test all pass.
+
+What changed
+• Process group: on Linux and macOS each job's sh now starts in its own process group. /bg kill sends SIGKILL to the whole group, so the shell and anything it started die together. It reuses the existing GroupKill helper from src/tools.rs; the only edit there was making it pub(crate).
+• Reported state: after a kill, yoyo waits briefly for the job to finish and records its real exit status. /bg list now shows ✗ exit -9 (SIGKILL) instead of the old "could not determine" placeholder.
+• Backstop: kill_on_drop(true) is set, so if the task gets aborted anyway, sh still dies. On Windows this is the only mechanism, so kill stops the shell process but not its children.
+• #1063 is unchanged: the group handle is disabled the moment the shell exits on its own, so a background process it started is still left running. A new test pins that, and the existing #1063 tests are untouched and green.
+• Docs: the "Known gap" line in docs/src/usage/commands.md now describes the fixed behaviour, and the ARCHITECTURE.md entry for commands_bg.rs is updated. git grep '#1077' finds no hits in docs or skills. The three hits left in src/ are code comments explaining why the code is written that way, so they stay correct after the ticket closes.
+
+Three things that differ from the task text
+• No SIGTERM step: the task asked for SIGTERM, a short wait, then SIGKILL. GroupKill only sends SIGKILL (same as the bash tool), and adding a SIGTERM step would have meant writing a second group-kill helper, which the task also ruled out. So a killed job gets no chance to clean up first.
+• Jobs no longer read from the terminal (stdin is empty): a job in its own process group that tried to read the terminal would be stopped by the OS and show "running" forever. The bash tool makes the same pairing.
+• Jobs stop when you quit: a job still running at /quit is now stopped too. I confirmed this on the built binary over a pseudo-terminal. I didn't check what the old binary did on quit.
+
+Evidence
+• Tests first: I wrote five tests in src/commands_bg_kill_tests.rs before the fix. The three kill tests failed (the pid was still running; the exit code was the placeholder instead of -9) and the two near-miss tests passed (a job that exits with 3 still reports 3; #1063's grandchild survives).
+• Positive controls, each run as one break-run-restore command:
+  • Disabling the group kill turns the grandchild and signal tests red.
+  • Also removing kill_on_drop turns the shell test red as well.
+  • My first control attempt only skipped the kill call and stayed green, because the handle kills the group anyway when it is dropped. The working controls disable it instead.
+  • After restoring: all green, no NEUTERED markers left.
+• Real binary: over a pseudo-terminal, /bg run sleep 7171 then /bg kill 1 printed Killed job [1], /bg list showed ✗ exit -9 (SIGKILL), and the sleep process was gone.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
