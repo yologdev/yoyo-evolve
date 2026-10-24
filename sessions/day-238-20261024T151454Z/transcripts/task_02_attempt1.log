@@ -1,0 +1,168 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git log --oneli… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 270,335p src/format/cost.rs… ✓ (622ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "SUMMARY\|fn \|ignore\|mod… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 600 cargo test audit_table… ✓ (624ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "glm" src/format/cost.rs |… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "mistral_small_latest\|fn … ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "zai-glm\|\"glm-5-2\"" sr… ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "fn known_models_for_provi… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n '"mistral" =>' -A12 src/pr… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (35 lines) ✓ (25.1s)
+
+────────────────────────────────────────────────────────────────────────────────
+  10 tools completed in 1m 3s (10 ✓)
+
+Red as expected. Now the arms (6 production lines, headroom 8):
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/cost.rs (2 → 8 lines)
+  +     if model == "glm-5-2" || model == "zai-glm-5-2" || model == "zai-glm-5-3" {
+  +         return Some((1.40, 0.0, 0.14, 4.40)); // #1012: models.dev mistral rows (2026-10-24)
+  +     }
+  +     if model == "zai-glm-5-3-flash" {
+  +         return Some((0.15, 0.0, 0.03, 0.50)); // #1012: models.dev (2026-10-24)
+  +     }
+        if model.contains("glm-5") {
+            return Some((0.70, 0.0, 0.0, 0.70));
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt && wc -l src/format/cost… ✓ (3m 47s)
+  +     if model == "glm-5-2" || model == "zai-glm-5-2" || model == "zai-glm-5-3" {
+  +         return Some((1.40, 0.0, 0.14, 4.40)); // #1012: models.dev mistral rows (2026-10-24)
+  +     }
+  +     if model == "zai-glm-5-3-flash" {
+  +         return Some((0.15, 0.0, 0.03, 0.50)); // #1012: models.dev (2026-10-24)
+  +     }
+        if model.contains("glm-5") {
+            return Some((0.70, 0.0, 0.0, 0.70));
+ ✓ (3m 47s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3m 51s (2 ✓)
+
+Drifted 58 → 54, exactly the four named ids, 0 newly drifted, all other SUMMARY fields the same. Next, a positive control, run as one atomic mutate → run → restore:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/format/cost.rs /tmp/cost.ba… ✓ (28.2s)
+
+The control failed by name and the file is restored. Now the full gate:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo build 2>&1 | tail -1 && carg… ✓ (3m 59s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test 2>&1 | grep -E "^test r… ✓ (2m 59s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7m 7s (2 ✓)
+
+Everything passes (0 failing suites, module-size green at 3603/3605). The docs page doesn't list GLM prices, so no doc edit is needed. Committing:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add -A && … (21 lines) ✓ (16ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue comme… (15 lines) ✓ (897ms)
+  2 tools completed in 15.7s (2 ✓)
+
+I added exact prices for four GLM model ids. Commit 55566815, titled "Part of #1012", and the ticket update is posted.
+
+The change (src/format/cost.rs, 6 lines, placed before the catch-all glm-5 arm that billed them all at the 0.7/0.7 estimate). Prices are from models.dev, fetched today:
+• glm-5-2, zai-glm-5-2, zai-glm-5-3 now bill at 1.40 in / 0.14 cache read / 4.40 out.
+• zai-glm-5-3-flash gets its own arm at 0.15 / 0.03 / 0.50, since it's much cheaper than its siblings.
+
+Audit, before and after in the same session:
+• Drifted rows: 58 → 54. Exactly the four ids I named left the list, none were added, and every other number in the summary stayed the same, so models.dev didn't change while I was measuring.
+• Matched rows: 43 → 47.
+
+Tests and checks:
+• The new test in price_audit_tests.rs failed before the edit and passes after it.
+• It also checks two near-misses: glm-5 and zai-glm-5-4 still get 0.7/0.7.
+• Putting 0.7/0.7 back in the flash arm made the test fail on that id, and restoring the price made it pass again.
+• Build, all tests, clippy and fmt pass. The module-size check passes, but cost.rs is now at 3603 of 3605 lines.
+• The docs page doesn't list GLM prices, so no doc edit was needed.
+
+The plan said "live", which was wrong: these ids are current in models.dev's mistral catalogue, but none of them is in yoyo's mistral model list (providers.rs). The fix only reaches people who type --model themselves. I wrote that in both the commit and the #1012 comment.
+
+What's left: 54 rows still drift. Six more glm-5* ids and three glm-4.7* ids are still billed at 0.7/0.7. The next candidate is the gemini 3.x flash family. With only 2 lines of headroom left in cost.rs, the next slice has to free space first, either by moving in-file tests out or by merging arms that share a price.
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git status --short | head; grep -n… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 84,200p src/providers.rs | … ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "argon\|3\.8-flash\|gemini… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 82,200p src/format/cost.rs ✓ (3ms)
+  ▶ $ Y=$(ls -d ~/.cargo/registry/src/*/yoagent-0.25.13); grep -rn "argon\|3\.8-flash"… ✓ (15ms)
+  ▶ $ Y=$(ls -d ~/.cargo/registry/src/*/yoagent-0.25.13); grep -rn "argon\|3\.8-flash"… ✓ (14ms)
+  ▶ $ Y=$(ls -d ~/.cargo/registry/src/*/yoagent-0.25.13); sed -n 1,30p $Y/src/provider… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "KNOWN_DIVERGENCES" src |… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 3120,3175p src/format/cost.… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 2072,2130p src/format/cost.… ✓ (280ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  10 tools completed in 53.9s (10 ✓)
+
+The z.ai pricing page agrees with models.dev on GLM-5, 5.1, 5.2, 5.3-FlashX and 4.7. I'll check the turbo rows too:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ curl -sL --max-time 20 https://docs.z.ai/guides/overview/pricing | sed 's/<[^>]*… ✓ (95ms)
+  ▶ $ curl -sL --max-time 20 https://docs.z.ai/guides/overview/pricing | sed 's/<[^>]*… ✓ (142ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (20 lines) ✓ (31.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (52 lines) ✓ (26.5s)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 1m 36s (4 ✓)
+
+Both fail as expected. Now the arms:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (25 lines) ✓ (29.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Green. Now the audit, compared against the state after the first commit:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 600 cargo test audit_table… ✓ (683ms)
+
+Drifted 54 → 48: exactly the six named ids left, nothing new drifted, and the other summary fields didn't change. Positive control (atomic mutate → run → restore), then the full gate:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/format/cost.rs /tmp/cost.ba… ✓ (4m 24s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Everything passes, and the control failed by name and was restored. Committing, then updating the ticket:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add -A && … (25 lines) ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue comme… (20 lines) ✓ (813ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 22.1s (2 ✓)
+
+I finished a second slice of #1012 in commit b6087f6d. The price audit now finds 48 drifted rows, down from 54 (and 58 at the start of the session). The ticket comment is posted.
+
+I changed the plan before acting on it. My previous comment named the gemini 3.x rows as next. Before taking that, I checked which drifted rows are actually offered in yoyo's model lists (providers.rs). There are three, and none of them is a mistake in yoyo's own price table:
+• deepseek-v4-pro is a divergence I already recorded as a decision.
+• gemini-4-argon and gemini-3.8-flash get their prices from yoagent, not yoyo. yoagent deliberately charges the regular price while Google runs a half-price introductory offer (until 2026-11-30 and 2026-12-31). It documents that as an upper bound, so these two should start matching on their own after those dates.
+
+So every remaining drift in yoyo's own table affects only people who type a model id with --model. I put this correction on the ticket.
+
+This slice:
+• Room in `cost.rs`: I moved its four GLM tests, unchanged, into price_audit_tests.rs. That took the file from 3603 to 3547 of its 3605-line limit, and it's 3563 after this change.
+• Prices: six zai-provider ids had been billed at a 0.7/0.7 guess. They now have exact prices, and I checked each one against z.ai's own pricing page as well as models.dev; the two sources agree. The ids are glm-5, glm-5.1, glm-5.2, glm-5.3-flashx, glm-4.7 and glm-4.7-flashx.
+• Old test retargeted: one moved test pinned glm-5's old price. I updated its expected cost from 1.40 to 4.20 (a million tokens each way) to match the new price, rather than loosening it.
+• Audit: exactly the six named ids left the drift list, nothing new drifted, and no other number in the audit summary moved.
+• Checks: restoring the old glm-5 price made the new test fail on glm-5, and putting the fix back made it pass. Build, all tests, clippy, fmt and the module-size check all pass.
+
+Left out on purpose:
+• glm-5-turbo and glm-5v-turbo: z.ai's page doesn't list them, so only models.dev supports a price.
+• glm-4.7-flash and glm-4.5-flash: z.ai lists them as free, and showing $0 for them needs its own decision.
+• glm-4.5-air: it shares a price rule with glm-4-air, which is in the zai model list and isn't covered by models.dev.
+
+Next candidates (all typed-id only): the gemini 3.x guessed-price rows, the gpt-5.x rows that all share the gpt-5 price, and grok-4.x.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 1/1 changed files were in top-10 predictions (100.0% accuracy)
+     Predicted correctly: src/format/cost.rs
