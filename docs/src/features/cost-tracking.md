@@ -113,6 +113,8 @@ tier applies. Haiku 5.5 is the only model yoyo currently prices with a tier.
 | Gemini 2.5 Pro | $1.25/MTok | $10/MTok |
 | Gemini 2.5 Flash | $0.30/MTok | $2.50/MTok |
 | Gemini 2.5 Flash-Lite | $0.10/MTok | $0.40/MTok |
+| Gemini 2.5 Flash Image (`gemini-2.5-flash-image`) | $0.30/MTok | $30/MTok |
+| Gemini 2.5 Flash TTS (`gemini-2.5-flash-preview-tts`) | $0.50/MTok | $10/MTok |
 | Gemini 2.0 Flash | $0.10/MTok | $0.40/MTok |
 
 ### DeepSeek
@@ -141,7 +143,8 @@ a second source.
 | Model | Input | Output |
 |-------|-------|--------|
 | Mistral Large | $0.50/MTok | $1.50/MTok |
-| Mistral Small | $0.10/MTok | $0.30/MTok |
+| Mistral Small (`mistral-small-latest`, `mistral-small-2603`) | $0.15/MTok | $0.60/MTok |
+| Mistral Small (other ids, e.g. `mistral-small-2506`) | $0.10/MTok | $0.30/MTok |
 | Codestral | $0.30/MTok | $0.90/MTok |
 
 ### xAI (Grok)

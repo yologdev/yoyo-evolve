@@ -1492,14 +1492,41 @@ fn reconciled_mistral_and_gemini_live_rows_bill_the_models_dev_price() {
             "{id}: /cost resolves {got:?}, models.dev (2026-10-23) says {expected:?}"
         );
     }
-    // Near-misses: the dated mistral-large-2512 shares the arm and the price; and
-    // mistral-small-latest is deliberately NOT in this slice (it needs an exact arm,
-    // because mistral-small-2506 still matches the old price), so it stays put.
+    // Near-miss: the dated mistral-large-2512 shares the arm and the price.
+    // (mistral-small-latest was left out of this slice and got its own exact arm
+    // in the next one; see `reconciled_mistral_small_and_flash_variants_...` below.)
     assert_eq!(price_of("mistral-large-2512"), Some((0.5, 0.0, 0.05, 1.5)));
-    assert_eq!(
-        price_of("mistral-small-latest"),
-        Some((0.10, 0.0, 0.0, 0.30))
+}
+
+/// #1012's third slice: exact arms for ids the shared fuzzy arms priced at a
+/// sibling's rate. `mistral-small-latest` (live in `known_models_for_provider`) and
+/// its dated twin `mistral-small-2603` used to bill at the `mistral-small-2506` price
+/// via `contains("mistral-small")`; `gemini-2.5-flash-image` and
+/// `gemini-2.5-flash-preview-tts` used to bill as plain `gemini-2.5-flash`. Prices are
+/// models.dev's (fetched 2026-10-24), read through `price_of`, the `/cost` resolver.
+#[test]
+fn reconciled_mistral_small_and_flash_variants_bill_the_models_dev_price() {
+    let rows: [(&str, Rates); 4] = [
+        ("mistral-small-latest", (0.15, 0.0, 0.015, 0.6)),
+        ("mistral-small-2603", (0.15, 0.0, 0.015, 0.6)),
+        ("gemini-2.5-flash-image", (0.3, 0.0, 0.075, 30.0)),
+        ("gemini-2.5-flash-preview-tts", (0.5, 0.0, 0.0, 10.0)),
+    ];
+    for (id, expected) in rows {
+        let got = price_of(id).unwrap_or_else(|| panic!("{id} must be priced by /cost"));
+        assert!(
+            cells_within(got, expected, 1e-9),
+            "{id}: /cost resolves {got:?}, models.dev (2026-10-24) says {expected:?}"
+        );
+    }
+    assert!(
+        crate::providers::known_models_for_provider("mistral").contains(&"mistral-small-latest"),
+        "mistral-small-latest left the mistral picker; re-check why this arm is live (#1012)"
     );
+    // Near-misses: the arms are exact, so the siblings they split from keep their
+    // unchanged (still models.dev-matching) prices.
+    assert_eq!(price_of("mistral-small-2506"), Some((0.10, 0.0, 0.0, 0.30)));
+    assert_eq!(price_of("gemini-2.5-flash"), Some((0.30, 0.0, 0.03, 2.50)));
 }
 
 /// Moved from `cost.rs`'s in-file tests (module-size gate) and re-priced for #1012:

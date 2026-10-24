@@ -201,6 +201,11 @@ fn builtin_model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
     if model.contains("gemini-2.5-flash-lite") {
         return Some((0.10, 0.0, 0.01, 0.40));
     }
+    match model {
+        "gemini-2.5-flash-image" => return Some((0.30, 0.0, 0.075, 30.00)), // #1012 (2026-10-24)
+        "gemini-2.5-flash-preview-tts" => return Some((0.50, 0.0, 0.0, 10.00)),
+        _ => {}
+    }
     if model.contains("gemini-2.5-flash") {
         return Some((0.30, 0.0, 0.03, 2.50));
     }
@@ -265,6 +270,9 @@ fn builtin_model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
     // https://mistral.ai/products#pricing
     if model.contains("mistral-large") {
         return Some((0.50, 0.0, 0.05, 1.50)); // #1012: models.dev (2026-10-23)
+    }
+    if model == "mistral-small-latest" || model == "mistral-small-2603" {
+        return Some((0.15, 0.0, 0.015, 0.60)); // #1012: models.dev (2026-10-24); 2506 keeps 0.10/0.30
     }
     if model.contains("mistral-small") || model.contains("mistral-latest") {
         return Some((0.10, 0.0, 0.0, 0.30));
@@ -1977,8 +1985,8 @@ mod tests {
             cache_write: 0,
             total_tokens: 0,
         };
-        // mistral-small: $0.10/MTok input, $0.30/MTok output
-        let cost = estimate_cost(&usage, "mistral-small-latest").unwrap();
+        // mistral-small-2506: $0.10/MTok input, $0.30/MTok output (-latest moved, #1012)
+        let cost = estimate_cost(&usage, "mistral-small-2506").unwrap();
         assert!((cost - 0.40).abs() < 0.001, "mistral-small cost: {cost}");
     }
 
