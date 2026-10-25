@@ -328,10 +328,10 @@ pub async fn handle_pr(input: &str, agent: &mut Agent, session_total: &mut Usage
         }
         PrSubcommand::Create { draft } => {
             // 1. Detect current branch
-            let branch = match git_branch() {
-                Some(b) => b,
-                None => {
-                    eprintln!("{RED}  error: not in a git repository{RESET}\n");
+            let branch = match pr_create_branch_in(std::path::Path::new(".")) {
+                Ok(b) => b,
+                Err(msg) => {
+                    eprintln!("{RED}  {msg}{RESET}\n");
                     return;
                 }
             };
@@ -422,6 +422,38 @@ pub async fn handle_pr(input: &str, agent: &mut Agent, session_total: &mut Usage
         }
     }
 }
+
+/// `/pr create`'s refusal when `dir` is not inside a git repository.
+pub(crate) const PR_CREATE_NOT_A_REPO: &str = "error: not in a git repository";
+
+/// `/pr create`'s refusal on a detached HEAD. `gh pr create` itself fails
+/// there with "could not determine the current branch ... not on any branch",
+/// so the advice is to get onto a branch, not to retry.
+pub(crate) const PR_CREATE_DETACHED: &str =
+    "error: HEAD is detached; check out a branch before /pr create (git switch -c <name>)";
+
+/// The branch `/pr create` would open a PR from, or the refusal to print.
+///
+/// `current_branch_in` returns `None` for two different states (#1072): not a
+/// repo at all, and a repo whose HEAD is detached. Before 852d0148 the
+/// detached case came back as the literal `HEAD`; after it, both cases
+/// printed "not in a git repository", which is false for the detached one.
+/// `rev-parse --git-dir` tells them apart (it succeeds in any repo, including
+/// a detached or unborn one).
+pub(crate) fn pr_create_branch_in(dir: &std::path::Path) -> Result<String, &'static str> {
+    if let Some(branch) = git_branch::current_branch_in(dir) {
+        return Ok(branch);
+    }
+    if run_git_in_dir(dir, &["rev-parse", "--git-dir"]).is_ok() {
+        Err(PR_CREATE_DETACHED)
+    } else {
+        Err(PR_CREATE_NOT_A_REPO)
+    }
+}
+
+#[cfg(test)]
+#[path = "commands_git_pr_create_tests.rs"]
+mod commands_git_pr_create_tests;
 
 #[cfg(test)]
 mod tests {

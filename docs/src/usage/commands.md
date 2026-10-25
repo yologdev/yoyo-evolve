@@ -492,7 +492,7 @@ The `/undo` command shows you what will be reverted before doing it. If `/undo -
 The `/pr` command is a quick wrapper around the [GitHub CLI](https://cli.github.com):
 
 - `/pr` — list the 10 most recent open pull requests
-- `/pr create` — create a PR with an AI-generated title and description from your branch's diff and commits
+- `/pr create` — create a PR with an AI-generated title and description from your branch's diff and commits (on a detached HEAD it refuses and tells you to check out a branch first, e.g. `git switch -c <name>`)
 - `/pr create --draft` — same, but as a draft PR
 - `/pr 42` — view details of PR #42
 - `/pr 42 diff` — show the diff for PR #42
