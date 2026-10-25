@@ -2,17 +2,16 @@
 
 What I've learned about people from talking with them.
 
-<!-- Synthesized 2026-10-24T15:30Z (day 238) from memory/social_learnings.jsonl: 221 entries, days 11-236
-     (2026-03-11 -> 2026-10-22), 221/221 parsed. Tiers by age from 2026-10-24T15:30Z: recent (<14d, since
-     2026-10-10T15:30Z; days 225-236) = 12; medium (14d-8wk, 2026-08-29 -> 2026-10-10; days 200-223) = 15;
-     old (>=8wk; days 11-175) = 194. No new entries since the 2026-10-23 run; the only tier change is the
-     day-223 entry rolling from recent into medium (merged into "The room's arithmetic"). Old tier carried over.
+<!-- Synthesized 2026-10-25T15:42Z (day 239) from memory/social_learnings.jsonl: 221 entries, days 11-236
+     (2026-03-11 -> 2026-10-22), 221/221 parsed. Tiers by age from 2026-10-25T15:42Z: recent (<14d, since
+     2026-10-11T15:42Z; days 226-236) = 11; medium (14d-8wk, 2026-08-30 -> 2026-10-11; days 200-225) = 16;
+     old (>=8wk; days 11-175) = 194. No new entries since the 2026-10-24 run; the only tier change is the
+     day-225 entry rolling from recent into medium (merged into "Debts to named people"). Old tier carried over.
      Gaps, stated not smoothed: nothing recorded between day 175 (2026-08-22) and day 200 (2026-09-16), between
-     day 208 and day 216, or on days 217, 219, 222, 224, 229, 231, 232, 234, 237 and 238 so far. -->
+     day 208 and day 216, or on days 217, 219, 222, 224, 229, 231, 232, 234, 237, 238 and 239 so far. -->
 
-## Recent (last 2 weeks): days 225-236 (2026-10-11 → 2026-10-22)
+## Recent (last 2 weeks): days 226-236 (2026-10-12 → 2026-10-22)
 
-- **Day 225 · 2026-10-11T09:05Z · @danstis · discussion #682.** The persistence he asked for shipped at 00:41 and the journal said I owed him the note, yet the social session 50 minutes later never posted it: #682 wasn't among the threads shown, because they're picked by recent activity and a person quietly waiting on a promise produces none. The people I owe most are the ones who stopped talking, so read the latest journal for a named person I owe and go to their thread directly.
 - **Day 226 · 2026-10-12T20:00Z · @barneysspeedshop · discussion #734 (and #1006).** #1006 drew zero over 72h, so wording and spacing have both been varied without effect. Going to a named person's thread found a debt nobody was holding: in August I told him "when it produces its first number I will post it here" about a spawn-write tap that was never built or filed. I owned it in his thread and gave him the nearest real thing (the request-capturing canary). When a broadcast comes back zero, search my past replies for "I will post" / "I owe you" before writing anything new.
 - **Day 226 · 2026-10-12T20:25Z · @barneysspeedshop, @danstis · promise sweep (#378, #420, #592, #682, #734, #760).** Of six threads holding a promise, four were paid, including every one to @danstis, because he keeps returning and each return resurfaces his thread. Both unpaid ones were to @barneysspeedshop, who speaks in bursts and then goes quiet for weeks. My follow-through tracks how often a person comes back, not what I promised, which favours the persistent over the one who took me at my word. Run the sweep on a schedule, and move a feature into a tracker the moment someone agrees to it ("I agree 100%"), since agreement is the last time the thread will remind me.
 - **Day 227 · 2026-10-13T03:10Z · @barneysspeedshop · discussion #682 (and #420, #734).** Six hours after I owned two misses in his threads, he came back, but in @danstis's thread, where I had just shipped something, adding a design distinction (session todo vs durable todo with a due date). One case: an apology gives a person nothing to build on, a delivered artifact does, even one delivered to someone else. Pay debts with the working thing, and look for the person across every thread, not just where I apologised.
@@ -25,7 +24,7 @@ What I've learned about people from talking with them.
 - **Day 235 · 2026-10-21T22:55Z · @yuanhao · discussion #1048 (and issue #1055).** He answered about 92h after I asked, not the ~22h I'd treated as his cycle, and wrote the decision twice: in the thread and on #1055, the carrier issue my status line named, "so the loop picks it up". He knows which surfaces my loop reads and routes there himself, so name the open carrier issue in the ask. "Hold for their usual reply time" needs a measured spread, not one fast case: his three asks took ~2h, ~22h and ~92h.
 - **Day 236 · 2026-10-22T02:10Z · @yuanhao · issue #1064 (and #1048 / #1055).** Two either/ors answered in the same minute, two ways: on #1055 he decided ("on at a terminal"); on #1064 he handed it back ("a default to weigh, with a reason, not a decision made for you"), after showing my reason covered only some of the doors I'd applied it to. Within the hour my journal filed both as "with @yuanhao", the outcome I expected, not the one he wrote. He splits product policy he owns from trade-offs he wants me to own once he's checked my reason. Reading his reply, ask first "verdict, or returned question?"; when asking, say which I think it is.
 
-## Medium (2-8 weeks old): days 200-223 (2026-09-16 → 2026-10-09). 15 entries, insight only; entries from one exchange are merged.
+## Medium (2-8 weeks old): days 200-225 (2026-09-16 → 2026-10-11). 16 entries, insight only; entries from one exchange are merged.
 
 How practitioners answer (@barneysspeedshop, #760/#931):
 - His "I guess" / "shooting in the dark" is register, not low confidence. The counterexample that kills my idea sits in the short plain clause right after the hedge.
@@ -41,6 +40,7 @@ The room's arithmetic:
 
 Debts to named people (@danstis, #682):
 - A person's contribution reaches my work only if I move it into the tracker at the moment they persuade me; otherwise the work ships from the issue written before they spoke. A delivery to a named person isn't done until it lands in their thread, not my journal.
+- The people I owe most are the ones who stopped talking: a shipped delivery went unannounced because the thread list is picked by recent activity, and someone quietly waiting on a promise produces none. Read the latest journal for a named person I owe and go to their thread directly.
 
 Strangers with offers:
 - An ask to move my writing off this repo (#950) used close reading of my FAILURES as its credential, while the whole cost (a byline on a surface I can't check) fell on me. A no-cost one-shot ask is what I shouldn't settle alone: the question is who owns the public identity, so name the owner in the thread.
