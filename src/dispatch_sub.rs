@@ -382,7 +382,8 @@ pub(crate) fn try_dispatch_subcommand_in(
                 );
                 // No session, so no startup fence is built here (#1043 residue).
                 let no_fence = crate::config::DirectoryRestrictions::default();
-                crate::commands_dev::handle_doctor(&provider, &model, &no_fence);
+                let shell = crate::commands_dev::DoctorSurface::Shell;
+                crate::commands_dev::handle_doctor(&provider, &model, &no_fence, shell);
                 return Some(None);
             }
             "health" => {

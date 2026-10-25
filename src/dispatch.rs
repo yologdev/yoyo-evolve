@@ -659,6 +659,7 @@ async fn dispatch_dev_command(
                 &ctx.agent_config.provider,
                 &ctx.agent_config.model,
                 &ctx.agent_config.dir_restrictions,
+                crate::commands_dev::DoctorSurface::Repl,
             );
             Some(CommandResult::Continue)
         }

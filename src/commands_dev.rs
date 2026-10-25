@@ -21,6 +21,14 @@ pub enum DoctorStatus {
     Warn,
 }
 
+/// Where a doctor report is printed, so each row's advice is runnable there
+/// (#1075): a shell `yoyo doctor` reader cannot type `/init`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DoctorSurface {
+    Repl,
+    Shell,
+}
+
 /// A single diagnostic check result from `/doctor`.
 #[derive(Debug, Clone)]
 pub struct DoctorCheck {
@@ -38,6 +46,7 @@ pub fn run_doctor_checks(
     provider: &str,
     model: &str,
     restrictions: &crate::config::DirectoryRestrictions,
+    surface: DoctorSurface,
 ) -> Vec<DoctorCheck> {
     let mut checks = Vec::new();
 
@@ -166,7 +175,7 @@ pub fn run_doctor_checks(
         checks.push(DoctorCheck {
             name: "Project context".to_string(),
             status: DoctorStatus::Warn,
-            detail: "no context file (create YOYO.md or run /init)".to_string(),
+            detail: no_context_file_detail(surface).to_string(),
         });
     } else {
         let descriptions: Vec<String> = context_files
@@ -209,7 +218,7 @@ pub fn run_doctor_checks(
         checks.push(DoctorCheck {
             name: "Memory dir".to_string(),
             status: DoctorStatus::Warn,
-            detail: ".yoyo/ not found (run /remember to create)".to_string(),
+            detail: memory_dir_missing_detail(surface).to_string(),
         });
     }
 
@@ -256,6 +265,27 @@ pub fn run_doctor_checks(
     });
 
     checks
+}
+
+/// Project-context row text when no context file exists (#1075): each surface
+/// names the `init` it can actually run.
+fn no_context_file_detail(surface: DoctorSurface) -> &'static str {
+    match surface {
+        DoctorSurface::Repl => "no context file (create YOYO.md or run /init)",
+        DoctorSurface::Shell => "no context file (create YOYO.md or run yoyo init)",
+    }
+}
+
+/// Memory-dir row text when `.yoyo/` is missing (#1075). Both surfaces name
+/// `mkdir -p .yoyo`, the command `doctor_fix_action` offers below the report.
+/// The REPL also has `/remember <note>`, which creates `.yoyo/` via
+/// `save_memories_to`'s `create_dir_all`; a bare `/remember` only prints
+/// usage, and the shell has no `remember` verb at all.
+fn memory_dir_missing_detail(surface: DoctorSurface) -> &'static str {
+    match surface {
+        DoctorSurface::Repl => ".yoyo/ not found (mkdir -p .yoyo to create, or /remember <note>)",
+        DoctorSurface::Shell => ".yoyo/ not found (mkdir -p .yoyo to create)",
+    }
 }
 
 /// Conservative threshold (in estimated tokens) above which loaded skills'
@@ -541,8 +571,9 @@ pub fn handle_doctor(
     provider: &str,
     model: &str,
     restrictions: &crate::config::DirectoryRestrictions,
+    surface: DoctorSurface,
 ) {
-    let checks = run_doctor_checks(provider, model, restrictions);
+    let checks = run_doctor_checks(provider, model, restrictions, surface);
     print_doctor_report(&checks);
     // Contextual guidance beats reference guidance: after the report, take the
     // last step Claude Code takes — offer to apply the one safe, well-defined
@@ -1177,7 +1208,12 @@ mod tests {
 
     #[test]
     fn doctor_checks_include_rtk() {
-        let checks = run_doctor_checks("anthropic", "test-model", &Default::default());
+        let checks = run_doctor_checks(
+            "anthropic",
+            "test-model",
+            &Default::default(),
+            DoctorSurface::Repl,
+        );
         assert!(
             checks.iter().any(|c| c.name == "RTK"),
             "doctor checks should include an RTK entry"
@@ -1504,7 +1540,12 @@ mod tests {
 
     #[test]
     fn test_run_doctor_checks_structure() {
-        let checks = run_doctor_checks("anthropic", "test-model", &Default::default());
+        let checks = run_doctor_checks(
+            "anthropic",
+            "test-model",
+            &Default::default(),
+            DoctorSurface::Repl,
+        );
         // Should always have Version, Git, Git repo, Provider, API key, Model at minimum
         let names: Vec<&str> = checks.iter().map(|c| c.name.as_str()).collect();
         assert!(names.contains(&"Version"), "Should check version");
@@ -1828,6 +1869,41 @@ mod tests {
             hint, "→ 1 check failed, 1 warning. See each row above for details.",
             "should count only Warn+Fail"
         );
+    }
+
+    /// #1075: each row's advice must be runnable on the surface it is printed
+    /// on. Shell gets `yoyo init`; the REPL text is byte-identical to before.
+    #[test]
+    fn test_no_context_file_detail_per_surface() {
+        let shell = no_context_file_detail(DoctorSurface::Shell);
+        assert_eq!(shell, "no context file (create YOYO.md or run yoyo init)");
+        assert!(!shell.contains("/init"), "{shell}");
+        // Near-miss: the REPL user's row is unchanged.
+        assert_eq!(
+            no_context_file_detail(DoctorSurface::Repl),
+            "no context file (create YOYO.md or run /init)"
+        );
+    }
+
+    /// #1075: a bare `/remember` creates nothing and the shell has no
+    /// `remember`, so both surfaces name `mkdir -p .yoyo`, the same command
+    /// `doctor_fix_action` offers for this row.
+    #[test]
+    fn test_memory_dir_missing_detail_names_the_offered_fix() {
+        let shell = memory_dir_missing_detail(DoctorSurface::Shell);
+        let repl = memory_dir_missing_detail(DoctorSurface::Repl);
+        assert_eq!(shell, ".yoyo/ not found (mkdir -p .yoyo to create)");
+        assert_eq!(
+            repl,
+            ".yoyo/ not found (mkdir -p .yoyo to create, or /remember <note>)"
+        );
+        assert!(!shell.contains("/remember"), "{shell}");
+        let row = vec![named_check("Memory dir", DoctorStatus::Warn)];
+        let fix = doctor_fix_action(&row).expect("memory dir warn offers a fix");
+        for detail in [shell, repl] {
+            assert!(!detail.contains("run /remember to create"), "{detail}");
+            assert!(detail.contains(&fix.command), "{detail} vs {}", fix.command);
+        }
     }
 
     #[test]

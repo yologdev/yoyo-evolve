@@ -3989,6 +3989,26 @@ fn init_doctor_update_and_help_refuse_what_they_do_not_accept() {
 }
 
 #[test]
+fn shell_doctor_rows_advise_commands_the_shell_can_run() {
+    // #1075: `yoyo doctor` in a fresh dir advised `/init` and
+    // `/remember`, neither of which a shell user can type. This pins the
+    // WIRING: the shell arm passes the Shell surface to the row builders.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (code, stdout, stderr) = yoyo_plain_in(dir.path(), &["doctor"]);
+    assert_eq!(code, Some(0), "stdout={stdout} stderr={stderr}");
+    assert!(
+        stdout.contains("no context file (create YOYO.md or run yoyo init)"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(".yoyo/ not found (mkdir -p .yoyo to create)"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("/init"), "{stdout}");
+    assert!(!stdout.contains("/remember"), "{stdout}");
+}
+
+#[test]
 fn unknown_skill_goal_todo_and_bare_ast_exit_two_through_the_binary() {
     // #982: these printed a usage/unknown-subcommand message and exited 0.
     // The status helpers are unit-tested in commands_skill.rs and

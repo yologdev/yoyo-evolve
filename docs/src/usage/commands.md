@@ -39,6 +39,10 @@ All commands start with `/`. Type `/help` inside yoyo to see the full list.
 > count (e.g. `→ 3 warnings. See each row above for details.`); each row's own text carries
 > its detail. It does not point at `/fix`, because `/fix` re-runs your project's
 > build/lint/test commands and none of doctor's checks are those. A clean run stays quiet.
+> Each row's advice is a command you can run where it is printed: with no context file,
+> `yoyo doctor` suggests `yoyo init` and `/doctor` suggests `/init`; with no `.yoyo/`
+> directory, both suggest `mkdir -p .yoyo` (the fix `/doctor` offers to run), and `/doctor`
+> also mentions `/remember <note>`, which creates it.
 >
 > `doctor` also reports a **Skill context cost** check: it sums the `SKILL.md` bytes of the
 > skills discovered under `.yoyo/skills/`, `~/.yoyo/skills/` and `/skill install`'s
