@@ -1,0 +1,51 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s… ✓ (710ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 1012 --comments --… ✓ (37ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 1012 --json commen… ✓ (502ms)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_01.md (51 lines)
+  + Title: Fixes #1080: /bg kill and /quit send SIGTERM, wait a short grace, then SIGKILL the job's process group
+  + Kind: product
+  + Files: src/tools.rs, src/commands_bg.rs, src/commands_bg_kill_tests.rs (+ docs/src/usage/commands.md, ARCHITECTURE.md entries)
+  + Issue: #1080
+  + 
+  + ## Why
+  + 65837418 (Fixes #1077) made `/bg kill` kill the job's whole process group, and made `/quit`
+  + stop jobs still running. Both use `tools::GroupKill::kill_now`, hardcoded to `libc::SIGKILL`.
+  + So a build, migration or file write started with `/bg run` gets no chance to clean up, and
+  + since 65837418 that reaches every user who quits with a running job. The commit's reason for
+  + skipping TERM ("would need a second group-kill helper") is false: `GroupKill` is a small
+  + struct and can take a signal.
+  + 
+  + Decision (made here, with a user-facing reason): `/bg kill` and `/quit` send SIGTERM to the
+  + group, wait up to ~2s (the same window #1063 gives stragglers in `/bg run`), then SIGKILL
+  + whatever is left. A user who asks to stop a job wants it stopped *and* wants it to be able to
+  + clean up; 2s is short enough that `/bg kill` and `/quit` still feel immediate.
+  + StreamingBashTool's timeout/cancel path stays SIGKILL — not changed in this task, because that
+  + path is the model's tool hitting its own time limit, a different population (keep `kill_now`'s
+  + behaviour byte-identical for it).
+  ... (31 more lines)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_02.md (37 lines)  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/issue_responses.md (9 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (0ms)
+ ✓ (0ms)
+ ✓ (0ms)
+ ✓ (2ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 55.1s (7 ✓)
+
+The session plan is written, but it isn't committed. Git refused the commit because session_plan/ is in .gitignore. I didn't force it with -f, since the harness command ends in || true and seems to expect this. The three files are on disk in session_plan/.
+
+Task 01 — Fixes #1080 (product): /bg kill and /quit will send SIGTERM to the job's process group, wait about 2 seconds, then send SIGKILL. With several jobs running, /quit signals them all first and shares one wait, so it never takes more than about 2 seconds in total. The model's bash tool keeps killing instantly on timeout. The fix extends the existing GroupKill helper in src/tools.rs instead of adding a second one. Planned tests:
+• a job that catches SIGTERM gets time to clean up;
+• a job that ignores SIGTERM still dies, along with its child processes;
+• a job that already finished gets no signal;
+• /quit with several stubborn jobs stays fast.
+
+Before planning I checked that no script or workflow uses /bg, and that nothing in src, docs or skills points at #1080.
+
+Task 02 — Part of #1012 (product, backlog drain): this is the oldest open issue I filed for myself. None of the remaining wrong prices are for models in yoyo's model picker; all 48 only matter when someone types --model by hand. I decided the slot is still worth it, because /cost would otherwise show a made-up price for a model the user named. This slice gives exact prices to the gemini 3.x flash models that currently get a 0.15/0.60 estimate, checked against Google's own pricing page. Then it re-runs the price audit, where the drift count must drop by exactly the number fixed. It ends with a comment on #1012 giving the commit, the before and after counts, and how many typed-only rows are left. src/format/cost.rs has 42 lines of headroom under the size limit (3563 of 3605), so the new tests go in the separate tests file.
+
+`issue_responses.md`: no community issues today. #1078 and #1071 stay on hold until @yuanhao answers. I flagged one ready slice for the next planner: a test that this repo's CLAUDE.md stays under about 40 KB. It is 41,713 bytes today, so that slice also needs a trim.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

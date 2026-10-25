@@ -1,0 +1,303 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && grep -n …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 330,420p src/tools.rs && … ✓ (4ms)
+ ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 645,720p src/tools.rs && … ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/tools.rs src/commands_… ✓ (4ms)
+  ▶ read src/commands_bg.rs:140..400 ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "kill\|quit\|stop_all\|r… ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show 65837418 --stat; grep -… ✓ (30ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "quit\|Quit\|exit\b\|bre…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1080,1300p src/repl.rs | … ✓ (4ms)
+ ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat src/commands_bg_kill_tests.r… ✓ (3ms)
+  ▶ read src/tools.rs:651..663 ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  11 tools completed in 1m 24s (11 ✓)
+
+Now the tools.rs edit: a signal-taking primitive plus a liveness probe; kill_now stays byte-identical in behaviour.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/tools.rs (11 → 20 lines)
+                    libc::killpg(pgid, libc::SIGKILL);
+                }
+            }
+  +     }
+  + 
+  +     /// Send `sig` to the group and stay armed (the TERM half of `/bg kill`'s
+  +     /// TERM-grace-KILL, #1080). Returns whether any member received it.
+  +     #[cfg(unix)]
+  +     pub(crate) fn signal(&self, sig: libc::c_int) -> bool {
+  +         // SAFETY: as in `kill_now`; signal 0 only probes for existence.
+  +         self.pgid
+  +             .is_some_and(|pgid| unsafe { libc::killpg(pgid, sig) } == 0)
+        }
+  ▶ edit src/tools.rs (3 → 4 lines)
+    /// Kills a command's process group (SIGKILL) on a timeout, a cancel, or the
+    /// tool's future being dropped — unless the command finished first and the
+  - /// guard was disarmed. Mirrors
+  + /// guard was disarmed. `/bg kill` and `/quit` first `signal(SIGTERM)` and
+  + /// allow a grace (`commands_bg::terminate_groups`, #1080). Mirrors
+ ✓ (3m 3s)
+                    libc::killpg(pgid, libc::SIGKILL);
+                }
+            }
+  +     }
+  + 
+  +     /// Send `sig` to the group and stay armed (the TERM half of `/bg kill`'s
+  +     /// TERM-grace-KILL, #1080). Returns whether any member received it.
+  +     #[cfg(unix)]
+  ... (5 more lines)
+ ✓ (5m 31s)
+    /// Kills a command's process group (SIGKILL) on a timeout, a cancel, or the
+    /// tool's future being dropped — unless the command finished first and the
+  - /// guard was disarmed. Mirrors
+  + /// guard was disarmed. `/bg kill` and `/quit` first `signal(SIGTERM)` and
+  + /// allow a grace (`commands_bg::terminate_groups`, #1080). Mirrors
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit src/commands_bg.rs (31 → 69 lines)
+  +     ///
+  +     /// Since #1080 the group gets SIGTERM first and up to `BG_STOP_GRACE` to
+  +     /// clean up, then SIGKILL for whatever is left, so `/bg list` reads
+  +     /// `-15 (SIGTERM)` or `-9 (SIGKILL)` by what it actually took.
+        pub async fn kill(&self, id: u32) -> bool {
+  -         let handle = {
+  +         self.kill_jobs(&[id]).await == 1
+  +     }
+  + 
+  +     /// Stop every job still running, as `/quit` does (#1080): TERM all of
+  +     /// them, ONE shared grace, then KILL survivors, so leaving waits at most
+  +     /// about `BG_STOP_GRACE` however many jobs there are. Returns how many.
+  +     pub async fn stop_running(&self) -> usize {
+  +         let ids: Vec<u32> = {
+  +             let jobs = lock_or_recover(&self.jobs);
+  +             let mut ids: Vec<u32> = jobs
+  +                 .values()
+  +                 .filter(|j| !j.finished.load(Ordering::Relaxed))
+  +                 .map(|j| j.id)
+  +                 .collect();
+  ... (55 more lines)
+ ✓ (11.3s)
+  +     ///
+  +     /// Since #1080 the group gets SIGTERM first and up to `BG_STOP_GRACE` to
+  +     /// clean up, then SIGKILL for whatever is left, so `/bg list` reads
+  +     /// `-15 (SIGTERM)` or `-9 (SIGKILL)` by what it actually took.
+        pub async fn kill(&self, id: u32) -> bool {
+  -         let handle = {
+  +         self.kill_jobs(&[id]).await == 1
+  +     }
+  ... (13 more lines)
+  ▶ read src/commands_bg.rs:218..238 ✓ (0ms)
+  ▶ edit src/commands_bg.rs (8 → 6 lines)
+                        *code = Some(crate::tools::EXIT_CODE_UNDETERMINED);
+                    }
+                }
+  -             true
+  -         } else {
+  -             false
+            }
+  +         count
+        }
+ ✓ (11.3s)
+                        *code = Some(crate::tools::EXIT_CODE_UNDETERMINED);
+                    }
+                }
+  -             true
+  -         } else {
+  -             false
+            }
+  +         count
+        }
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 6m 28s (5 ✓)
+
+Now the grace constant and the shared TERM→grace→KILL loop.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_bg.rs (1 → 25 lines)
+    const KILL_SETTLE: std::time::Duration = std::time::Duration::from_secs(1);
+  + 
+  + /// How long `/bg kill` and `/quit` let a job's group clean up after SIGTERM
+  + /// before SIGKILL (#1080). 2s, the same window `BG_READER_GRACE` gives
+  + /// stragglers: long enough for a trap to remove a lock or flush a file,
+  + /// short enough that stopping still feels immediate.
+  + const BG_STOP_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+  + 
+  + /// SIGTERM every group, then poll until all are gone or `grace` elapses
+  + /// (ONE window shared by all of them), then SIGKILL the survivors (#1080).
+  + /// Polls asynchronously so the waiter tasks can reap the shells meanwhile —
+  + /// an unreaped zombie leader still counts as a group member.
+  + #[cfg(unix)]
+  + async fn terminate_groups(groups: &mut [crate::tools::GroupKill], grace: std::time::Duration) {
+  +     for g in groups.iter() {
+  +         g.signal(libc::SIGTERM);
+  +     }
+  +     let deadline = Instant::now() + grace;
+  +     while groups.iter().any(|g| g.signal(0)) && Instant::now() < deadline {
+  +         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+  ... (5 more lines)
+ ✓ (11.3s)
+    const KILL_SETTLE: std::time::Duration = std::time::Duration::from_secs(1);
+  + 
+  + /// How long `/bg kill` and `/quit` let a job's group clean up after SIGTERM
+  + /// before SIGKILL (#1080). 2s, the same window `BG_READER_GRACE` gives
+  + /// stragglers: long enough for a trap to remove a lock or flush a file,
+  + /// short enough that stopping still feels immediate.
+  + const BG_STOP_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+  + 
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn signal\|fn kill_now"… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read src/tools.rs:674..704 ✓ (0ms)
+  ▶ edit src/tools.rs (4 → 14 lines)
+                    libc::killpg(pgid, libc::SIGKILL);
+                }
+            }
+  +     }
+  + 
+  +     /// Send `sig` to the group and stay armed (the TERM half of `/bg kill`'s
+  +     /// TERM-grace-KILL, #1080). Returns whether any member received it, so
+  +     /// `signal(0)` asks "is anything of the group left?".
+  +     #[cfg(unix)]
+  +     pub(crate) fn signal(&self, sig: libc::c_int) -> bool {
+  +         // SAFETY: as in `kill_now`; signal 0 only probes for existence.
+  +         self.pgid
+  +             .is_some_and(|pgid| unsafe { libc::killpg(pgid, sig) } == 0)
+        }
+ ✓ (12.5s)
+                    libc::killpg(pgid, libc::SIGKILL);
+                }
+            }
+  +     }
+  + 
+  +     /// Send `sig` to the group and stay armed (the TERM half of `/bg kill`'s
+  +     /// TERM-grace-KILL, #1080). Returns whether any member received it, so
+  +     /// `signal(0)` asks "is anything of the group left?".
+  ... (6 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 41.4s (4 ✓)
+
+Now wire /quit (every REPL exit) in repl.rs.
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 940,950p src/repl.rs; sed… ✓ (3ms)
+  ▶ edit src/repl.rs (2 → 5 lines)
+        // Auto-save session on exit (always — crash recovery for everyone)
+        commands::auto_save_on_exit(agent);
+  + 
+  +     // Running `/bg` jobs get SIGTERM and one shared ~2s grace, then SIGKILL (#1080).
+  +     bg_tracker.stop_running().await;
+ ✓ (1m 29s)
+        // Auto-save session on exit (always — crash recovery for everyone)
+        commands::auto_save_on_exit(agent);
+  + 
+  +     // Running `/bg` jobs get SIGTERM and one shared ~2s grace, then SIGKILL (#1080).
+  +     bg_tracker.stop_running().await;
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit src/repl.rs (2 → 5 lines)
+        // Running `/bg` jobs get SIGTERM and one shared ~2s grace, then SIGKILL (#1080).
+  -     bg_tracker.stop_running().await;
+  +     let stopped = bg_tracker.stop_running().await;
+  +     if stopped > 0 {
+  +         eprintln!("{DIM}  stopped {stopped} running /bg job(s){RESET}");
+  +     }
+ ✓ (1m 30s)
+        // Running `/bg` jobs get SIGTERM and one shared ~2s grace, then SIGKILL (#1080).
+  -     bg_tracker.stop_running().await;
+  +     let stopped = bg_tracker.stop_running().await;
+  +     if stopped > 0 {
+  +         eprintln!("{DIM}  stopped {stopped} running /bg job(s){RESET}");
+  +     }
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 3m 18s (3 ✓)
+
+Now tests. First, see what fails currently.
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo commands_b… ✓ (3.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 118,130p src/commands_bg_… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (15 lines) ✓ (13ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 32.4s (3 ✓)
+
+Now new tests, appended to the kill test file.
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/c… (151 lines) ✓ (25.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Green. Positive controls next, atomic mutate→run→restore, run one after another:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/comma… (8 lines) ✓ (20.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/comma… (8 lines) ✓ (24.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 52.6s (2 ✓)
+
+Both controls red by name, restored. Now docs.
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "bg kill\|SIGKILL\|/quit… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (12 lines) ✓ (17ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 641p ARCHITECTURE.md | ta… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (12 lines) ✓ (23ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (9 lines) ✓ (13.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -1 && ca… ✓ (2m 54s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -cE "FAIL… ✓ (2m 33s)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 6m 29s (7 ✓)
+
+All green (0 failures). Checking #1080's scope words before titling with "Fixes":
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 1080 --json state,… ✓ (285ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both halves (/bg kill and /quit) shipped, and StreamingBashTool staying SIGKILL is the scope the issue itself names, so "Fixes" is accurate. Committing.
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (40 lines) ✓ (37ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+/bg kill and quitting yoyo now send SIGTERM to the job's process group, wait up to 2 seconds, then SIGKILL whatever is left. Committed as 4bb59ddf. fmt, clippy with -D warnings, build and the full cargo test all pass with 0 failures.
+
+What changed
+• `src/tools.rs`: GroupKill gained signal(sig) -> bool. It sends a signal without disarming, and signal(0) checks whether any process in the group is still alive. kill_now and Drop are unchanged, so the model's bash timeout/cancel is still a plain SIGKILL, as the issue asked.
+• `src/commands_bg.rs`: kill() and a new stop_running() go through one shared path, terminate_groups. It sends SIGTERM to every group, waits up to 2 seconds (one window shared by all jobs), then SIGKILLs the survivors. The wait is async so the job's own task can reap the shell during it; otherwise every stop would wait the full 2 seconds. /bg list shows how the job really ended: -15 (SIGTERM), -9 (SIGKILL), or the job's own exit code if its cleanup trap exits normally.
+• `src/repl.rs`: every way out of the REPL (/quit, Ctrl-D, double Ctrl+C) calls stop_running(). When it stopped something it prints stopped N running /bg job(s), since quitting can now pause for up to 2 seconds. This file wasn't in the plan's file list, but it is where the quit path lives.
+
+Tests (real processes, in src/commands_bg_kill_tests.rs)
+• A plain sleep job ends with -15 and doesn't wait out the 2 seconds.
+• A job that traps TERM writes its cleanup marker and keeps its own exit code, 7.
+• A job that ignores TERM, and its grandchild, are both killed with SIGKILL after the wait, so the process-group behaviour from #1077 still holds.
+• A job that already finished keeps its exit code and gets no signal.
+• Two TERM-ignoring jobs under stop_running stop in well under twice the wait.
+• I also checked that the tests can fail. Sending KILL in place of TERM made the three TERM tests fail, and giving each job its own wait made the shared-wait test fail. I ran each check as one change-test-restore command, one after the other, and both were restored.
+
+One deviation from the plan: the plan said to leave the existing #1077 tests unedited, but bg_kill_reports_the_signal_not_success asserted the old SIGKILL-only behaviour: plain sleep 30 ends with -9. Under the new behaviour that job ends with -15, so the test could not stay green unedited. I changed only its command, to trap '' TERM; sleep 30. Its -9 assertion is unchanged and still covers the SIGKILL fallback; the commit explains this.
+
+Docs: docs/src/usage/commands.md now describes the TERM → 2 s → KILL order for /bg kill and for quitting. The ARCHITECTURE.md entries for commands_bg.rs and tools.rs are updated, and the old "deliberately SIGKILL only" sentence is marked as superseded rather than deleted.
+
+"Fixes #1080" is accurate: both /bg kill and quit shipped, and the issue itself keeps the bash timeout/cancel on plain SIGKILL. src/tools.rs and src/repl.rs are now about 10 and 20 lines over their recorded sizes in tests/module_size.rs. That is within the allowed margin, so the size test passes, but I didn't update those recorded sizes.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 2/3 changed files were in top-10 predictions (66.7% accuracy)
+     📊 Emerging (anticipatory) accuracy: 1/3 (33.3%) — reactive was 66.7%
+     Predicted correctly: src/tools.rs, src/commands_bg.rs
+     Surprises (not predicted): src/repl.rs

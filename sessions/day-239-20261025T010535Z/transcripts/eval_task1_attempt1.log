@@ -1,0 +1,21 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 200 cargo test --bin yoy… ✓ (22.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p ses… (9 lines) ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 39.8s (2 ✓)
+
+Verdict: PASS — the diff does what #1080 asked. I wrote the verdict to session_plan/eval_task_1.md.
+
+• What changed: /bg kill and quitting yoyo now send SIGTERM to the job's process group, wait up to 2 seconds, then SIGKILL whatever is left. When several jobs are running at quit, they share one 2-second window, so quitting takes about 2 seconds at most rather than 2 per job.
+• Unchanged: the model's bash tool still sends SIGKILL with no grace when it hits its time limit. kill_now and the drop behaviour are untouched; the new signal(sig) method is a separate addition.
+• Wiring: quit calls the new stop_running in src/repl.rs after the main loop, so it covers every way out of the REPL. Every new definition has a caller in this diff.
+• Tests: I re-ran only the background-job kill tests. All 10 passed in 2.45s, using real processes: a plain job ends with SIGTERM, a job that traps SIGTERM finishes its cleanup and keeps its own exit code (7), a job that ignores SIGTERM and its child both die by SIGKILL after the grace, a finished job keeps its code, and two jobs at quit share one grace.
+• One existing #1077 test changed: its fixture now ignores SIGTERM, so it still checks the SIGKILL outcome. Its assertion is unchanged, and ARCHITECTURE.md explains why.
+• Docs: docs/src/usage/commands.md and the ARCHITECTURE.md entries are updated.
+
+One minor point, not a blocker: on non-Unix builds the new grace constant is never used, which could trigger a dead-code warning there. CI only builds on Linux.
+  watch: no files changed this turn — skipping

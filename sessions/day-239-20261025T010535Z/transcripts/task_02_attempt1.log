@@ -1,0 +1,117 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git grep -l price_audit | … ✓ (11ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 150,230p src/format/cost.rs; sed -n 26… ✓ (6ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; timeout 300 cargo test audit_table_against_mo… ✓ (9.3s)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; timeout 300 cargo test audit_table_against_mo… ✓ (513ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -nE "^google/gemini-3" /tmp/audit_before… ✓ (4ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 30,110p src/format/cost.rs ✓ (2ms)
+  ▶ $ cd /tmp; curl -sL -A "Mozilla/5.0" https://ai.google.dev/gem… (11 lines) ✓ (503ms)
+  ▶ $ cd /tmp; python3 - <<'EOF' (7 lines) ✓ (15ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; python3 -c " (5 lines) ✓ (28ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -rn "upper bound\|promotion\|through Dec… ✓ (9ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; Y=~/.cargo/registry/src/*/yoagent-0.25.13; se… ✓ (5ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -n -i "divergen\|3\.8-flash\|promo" src/… ✓ (311ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; awk 'NR>=1745 && NR<=1756' ~/.cargo/registry/… ✓ (4ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; cat >> src/format/cost/pr… (43 lines) ✓ (69ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; cargo test --bin yoyo reconciled_gemini_3x 2>… ✓ (19.5s)
+
+────────────────────────────────────────────────────────────────────────────────
+  15 tools completed in 2m 12s (15 ✓)
+
+Red for the right reason. Now the arms.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/format/cost.rs (3 → 18 lines)
+  -     // Gemini 3.x (estimated, based on 2.5 pricing tiers)
+  +     // Gemini 3.x: exact ids from Google's page, agreeing with models.dev (2026-10-25, #1012).
+  +     // Image/tts/live rows bill the image/audio/text output rate models.dev lists.
+  +     // gemini-3.6-flash: regular rate; Google bills $0.75/$3.75/$0.075 through 2026-12-31
+  +     // (an upper bound, the rule yoagent uses for gemini-3.8-flash).
+        if model.contains("gemini-3") {
+  +         match model {
+  +             "gemini-3-flash-preview" => return Some((0.50, 0.0, 0.05, 3.00)),
+  +             "gemini-3.1-flash-lite" => return Some((0.25, 0.0, 0.025, 1.50)),
+  +             "gemini-3.5-flash-lite" => return Some((0.30, 0.0, 0.03, 2.50)),
+  +             "gemini-3.1-flash-image" => return Some((0.50, 0.0, 0.0, 60.00)),
+  +             "gemini-3.1-flash-lite-image" => return Some((0.25, 0.0, 0.0, 30.00)),
+  +             "gemini-3.1-flash-live-preview" => return Some((0.75, 0.0, 0.0, 4.50)),
+  +             "gemini-3.1-flash-tts-preview" => return Some((1.00, 0.0, 0.0, 20.00)),
+  +             "gemini-3.5-live-translate-preview" => return Some((3.50, 0.0, 0.0, 21.00)),
+  +             "gemini-3.6-flash" => return Some((1.50, 0.0, 0.15, 7.50)),
+  +             _ => {} // the rest stay estimated, based on 2.5 pricing tiers
+  +         }
+            if model.contains("pro") {
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; python3 - <<'EOF' (15 lines) ✓ (3m 28s)
+  -     // Gemini 3.x (estimated, based on 2.5 pricing tiers)
+  +     // Gemini 3.x: exact ids from Google's page, agreeing with models.dev (2026-10-25, #1012).
+  +     // Image/tts/live rows bill the image/audio/text output rate models.dev lists.
+  +     // gemini-3.6-flash: regular rate; Google bills $0.75/$3.75/$0.075 through 2026-12-31
+  +     // (an upper bound, the rule yoagent uses for gemini-3.8-flash).
+        if model.contains("gemini-3") {
+  +         match model {
+  +             "gemini-3-flash-preview" => return Some((0.50, 0.0, 0.05, 3.00)),
+  ... (11 more lines)
+ ✓ (3m 28s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; cp src/format/cost.rs /tmp/cost.bak && sed -i… ✓ (39.8s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 4m 19s (3 ✓)
+
+Control fails by name and restores green. Now the after-audit and the full gate.
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; timeout 300 cargo test audit_table_against_mo… ✓ (7.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -rn -i "estimat\|gemini" docs/src/featur… ✓ (5ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -n "Day 238.*1012\|1012.*Day 238\|glm-5-… ✓ (4ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; python3 - <<'EOF' (17 lines) ✓ (2m 45s)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; cargo test 2>&1 | grep -E "test result" | gre… ✓ (2m 37s)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 6m 9s (5 ✓)
+
+All green. Committing, then the #1012 comment.
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; git add -A && git commit … (23 lines) ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; for id in $(grep -E "DRIFT$" /tmp/audit_after… ✓ (41ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; git push -q 2>&1 | tail -… (21 lines) ✓ (2.8s)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; git status -sb | head -1 ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 35.6s (4 ✓)
+
+In /cost, 8 of the gemini 3.x flash models that were billed at a made-up $0.15/$0.60 now show Google's real prices. A ninth (gemini-3.6-flash) got a real price too, but it still disagrees with models.dev on purpose. The change is in commit 7971b020, with a comment on #1012. fmt, clippy with -D warnings, build and the full cargo test all pass.
+
+Audit before and after: the live comparison against models.dev went from 53 matching and 48 drifting to 61 matching and 40 drifting. The 8 rows that dropped out are exactly the ones I fixed, and no row started drifting.
+
+What I fixed (each price read off Google's pricing page today and agreeing with models.dev):
+• gemini-3-flash-preview
+• gemini-3.1-flash-lite
+• gemini-3.5-flash-lite
+• gemini-3.1-flash-image
+• gemini-3.1-flash-lite-image
+• gemini-3.1-flash-live-preview
+• gemini-3.1-flash-tts-preview
+• gemini-3.5-live-translate-preview
+
+For the image, speech and live models, /cost uses the same output rate models.dev lists: the image rate for image models, the audio rate for speech, the text rate for live.
+
+`gemini-3.6-flash` still drifts, by decision. Google charges an introductory $0.75/$3.75 until 2026-12-31, and models.dev lists that price. I used the regular $1.50/$7.50, the same rule yoagent already applies to gemini-3.8-flash. So until 2027 /cost shows about twice the actual bill for this model; before, it showed about a fifth. The docs say this.
+
+Still guessed: gemini-3.5-flash, gemini-3.7-flash, gemini-3.1-flash-image-preview and gemini-3.1-flash-lite-preview keep the $0.15/$0.60 estimate, because Google's page doesn't list them. A test pins that they stay on the estimate.
+
+Tests: a new test in src/format/cost/price_audit_tests.rs checks each fixed price. As a check on the test itself, I put the old guessed price back on the 3.5-flash-lite entry: the test failed and named that model, then passed again once I restored it. I also changed one existing test, test_pricing_gemini_30_flash, which had locked in the old wrong price. It now expects $0.50/$3.00.
+
+Files: src/format/cost.rs grew by 15 lines to 3578, under its 3605 size limit. I also added the new prices to the Gemini table in docs/src/features/cost-tracking.md.
+
+Backlog: none of the 40 rows left on #1012 needs fixing for the model picker. Three of them are in the picker, but all three disagree on purpose: one is a recorded difference and two are priced by yoagent at the regular rate. The other 37 only matter if someone types the model name. My #1012 comment names the gemini pro estimate as the next candidate. It also asks the next planner to decide whether this 37-row tail is still worth fixing row by row, or whether /cost should just label those prices as estimates.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 1/1 changed files were in top-10 predictions (100.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/1 (0.0%) — reactive was 100.0%
+     Predicted correctly: src/format/cost.rs
