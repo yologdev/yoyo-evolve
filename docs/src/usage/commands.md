@@ -244,7 +244,7 @@ The `/bg` command lets you launch shell commands in the background, monitor thei
 | `/bg list` | Show all background jobs (default when no subcommand) |
 | `/bg output <id>` | Show last 50 lines of a job's output |
 | `/bg output <id> --all` | Show all captured output |
-| `/bg kill <id>` | Stop a running job (SIGTERM, 2s grace, then SIGKILL) |
+| `/bg kill <id>` | Stop a running job (SIGTERM, 10s grace, then SIGKILL) |
 
 ```
 /bg run cargo build --release
@@ -265,7 +265,7 @@ Output is capped at 256KB per job to prevent memory issues. Jobs display colored
 
 A job finishes when its shell exits, even if it started something in the background that is still running (`/bg run 'server & echo started'`). yoyo gives the output readers two seconds to drain, then records the shell's exit code. If a background process still holds the job's output, `/bg output` shows the line `[yoyo: the shell exited, but a background process it started still holds the output; anything it writes is appended below]`, and anything that process writes later is still captured below it, up to the cap. That process is not killed.
 
-`/bg kill <id>` stops the job: on Linux and macOS each job runs in its own process group, and kill sends SIGTERM to the whole group, waits up to 2 seconds for it to exit (so a build, migration or `trap ... TERM` cleanup gets a chance to finish), then sends SIGKILL to whatever is left. The shell and anything it started (including `cmd &` children that are still in the group) stop together. `/bg list` then shows what happened: `✗ exit -15 (SIGTERM)` when TERM was enough, `✗ exit -9 (SIGKILL)` when it took KILL, or the job's own exit code if its TERM trap exited cleanly. That is different from a shell that exits on its own: there, a background process it started keeps running, as described above. Jobs read no terminal input (stdin is empty), and jobs still running when you quit yoyo are stopped the same way: all of them get SIGTERM, they share one 2-second grace (quitting waits about 2 seconds at most, however many jobs there are), and survivors get SIGKILL. On Windows, kill stops the shell process only.
+`/bg kill <id>` stops the job: on Linux and macOS each job runs in its own process group, and kill sends SIGTERM to the whole group, waits up to 10 seconds for it to exit (so a build, migration or `trap ... TERM` cleanup gets a chance to finish; 10 seconds is `docker stop`'s default), then sends SIGKILL to whatever is left. A job that exits on SIGTERM stops immediately; only one that ignores or stalls on it makes kill wait the full 10 seconds. The shell and anything it started (including `cmd &` children that are still in the group) stop together. `/bg list` then shows what happened: `✗ exit -15 (SIGTERM)` when TERM was enough, `✗ exit -9 (SIGKILL)` when it took KILL, or the job's own exit code if its TERM trap exited cleanly. That is different from a shell that exits on its own: there, a background process it started keeps running, as described above. Jobs read no terminal input (stdin is empty), and jobs still running when you quit yoyo are stopped the same way: all of them get SIGTERM, they share one 10-second grace (quitting waits about 10 seconds at most, however many jobs there are, and only if some job ignores SIGTERM), and survivors get SIGKILL. On Windows, kill stops the shell process only.
 
 ### `/web` — Fetch and read web pages
 

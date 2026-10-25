@@ -152,13 +152,25 @@ impl BackgroundJobTracker {
     /// clean up, then SIGKILL for whatever is left, so `/bg list` reads
     /// `-15 (SIGTERM)` or `-9 (SIGKILL)` by what it actually took.
     pub async fn kill(&self, id: u32) -> bool {
-        self.kill_jobs(&[id]).await == 1
+        self.kill_with(id, BG_STOP_GRACE).await
+    }
+
+    /// `kill` with an explicit TERM grace. The seam exists so tests can
+    /// drive the real path with a TERM-ignoring job without waiting the
+    /// full `BG_STOP_GRACE`; production always passes `BG_STOP_GRACE`.
+    async fn kill_with(&self, id: u32, grace: std::time::Duration) -> bool {
+        self.kill_jobs(&[id], grace).await == 1
     }
 
     /// Stop every job still running, as `/quit` does (#1080): TERM all of
     /// them, ONE shared grace, then KILL survivors, so leaving waits at most
     /// about `BG_STOP_GRACE` however many jobs there are. Returns how many.
     pub async fn stop_running(&self) -> usize {
+        self.stop_running_with(BG_STOP_GRACE).await
+    }
+
+    /// `stop_running` with an explicit shared grace (test seam, as `kill_with`).
+    async fn stop_running_with(&self, grace: std::time::Duration) -> usize {
         let ids: Vec<u32> = {
             let jobs = lock_or_recover(&self.jobs);
             let mut ids: Vec<u32> = jobs
@@ -169,11 +181,11 @@ impl BackgroundJobTracker {
             ids.sort_unstable();
             ids
         };
-        self.kill_jobs(&ids).await
+        self.kill_jobs(&ids, grace).await
     }
 
     /// Shared body of `kill` and `stop_running`; counts jobs that existed.
-    async fn kill_jobs(&self, ids: &[u32]) -> usize {
+    async fn kill_jobs(&self, ids: &[u32], grace: std::time::Duration) -> usize {
         let handles: Vec<(u32, tokio::task::JoinHandle<()>)> = {
             let mut handles = lock_or_recover(&self.handles);
             ids.iter()
@@ -195,7 +207,7 @@ impl BackgroundJobTracker {
                     .collect()
             };
             if !groups.is_empty() {
-                terminate_groups(&mut groups, BG_STOP_GRACE).await;
+                terminate_groups(&mut groups, grace).await;
                 // The waiter now reaps `sh` and records its real status; the
                 // readers see EOF at once because the group holding the pipes
                 // is gone (bounded by the readers' own grace).
@@ -279,10 +291,25 @@ const BG_READER_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
 const KILL_SETTLE: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// How long `/bg kill` and `/quit` let a job's group clean up after SIGTERM
-/// before SIGKILL (#1080). 2s, the same window `BG_READER_GRACE` gives
-/// stragglers: long enough for a trap to remove a lock or flush a file,
-/// short enough that stopping still feels immediate.
-const BG_STOP_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+/// before SIGKILL (#1080, value decided in #1081).
+///
+/// 10s, `docker stop`'s default. Tools with the same TERM, wait, KILL shape:
+/// `docker stop` waits 10s (`--time`, docs.docker.com, `docker container
+/// stop`), Kubernetes `terminationGracePeriodSeconds` defaults to 30s (Pod
+/// lifecycle docs), systemd `DefaultTimeoutStopSec` to 90s
+/// (systemd-system.conf(5)). Docker's is the one where a person at a prompt
+/// waits for the stop, which is the situation here, so it is the reference.
+///
+/// The trade, in this slot's terms: the wait ends as soon as the group is
+/// gone, so a job that exits on SIGTERM stops in milliseconds whatever this
+/// value is. Only a job that ignores or stalls on TERM makes `/bg kill` or
+/// `/quit` wait the full 10s (`/quit` waits ONE shared window however many
+/// jobs), and it then shows `exit -9 (SIGKILL)` in `/bg list`. The user a
+/// shorter value hurts is the one whose TERM trap (flush a file, remove a
+/// lock, finish a migration step) needs more than a couple of seconds: at
+/// the old 2s, borrowed from `BG_READER_GRACE` whose own value was argued
+/// not to matter (#1063), that trap was cut off by SIGKILL mid-cleanup.
+const BG_STOP_GRACE: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// SIGTERM every group, then poll until all are gone or `grace` elapses
 /// (ONE window shared by all of them), then SIGKILL the survivors (#1080).

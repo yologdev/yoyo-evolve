@@ -1495,7 +1495,7 @@ pub async fn run_repl(
     // Auto-save session on exit (always — crash recovery for everyone)
     commands::auto_save_on_exit(agent);
 
-    // Running `/bg` jobs get SIGTERM and one shared ~2s grace, then SIGKILL (#1080).
+    // Running `/bg` jobs get SIGTERM and one shared ~10s grace (`BG_STOP_GRACE`, #1081), then SIGKILL (#1080).
     let stopped = bg_tracker.stop_running().await;
     if stopped > 0 {
         eprintln!("{DIM}  stopped {stopped} running /bg job(s){RESET}");

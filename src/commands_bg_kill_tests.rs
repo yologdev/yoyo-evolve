@@ -8,6 +8,23 @@
 
 use super::*;
 
+/// Grace the TERM-ignoring tests pass through the `kill_with` /
+/// `stop_running_with` seam, so each waits ~1s instead of `BG_STOP_GRACE`.
+/// The shared-grace test needs it well above its jobs' start-up noise: two
+/// per-job windows (2s) must be distinguishable from one shared one (1s).
+const TEST_GRACE: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// #1081: the value is decided, with a reason in its doc comment. Changing it
+/// means re-arguing it there, not just editing the number.
+#[test]
+fn bg_stop_grace_is_docker_stops_ten_seconds() {
+    assert_eq!(
+        BG_STOP_GRACE,
+        std::time::Duration::from_secs(10),
+        "BG_STOP_GRACE was chosen as docker stop's 10s default (#1081); re-argue it in its doc comment before changing it"
+    );
+}
+
 /// Is `pid` still running? `kill(pid, 0)` succeeds for a zombie too, so on
 /// Linux a `Z` state in `/proc/<pid>/stat` counts as dead.
 #[cfg(unix)]
@@ -127,7 +144,7 @@ async fn bg_kill_reports_the_signal_not_success() {
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     assert!(!tracker.is_finished(id));
 
-    assert!(tracker.kill(id).await);
+    assert!(tracker.kill_with(id, TEST_GRACE).await);
     assert!(tracker.is_finished(id));
     let job = tracker.list().into_iter().find(|j| j.id == id).unwrap();
     // What actually happened: the shell died on the group's SIGKILL, read
@@ -280,19 +297,16 @@ async fn bg_kill_falls_back_to_sigkill_for_the_whole_group() {
     );
 
     let start = std::time::Instant::now();
-    assert!(tracker.kill(id).await);
+    assert!(tracker.kill_with(id, TEST_GRACE).await);
     let took = start.elapsed();
     let dead = dies_within_2s(gpid).await;
     if !dead {
         reap_leftover(gpid);
     }
     assert!(dead, "the TERM-ignoring grandchild survived the kill");
+    assert!(took >= TEST_GRACE, "KILL came before the grace: {took:?}");
     assert!(
-        took >= std::time::Duration::from_millis(1500),
-        "KILL came before the grace: {took:?}"
-    );
-    assert!(
-        took < BG_STOP_GRACE + std::time::Duration::from_secs(2),
+        took < TEST_GRACE + std::time::Duration::from_secs(2),
         "kill took {took:?}"
     );
     assert_eq!(code_of(&tracker, id), Some(-libc::SIGKILL));
@@ -325,10 +339,11 @@ async fn bg_stop_running_shares_one_grace_across_jobs() {
     assert!(!tracker.is_finished(a) && !tracker.is_finished(b));
 
     let start = std::time::Instant::now();
-    assert_eq!(tracker.stop_running().await, 2);
+    assert_eq!(tracker.stop_running_with(TEST_GRACE).await, 2);
     let took = start.elapsed();
+    assert!(took >= TEST_GRACE, "KILL came before the grace: {took:?}");
     assert!(
-        took < BG_STOP_GRACE * 2 - std::time::Duration::from_millis(500),
+        took < TEST_GRACE * 2,
         "two jobs took {took:?}: the grace is per job, not shared"
     );
     assert_eq!(code_of(&tracker, a), Some(-libc::SIGKILL));
