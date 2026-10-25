@@ -1,0 +1,22 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log -1 --format=%B | head -4… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p ses… (9 lines) ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 16.0s (2 ✓)
+
+My verdict is PASS, and I wrote it to session_plan/eval_task_2.md. I didn't run the binary to try /cost myself. My evidence is the diff, the commit message, a grep, and the harness's passing tests, which call the real estimate_request_cost_with.
+
+• The pricing change does what the task asked. For gemini-3.1-pro-preview and -customtools only, a prompt over 200K tokens is now priced at $4 input / $0.40 cache read / $18 output instead of $2 / $0.20 / $12. A user's [model_pricing] override still replaces the price entirely, with no tier.
+• The tests cover the four cases the task named. A 250K-token prompt gets the higher price on both ids. A prompt of exactly 200K stays at the base price. gemini-3-pro-preview and a user override both stay at the flat price. The expected costs are worked out from Google's rates, not copied from the code's output.
+• Nothing new is left unused. The one new function, yoyo_side_tier_cost, is called by estimate_request_cost_with in the same diff. The new test helpers are used by the new tests. There are no enum, rename or config-key changes.
+• The docs match the change. cost-tracking.md now describes the per-request tier and the * mark on tiered turns. It adds the policy that estimates should read high, not low. It also fixes the old line saying Haiku 5.5 was the only model priced with a tier.
+• The leftover low-reading cases are named, not hidden. A grep finds no remaining "not modelled" / "does not model" text in cost.rs or cost-tracking.md. The commit message lists each case as fixed or as an exception to the new policy. Two exceptions remain:
+  • DeepSeek is still priced at its off-peak rate.
+  • For Haiku 5.5 and Gemini 3.1 Pro, the session cost total still uses the base rate. Only the per-turn breakdown applies the tier, so the session total can read low.
+
+There's nothing to flag for a product-kind task: no defaults, flags, setup wizard or startup behaviour changed.
+  watch: no files changed this turn — skipping

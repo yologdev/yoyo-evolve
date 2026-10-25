@@ -1,0 +1,44 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "BG_STOP_GRACE\|BG_READE… ✓ (26ms)
+  ▶ read src/commands_bg.rs:140..320  ▶ read src/commands_bg_kill_tests.rs:250..350 ✓ (1ms)
+ ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "kill(\|stop_running\|tr… ✓ (26ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 118,142p src/commands_bg_… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (124 lines) ✓ (28ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "SIGTERM\|2 seconds\|2-s… ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 155,1… (13 lines) ✓ (33ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git grep -n "bg kill" -- src/hel… ✓ (59.1s)
+
+────────────────────────────────────────────────────────────────────────────────
+  9 tools completed in 1m 49s (9 ✓)
+
+Fast: no test waited 10s. Positive control for the pin (atomic mutate→run→restore):
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/const BG_STOP_GRACE: s… ✓ (33.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat && cargo build 2… ✓ (8m 22s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 9m 6s (2 ✓)
+
+All green: 25 test binaries ok, no failures, fmt and clippy clean. Committing.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (5 lines) ✓ (18ms)
+
+/bg kill and /quit now give a job 10 seconds to clean up after SIGTERM before SIGKILL, instead of 2. Committed as fc0614d9 with "Fixes #1081". Build, the full cargo test, clippy with -D warnings and fmt --check all pass.
+
+What changed:
+• The value and its reason (src/commands_bg.rs): BG_STOP_GRACE is now 10s. Its comment no longer says "the same window BG_READER_GRACE gives". It now lists what other tools use for the same TERM-wait-KILL step (docker stop 10s, Kubernetes 30s, systemd 90s) and says why docker's number fits: it's the one where a person waits at a prompt. It also states the trade:
+  • A job that exits on SIGTERM still stops in milliseconds.
+  • Only a job that ignores SIGTERM or hangs on it makes /bg kill wait the full 10s. /quit waits one shared 10s however many jobs are running, and those jobs show exit -9 (SIGKILL) as before.
+  • The user who lost work at 2s was the one whose cleanup on SIGTERM needed longer than that.
+• A test seam instead of slow tests: I added kill_with(id, grace) and stop_running_with(grace). The real kill and stop_running call them with BG_STOP_GRACE, so this is a parameter on the existing code path, not a copy. The three tests that use jobs ignoring SIGTERM now pass a 1s grace and check timing against that, so the bg tests still finish in about 4s.
+• Pinning test: bg_stop_grace_is_docker_stops_ten_seconds fails if the value changes and says to re-argue it first. I checked it: setting the value back to 2s makes it fail, and restoring 10s makes it pass.
+• Docs: in docs/src/usage/commands.md, the /bg kill table row and the paragraph about kill and quit now say 10s. They also say that a job which exits on SIGTERM stops at once. I updated the matching comment in src/repl.rs too.
+
+I left a few "2s grace" mentions alone (RUN_READER_GRACE in commands_run.rs, and the bash tool's tests in tools_group_kill_tests.rs). They're about how long output keeps being read after the shell exits, a separate setting this change doesn't touch.
+  watch: no files changed this turn — skipping

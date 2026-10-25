@@ -1,0 +1,142 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | head; grep … ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/format/cost.rs; F=~/.c… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && F=$(ls ~/.cargo/registry/src/*/y… ✓ (8ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 27.4s (3 ✓)
+
+Write the tests first.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && tail -40 src/format/cost/context… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "override" src/format/c… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1225,1300p src/config.rs;… ✓ (13ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'parse_model_pricing_fr… ✓ (11ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 28.6s (4 ✓)
+
+Now append the tests.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/f… (71 lines) ✓ (129ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo context_ti… ✓ (31.3s)
+  2 tools completed in 43.5s (2 ✓)
+
+Red as expected. Now the production change.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (28 lines) ✓ (33.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control (atomic mutate→test→restore):
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/format/cost.rs /tmp/cost.… ✓ (1m 3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+That control was too wide (it killed Haiku's tier too). Narrower one — only the new helper returns None:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/format/cost.rs /tmp/cost.… ✓ (31.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The sed didn't land (count 0), so that run proves nothing. Check the formatted line:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -A10 "fn yoyo_side_tier_… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/format/cost.rs /tmp/cost.… ✓ (1m 3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 11s (2 ✓)
+
+Exactly the new presence test goes red, and the near-miss tests stay green. Now the docs:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 90,150p docs/src/features… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 60,95p docs/src/features/… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "with_context_tier\|Con… ✓ (21ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (21 lines) ✓ (22ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 31.2s (4 ✓)
+
+Now the policy line, with the exceptions it doesn't yet meet named rather than hidden:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ edit docs/src/features/cost-tracking.md (1 → 8 lines)
+  - Costs are estimated based on published pricing for all major providers:
+  + Costs are estimated based on published pricing for all major providers.
+  + 
+  + **Error direction.** Where a vendor's price varies (a promotion, a context tier,
+  + a time-of-day rate), the table either models the variation or uses the higher
+  + rate, so an estimate is meant to read high, not low. Two places do not meet that
+  + yet, and both read low: DeepSeek is priced at its off-peak rate (see below), and
+  + the session cost line for a tiered model (Haiku 5.5, Gemini 3.1 Pro) uses the
+  + base rate, where only the per-turn breakdown applies the tier.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo bu… ✓ (2ms)
+  - Costs are estimated based on published pricing for all major providers:
+  + Costs are estimated based on published pricing for all major providers.
+  + 
+  + **Error direction.** Where a vendor's price varies (a promotion, a context tier,
+  + a time-of-day rate), the table either models the variation or uses the higher
+  + rate, so an estimate is meant to read high, not low. Two places do not meet that
+  + yet, and both read low: DeepSeek is priced at its off-peak rate (see below), and
+  + the session cost line for a tiered model (Haiku 5.5, Gemini 3.1 Pro) uses the
+  + base rate, where only the per-turn breakdown applies the tier.
+ ✗ (2m 0s)
+    │ Command timed out after 120s
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo bu… ✓ (1.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 590 cargo test 2>&1 | gr… ✓ (3m 50s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 590 cargo test 2>&1 | gr… ✓ (7m 0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 13m 25s (4 ✓, 1 ✗)
+
+All 25 test binaries green, clippy and fmt clean. Committing:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (32 lines) ✓ (1.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status -… (3 lines) ✓ (2.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 19.4s (2 ✓)
+
+The two Gemini 3.1 Pro rows no longer under-bill. /cost's per-turn breakdown now prices a prompt over 200K tokens at Google's higher rate, using the tier code that was already there. It's committed as 967cbc65, pushed, and I commented on #1012 naming both rows and the sha. Build, all 25 test binaries, clippy -D warnings and fmt --check pass.
+
+What changed (`src/format/cost.rs`):
+• A new helper, yoyo_side_tier_cost, covers gemini-3.1-pro-preview and -customtools. It holds the base rates ($2 / $0.20 cache read / $12) plus Google's over-200K rates ($4 / $0.40 / $18).
+• estimate_request_cost_with uses this helper only when no yoagent preset has tiers for the model.
+• A user's [model_pricing] entry still replaces the price entirely, with no tier.
+• The "not modelled" comment is gone. The file is at 3602 lines against a 3605 cap.
+
+Tests (`context_tier_tests.rs`), with the expected costs worked out by hand from Google's rates:
+• A 250K prompt is billed at the higher rate on both ids.
+• Exactly 200K stays at the base rate (the tier only applies strictly above).
+• gemini-3-pro-preview, which has no tier, and a user price override both stay at the flat rate.
+
+Positive control: my first attempt at breaking the code was too broad (it also broke the existing Haiku tests), and my second edit didn't apply, so that run proved nothing. The third made the helper match no model id. Only the 250K test failed, the boundary tests stayed green, and everything passed again once restored.
+
+Docs (`cost-tracking.md`):
+• The Gemini 3.1 Pro sentence now describes the real behaviour.
+• "Haiku 5.5 is the only model yoyo prices with a tier" was no longer true. I replaced it with a pointer rather than a new "only" claim, because yoagent's bundled price data may give other presets tiers I haven't checked.
+• I added the policy line the task asked for: where a vendor's price varies, /cost either models the variation or uses the higher rate. I didn't write "never reads low", because two places still do, and both are named in the policy as exceptions, not fixed:
+  • DeepSeek is priced at its off-peak rate.
+  • For models with a tier (Haiku 5.5, Gemini 3.1 Pro), the session total line uses the base rate; only the per-turn breakdown applies the tier.
+
+These two are the only other rows that read low; I listed them in the commit body as the task asked.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
