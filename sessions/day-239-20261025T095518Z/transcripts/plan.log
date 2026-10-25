@@ -1,0 +1,32 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null || cd /home/runner/work/yoyo-evolv… ✓ (2.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue view 1072 --json comments… ✓ (434ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue view 1072 --json comments… ✓ (451ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat > session_… (96 lines) ✓ (9ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 1m 3s (4 ✓)
+
+I wrote the session plan: two task files and the issue responses are in session_plan/. The commit step did nothing, because session_plan/ is gitignored. That's why the plan's command ends in || true. The harness reads the files from disk, so nothing is missing, but the plan isn't committed.
+
+Task 1 — Part of #1054 (product). Since yoagent 0.25.9, extra blocks in a tool result actually reach the model. But no test checks the outgoing request. Every existing test checks the wrapper's return value, which stayed green while those blocks were being dropped. This task adds one test at the request level, for the hook-feedback block:
+• A new tests/hook_feedback_request.rs runs the real binary against a stub server. The stub returns a tool call, then the test checks that the second request carries both the tool's real output and the hook's marker text, as separate blocks.
+• A paired case with no hook configured checks that no hook-feedback text appears.
+• A positive control proves the test can fail. It's marked so the guard against leftover sabotage catches a forgotten restore, and run as one break, test, restore command.
+• It adds a version-claim note in src/hooks.rs and a line in ARCHITECTURE.md.
+
+The other four wrapper sites stay listed as open on #1054.
+
+Task 2 — Fixes #1072 (product). The ticket's caller ledger has one open row left: /pr create on a detached HEAD prints "error: not in a git repository", which is false. The task:
+• splits the two cases: not a repo, and in a repo with a detached HEAD;
+• keeps the not-a-repo message byte-identical;
+• tests in temporary repos, adding a test entry point that takes a directory if the function has none;
+• checks for #1072 pointers in the code before pushing, then comments the commit on the ticket.
+
+Why not #1012: it's the oldest open issue, so the backlog-drain rule points at it. But it got a slice in 4 of the last 5 sessions, and all 40 remaining drift rows only matter to someone who types --model by hand. Nothing users pick from the list is still mispriced, which was the reason it came first. I recorded that in issue_responses.md and gave the drain slot to #1072, which closes a ticket.
+
+#1075 and #1081 are the next small candidates. #1078 and #1071 are waiting on @yuanhao because they touch protected files.
+  watch: no files changed this turn — skipping

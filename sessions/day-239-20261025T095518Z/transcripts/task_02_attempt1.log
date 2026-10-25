@@ -1,0 +1,249 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "git_branch\|not in a gi… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,16p src/commands_git_pr… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 60,95p src/context.rs; se… ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn is_git_repo\|fn in_… ✓ (62ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 18.4s (4 ✓)
+
+Let me check what gh pr create says on a detached HEAD (in a temp repo, no remote needed for the message path — let's see).
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp && rm -rf ghdet && mkdir ghdet && cd ghdet && git init -q -b main && git… ✓ (433ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "commands_git_pr\|const …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,10p src/commands_git_pr… ✓ (6ms)
+ ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 19.1s (3 ✓)
+
+Plenty of headroom. Now the edit: a dir-taking check, routed through by the call site.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_git_pr.rs (8 → 8 lines)
+                // 1. Detect current branch
+  -             let branch = match git_branch() {
+  -                 Some(b) => b,
+  -                 None => {
+  -                     eprintln!("{RED}  error: not in a git repository{RESET}\n");
+  +             let branch = match pr_create_branch_in(std::path::Path::new(".")) {
+  +                 Ok(b) => b,
+  +                 Err(msg) => {
+  +                     eprintln!("{RED}  {msg}{RESET}\n");
+                        return;
+                    }
+                };
+  ▶ edit src/commands_git_pr.rs (4 → 36 lines)
+  + /// `/pr create`'s refusal when `dir` is not inside a git repository.
+  + pub(crate) const PR_CREATE_NOT_A_REPO: &str = "error: not in a git repository";
+  + 
+  + /// `/pr create`'s refusal on a detached HEAD. `gh pr create` itself fails
+  + /// there with "could not determine the current branch ... not on any branch",
+  + /// so the advice is to get onto a branch, not to retry.
+  + pub(crate) const PR_CREATE_DETACHED: &str =
+  +     "error: HEAD is detached; check out a branch before /pr create (git switch -c <name>)";
+  + 
+  + /// The branch `/pr create` would open a PR from, or the refusal to print.
+  + ///
+  + /// `current_branch_in` returns `None` for two different states (#1072): not a
+  + /// repo at all, and a repo whose HEAD is detached. Before 852d0148 the
+  + /// detached case came back as the literal `HEAD`; after it, both cases
+  + /// printed "not in a git repository", which is false for the detached one.
+  + /// `rev-parse --git-dir` tells them apart (it succeeds in any repo, including
+  + /// a detached or unborn one).
+  + pub(crate) fn pr_create_branch_in(dir: &std::path::Path) -> Result<String, &'static str> {
+  +     if let Some(branch) = git_branch::current_branch_in(dir) {
+  +         return Ok(branch);
+  ... (15 more lines)
+ ✓ (4.8s)
+                // 1. Detect current branch
+  -             let branch = match git_branch() {
+  -                 Some(b) => b,
+  -                 None => {
+  -                     eprintln!("{RED}  error: not in a git repository{RESET}\n");
+  +             let branch = match pr_create_branch_in(std::path::Path::new(".")) {
+  +                 Ok(b) => b,
+  +                 Err(msg) => {
+  ... (4 more lines)
+ ✓ (9.4s)
+  + /// `/pr create`'s refusal when `dir` is not inside a git repository.
+  + pub(crate) const PR_CREATE_NOT_A_REPO: &str = "error: not in a git repository";
+  + 
+  + /// `/pr create`'s refusal on a detached HEAD. `gh pr create` itself fails
+  + /// there with "could not determine the current branch ... not on any branch",
+  + /// so the advice is to get onto a branch, not to retry.
+  + pub(crate) const PR_CREATE_DETACHED: &str =
+  +     "error: HEAD is detached; check out a branch before /pr create (git switch -c <name>)";
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 27.5s (2 ✓)
+
+Now the tests file (hermetic temp repos, git fixture scrubbed like git_branch.rs's).
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ write src/commands_git_pr_create_tests.rs (93 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (14.7s)
+ ✓ (29.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 35.8s (2 ✓)
+
+The call site should be using it — let me check whether the first edit actually landed.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pr_create_branch_in\|gi… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The call-site edit didn't stick (the file only shows the second edit). Re-applying:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_git_pr.rs (7 → 7 lines)
+  -             let branch = match git_branch() {
+  -                 Some(b) => b,
+  -                 None => {
+  -                     eprintln!("{RED}  error: not in a git repository{RESET}\n");
+  +             let branch = match pr_create_branch_in(std::path::Path::new(".")) {
+  +                 Ok(b) => b,
+  +                 Err(msg) => {
+  +                     eprintln!("{RED}  {msg}{RESET}\n");
+                        return;
+                    }
+                };
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pr_create_branch_in" sr… ✓ (1m 51s)
+  -             let branch = match git_branch() {
+  -                 Some(b) => b,
+  -                 None => {
+  -                     eprintln!("{RED}  error: not in a git repository{RESET}\n");
+  +             let branch = match pr_create_branch_in(std::path::Path::new(".")) {
+  +                 Ok(b) => b,
+  +                 Err(msg) => {
+  +                     eprintln!("{RED}  {msg}{RESET}\n");
+  ... (3 more lines)
+ ✓ (1m 51s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 56s (2 ✓)
+
+Five green. Positive control next, as one atomic mutate→run→restore: make the detached branch return the old message and check that (a) goes red by name.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/commands_git_pr.rs /tmp/p… ✓ (22.5s)
+
+The control failed only the detached test, then I restored the file (0 markers left). Now the full gate:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo bu… ✓ (1m 48s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+My test fixture calls Command::new("git") directly, which a chokepoint gate catches. Let me see what it wants.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test git_chokepoint… ✓ (160ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "git_branch.rs\|fixture_… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "REGISTERED_GIT_BYPASSES… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 14.1s (3 ✓)
+
+Sibling *_tests.rs files are scanned whole (only inline #[cfg(test)] mod is cut). Let me see how commands_git_undo_tests.rs builds its fixture, and reuse that shape.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn git_out\|fn init_rep… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,46p src/commands_git_un… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 10.7s (2 ✓)
+
+Same pattern: route my fixture through the chokepoint (run_git_in_dir), keeping the identity/branch-name -c flags so the machine's config can't decide the outcome.
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (30 lines) ✓ (1m 50s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test orphan_modules… ✓ (195ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 57s (2 ✓)
+
+The file is compiled (5 tests ran), so the gate must be reading declarations differently. Let me compare against the sibling that passes.
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2107,2112p src/commands_g… ✓ (4ms)
+
+The gate matches the mod name to the file stem, so the convention is mod <file_stem>;. Renaming the module to match:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/^mod create_tests;$/mo… ✓ (3m 16s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The whole suite is green. Next: the pointer grep, the docs, and the ARCHITECTURE entry for this file.
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git grep -n '#1072\b' src docs s… ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Every #1072 hit describes history, including my new doc comment; none is a "tracked in" pointer. commands_git_pr.rs has no ARCHITECTURE.md entry. Let me check the /pr create docs wording:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 490,500p docs/src/usage/c… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^- \`/pr create" docs/s… ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (9 lines) ✓ (1.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 22.5s (3 ✓)
+
+A docs edit can trip doc-reading tests, so one more full run before committing:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2… (20 lines) ✓ (2m 39s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Committed as e02edb46. The task also asks for a comment on #1072. Checking its state, then posting:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 1072 --json state,… ✓ (366ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue com… (7 lines) ✓ (901ms)
+  2 tools completed in 16.6s (2 ✓)
+
+I fixed the last open row of #1072. On a detached HEAD, /pr create now says so instead of claiming you're not in a git repository. Build, test, clippy and fmt all pass, and it's committed as e02edb46.
+
+What I changed
+• New check: pr_create_branch_in(dir) in src/commands_git_pr.rs. When there's no current branch, it uses git rev-parse --git-dir to tell the two cases apart. That command succeeds in any repo, detached or unborn, and fails outside one. The /pr create call site now goes through this check.
+• Detached HEAD: it prints error: HEAD is detached; check out a branch before /pr create (git switch -c <name>) and stops before any diff or gh call. I ran gh pr create (gh 2.102.0) on a detached HEAD in a temp repo first. It fails with "could not determine the current branch … not on any branch", so the advice doesn't contradict it.
+• Outside a repo: the message is still exactly error: not in a git repository.
+
+Tests, in the new src/commands_git_pr_create_tests.rs, all in temp repos:
+• detached HEAD gets the detached message;
+• not a repo gets the old message, checked against the full string;
+• a normal branch passes through unchanged;
+• a fresh git init with no commits passes through and isn't mistaken for detached.
+
+To check the detached test can actually fail, I briefly made that case return the old message: only the detached test went red, and I restored the code in the same command.
+
+Two repo checks caught my first draft:
+• The git-chokepoint check rejected my test helper because it ran git directly. It now goes through run_git_in_dir, like the undo tests do.
+• The orphan-module check needs the module name to match the file name, so I renamed it to mod commands_git_pr_create_tests.
+
+Also done
+• Added the detached-HEAD behaviour to the /pr create line in docs/src/usage/commands.md.
+• git grep '#1072' finds only comments describing past fixes, including my new doc comment. None of them is a "tracked in" pointer, so they stay true once the ticket closes.
+• I commented on #1072 with the sha and noted this is the /pr row from the 09:50Z ledger. I posted it before pushing, so the comment says the fix arrives with this session's push, and "Fixes #1072" will close the ticket then.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 0/2 changed files were in top-10 predictions (0.0% accuracy)
+     Surprises (not predicted): src/commands_git_pr.rs, src/commands_git_pr_create_tests.rs

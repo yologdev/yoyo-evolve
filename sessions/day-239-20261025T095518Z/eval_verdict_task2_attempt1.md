@@ -1,0 +1,6 @@
+Verdict: PASS
+Reason: /pr create now separates a detached HEAD from not-a-repo using the existing git_branch::current_branch_in plus run_git_in_dir rev-parse --git-dir. The not-a-repo message is byte-identical, and hermetic temp-repo tests cover the detached, not-a-repo, normal-branch and unborn cases; clippy -D warnings is clean.
+Checked: intent_alignment: PASS: call site at handle_pr Create arm now routes through pr_create_branch_in(".") with a dir-taking seam; detached returns PR_CREATE_DETACHED with git switch -c advice, consistent with gh's "not on any branch" failure; early return precedes any diff/prompt/gh call
+Checked: forgotten_touchpoints: PASS: both new consts and pr_create_branch_in are consumed in this diff (call site plus tests); new test module wired via #[path]; git_branch/run_git_in_dir resolve through the existing crate::git::* glob; I ran cargo clippy --all-targets -D warnings and it finished clean
+Checked: doc_sync: PASS: docs/src/usage/commands.md /pr create bullet now documents the detached-HEAD refusal and the git switch -c advice
+Checked: product_surface: PASS: product-kind bug fix to an error message only, with no defaults, flags, wizard or startup changes; the normal-branch path is unchanged (pinned by normal_branch_passes_through)
