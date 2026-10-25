@@ -1495,6 +1495,12 @@ pub async fn run_repl(
     // Auto-save session on exit (always — crash recovery for everyone)
     commands::auto_save_on_exit(agent);
 
+    // Running `/bg` jobs get SIGTERM and one shared ~2s grace, then SIGKILL (#1080).
+    let stopped = bg_tracker.stop_running().await;
+    if stopped > 0 {
+        eprintln!("{DIM}  stopped {stopped} running /bg job(s){RESET}");
+    }
+
     // Opt-in: snapshot risk predictions on exit so the meter accumulates
     // during any session where enabled (off by default — product-safe).
     // Dedups by git hash → at most one snapshot per HEAD.

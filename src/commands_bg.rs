@@ -147,29 +147,67 @@ impl BackgroundJobTracker {
     /// kill `StreamingBashTool` does on a timeout (#1077). It used to abort the
     /// task only, which dropped a `Child` without killing it: the job read
     /// "killed" while `sh` kept running.
+    ///
+    /// Since #1080 the group gets SIGTERM first and up to `BG_STOP_GRACE` to
+    /// clean up, then SIGKILL for whatever is left, so `/bg list` reads
+    /// `-15 (SIGTERM)` or `-9 (SIGKILL)` by what it actually took.
     pub async fn kill(&self, id: u32) -> bool {
-        let handle = {
+        self.kill_jobs(&[id]).await == 1
+    }
+
+    /// Stop every job still running, as `/quit` does (#1080): TERM all of
+    /// them, ONE shared grace, then KILL survivors, so leaving waits at most
+    /// about `BG_STOP_GRACE` however many jobs there are. Returns how many.
+    pub async fn stop_running(&self) -> usize {
+        let ids: Vec<u32> = {
+            let jobs = lock_or_recover(&self.jobs);
+            let mut ids: Vec<u32> = jobs
+                .values()
+                .filter(|j| !j.finished.load(Ordering::Relaxed))
+                .map(|j| j.id)
+                .collect();
+            ids.sort_unstable();
+            ids
+        };
+        self.kill_jobs(&ids).await
+    }
+
+    /// Shared body of `kill` and `stop_running`; counts jobs that existed.
+    async fn kill_jobs(&self, ids: &[u32]) -> usize {
+        let handles: Vec<(u32, tokio::task::JoinHandle<()>)> = {
             let mut handles = lock_or_recover(&self.handles);
-            handles.remove(&id)
+            ids.iter()
+                .filter_map(|id| handles.remove(id).map(|h| (*id, h)))
+                .collect()
         };
 
-        if let Some(h) = handle {
-            // Non-unix has no group to signal; the abort below and
-            // `kill_on_drop` stop `sh` there.
-            #[cfg(unix)]
-            if let Some(mut group) = {
+        // Non-unix has no group to signal; the abort below and
+        // `kill_on_drop` stop `sh` there.
+        #[cfg(unix)]
+        {
+            let mut groups: Vec<crate::tools::GroupKill> = {
                 let jobs = lock_or_recover(&self.jobs);
-                jobs.get(&id).and_then(|j| lock_or_recover(&j.group).take())
-            } {
-                group.kill_now();
+                handles
+                    .iter()
+                    .filter_map(|(id, _)| {
+                        jobs.get(id).and_then(|j| lock_or_recover(&j.group).take())
+                    })
+                    .collect()
+            };
+            if !groups.is_empty() {
+                terminate_groups(&mut groups, BG_STOP_GRACE).await;
                 // The waiter now reaps `sh` and records its real status; the
                 // readers see EOF at once because the group holding the pipes
                 // is gone (bounded by the readers' own grace).
                 let deadline = Instant::now() + BG_READER_GRACE + KILL_SETTLE;
-                while !h.is_finished() && Instant::now() < deadline {
+                while handles.iter().any(|(_, h)| !h.is_finished()) && Instant::now() < deadline {
                     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
                 }
             }
+        }
+
+        let count = handles.len();
+        for (id, h) in handles {
             // Backstop: if the waiter has not finished (no group recorded,
             // non-unix, or something escaped the group and holds the pipe),
             // abort it. Dropping the task drops the `Child`, and
@@ -192,10 +230,8 @@ impl BackgroundJobTracker {
                     *code = Some(crate::tools::EXIT_CODE_UNDETERMINED);
                 }
             }
-            true
-        } else {
-            false
         }
+        count
     }
 
     /// Check if a job ID exists.
@@ -241,6 +277,30 @@ const BG_READER_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
 /// Extra time `kill` allows the waiter to reap a SIGKILLed shell, on top of
 /// `BG_READER_GRACE`, before falling back to aborting the task.
 const KILL_SETTLE: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// How long `/bg kill` and `/quit` let a job's group clean up after SIGTERM
+/// before SIGKILL (#1080). 2s, the same window `BG_READER_GRACE` gives
+/// stragglers: long enough for a trap to remove a lock or flush a file,
+/// short enough that stopping still feels immediate.
+const BG_STOP_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// SIGTERM every group, then poll until all are gone or `grace` elapses
+/// (ONE window shared by all of them), then SIGKILL the survivors (#1080).
+/// Polls asynchronously so the waiter tasks can reap the shells meanwhile —
+/// an unreaped zombie leader still counts as a group member.
+#[cfg(unix)]
+async fn terminate_groups(groups: &mut [crate::tools::GroupKill], grace: std::time::Duration) {
+    for g in groups.iter() {
+        g.signal(libc::SIGTERM);
+    }
+    let deadline = Instant::now() + grace;
+    while groups.iter().any(|g| g.signal(0)) && Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    for g in groups.iter_mut() {
+        g.kill_now();
+    }
+}
 
 /// In-band marker appended to a job's output when `sh` exited but something
 /// it started still holds stdout/stderr (#1063).

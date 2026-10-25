@@ -653,7 +653,8 @@ impl AgentTool for StreamingBashTool {
 
 /// Kills a command's process group (SIGKILL) on a timeout, a cancel, or the
 /// tool's future being dropped — unless the command finished first and the
-/// guard was disarmed. Mirrors yoagent 0.25.2's `GroupKill` (same signal, no
+/// guard was disarmed. `/bg kill` and `/quit` first `signal(SIGTERM)` and
+/// allow a grace (`commands_bg::terminate_groups`, #1080). Mirrors yoagent 0.25.2's `GroupKill` (same signal, no
 /// TERM-then-KILL grace) so the parent's bash and a sub-agent's bash agree on
 /// what a timeout kills once yoyo is on that release. No-op off Unix, where
 /// `child.kill()` alone remains the behaviour.
@@ -682,6 +683,16 @@ impl GroupKill {
                 libc::killpg(pgid, libc::SIGKILL);
             }
         }
+    }
+
+    /// Send `sig` to the group and stay armed (the TERM half of `/bg kill`'s
+    /// TERM-grace-KILL, #1080). Returns whether any member received it, so
+    /// `signal(0)` asks "is anything of the group left?".
+    #[cfg(unix)]
+    pub(crate) fn signal(&self, sig: libc::c_int) -> bool {
+        // SAFETY: as in `kill_now`; signal 0 only probes for existence.
+        self.pgid
+            .is_some_and(|pgid| unsafe { libc::killpg(pgid, sig) } == 0)
     }
 
     pub(crate) fn disarm(&mut self) {

@@ -121,7 +121,9 @@ async fn bg_kill_stops_the_shells_background_children_too() {
 #[tokio::test]
 async fn bg_kill_reports_the_signal_not_success() {
     let tracker = BackgroundJobTracker::new();
-    let id = tracker.launch("sleep 30");
+    // Ignores TERM since #1080 (kill is TERM, grace, then KILL), so this
+    // still pins the SIGKILL end; the TERM end has its own test below.
+    let id = tracker.launch("trap '' TERM; sleep 30");
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     assert!(!tracker.is_finished(id));
 
@@ -181,4 +183,155 @@ async fn bg_normal_exit_still_leaves_the_grandchild_alone() {
         alive,
         "#1063: a normal shell exit must not kill its grandchild"
     );
+}
+
+// ---- #1080: TERM first, a short grace, then KILL ----
+
+/// Wait (bounded) for the job to finish.
+async fn wait_finished(tracker: &BackgroundJobTracker, id: u32) {
+    for _ in 0..150 {
+        if tracker.is_finished(id) {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+}
+
+fn code_of(tracker: &BackgroundJobTracker, id: u32) -> Option<i32> {
+    tracker
+        .list()
+        .into_iter()
+        .find(|j| j.id == id)
+        .unwrap()
+        .exit_code
+}
+
+/// A job that does not catch TERM dies of it, and `/bg list` says so.
+#[cfg(unix)]
+#[tokio::test]
+async fn bg_kill_ends_an_ordinary_job_with_sigterm() {
+    let tracker = BackgroundJobTracker::new();
+    let id = tracker.launch("sleep 30");
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert!(!tracker.is_finished(id), "anti-vacuous: must be running");
+
+    let start = std::time::Instant::now();
+    assert!(tracker.kill(id).await);
+    assert!(
+        start.elapsed() < std::time::Duration::from_millis(1500),
+        "a job that dies on TERM must not wait out the grace: {:?}",
+        start.elapsed()
+    );
+    assert_eq!(code_of(&tracker, id), Some(-libc::SIGTERM));
+    assert_eq!(
+        crate::tools::describe_exit_code(-libc::SIGTERM),
+        "-15 (SIGTERM)"
+    );
+}
+
+/// The grace is real: a job that traps TERM gets to run its cleanup (write a
+/// marker) and exit with its own code, which is never replaced by `-9`.
+#[cfg(unix)]
+#[tokio::test]
+async fn bg_kill_lets_a_term_trap_clean_up() {
+    let dir = tempfile::tempdir().unwrap();
+    let marker = dir.path().join("cleaned");
+    let ready = dir.path().join("ready");
+    let tracker = BackgroundJobTracker::new();
+    let id = tracker.launch(&format!(
+        "trap 'echo done > \"{}\"; exit 7' TERM; echo $$ > '{}'; while :; do sleep 0.05; done",
+        marker.display(),
+        ready.display()
+    ));
+    let pid = read_pid_file(&ready).await;
+    assert!(pid_running(pid), "anti-vacuous: the job must be running");
+    assert!(!marker.exists(), "anti-vacuous: no cleanup before the kill");
+
+    assert!(tracker.kill(id).await);
+    let dead = dies_within_2s(pid).await;
+    if !dead {
+        reap_leftover(pid);
+    }
+    assert!(dead);
+    assert_eq!(
+        std::fs::read_to_string(&marker).unwrap_or_default().trim(),
+        "done",
+        "the TERM trap never ran: no grace was given"
+    );
+    assert_eq!(code_of(&tracker, id), Some(7));
+}
+
+/// A job that ignores TERM is still stopped (by KILL, after the grace), and
+/// so is its grandchild: the #1077 group property survives the grace.
+#[cfg(unix)]
+#[tokio::test]
+async fn bg_kill_falls_back_to_sigkill_for_the_whole_group() {
+    let dir = tempfile::tempdir().unwrap();
+    let gpid_path = dir.path().join("gpid");
+    let tracker = BackgroundJobTracker::new();
+    let id = tracker.launch(&format!(
+        "trap '' TERM; sleep 60 & echo $! > '{}'; wait",
+        gpid_path.display()
+    ));
+    let gpid = read_pid_file(&gpid_path).await;
+    assert!(
+        pid_running(gpid),
+        "anti-vacuous: grandchild must be running"
+    );
+
+    let start = std::time::Instant::now();
+    assert!(tracker.kill(id).await);
+    let took = start.elapsed();
+    let dead = dies_within_2s(gpid).await;
+    if !dead {
+        reap_leftover(gpid);
+    }
+    assert!(dead, "the TERM-ignoring grandchild survived the kill");
+    assert!(
+        took >= std::time::Duration::from_millis(1500),
+        "KILL came before the grace: {took:?}"
+    );
+    assert!(
+        took < BG_STOP_GRACE + std::time::Duration::from_secs(2),
+        "kill took {took:?}"
+    );
+    assert_eq!(code_of(&tracker, id), Some(-libc::SIGKILL));
+}
+
+/// Near-miss: a job that already finished gets no signal; its code stays.
+#[tokio::test]
+async fn bg_kill_on_a_finished_job_keeps_its_code() {
+    let tracker = BackgroundJobTracker::new();
+    let id = tracker.launch("exit 3");
+    wait_finished(&tracker, id).await;
+    assert_eq!(code_of(&tracker, id), Some(3), "anti-vacuous");
+    let start = std::time::Instant::now();
+    tracker.kill(id).await;
+    assert!(start.elapsed() < std::time::Duration::from_millis(500));
+    assert_eq!(code_of(&tracker, id), Some(3));
+}
+
+/// `/quit`: two TERM-ignoring jobs share ONE grace, so leaving takes about
+/// one grace, not one per job; both end on KILL; a finished job is untouched.
+#[cfg(unix)]
+#[tokio::test]
+async fn bg_stop_running_shares_one_grace_across_jobs() {
+    let tracker = BackgroundJobTracker::new();
+    let done = tracker.launch("exit 4");
+    wait_finished(&tracker, done).await;
+    let a = tracker.launch("trap '' TERM; sleep 60");
+    let b = tracker.launch("trap '' TERM; sleep 60");
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert!(!tracker.is_finished(a) && !tracker.is_finished(b));
+
+    let start = std::time::Instant::now();
+    assert_eq!(tracker.stop_running().await, 2);
+    let took = start.elapsed();
+    assert!(
+        took < BG_STOP_GRACE * 2 - std::time::Duration::from_millis(500),
+        "two jobs took {took:?}: the grace is per job, not shared"
+    );
+    assert_eq!(code_of(&tracker, a), Some(-libc::SIGKILL));
+    assert_eq!(code_of(&tracker, b), Some(-libc::SIGKILL));
+    assert_eq!(code_of(&tracker, done), Some(4));
 }
