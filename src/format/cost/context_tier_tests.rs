@@ -200,3 +200,83 @@ fn per_turn_table_marks_tiered_rows_and_says_why_the_totals_differ() {
     assert!(!out.contains('*'));
     assert!(!out.contains(TIERED_TURN_FOOTNOTE));
 }
+
+// ── #1012: Gemini 3.1 Pro Preview's >200K tier (yoyo-side, no preset carries it) ──
+//
+// Google bills a prompt over 200K tokens at $4 input / $0.40 cache read /
+// $18 output instead of $2 / $0.20 / $12. The rates are written out here from
+// Google's price page, not read back from the code under test.
+
+const GEMINI_31_PRO_IDS: [&str; 2] = [
+    "gemini-3.1-pro-preview",
+    "gemini-3.1-pro-preview-customtools",
+];
+
+/// A Gemini usage: Google reports no cache writes, so the prompt is input + cache_read.
+fn gemini_usage(prompt: u64) -> Usage {
+    let cache_read = prompt / 5;
+    Usage {
+        input: prompt - cache_read,
+        output: 3_000,
+        cache_read,
+        cache_write: 0,
+        total_tokens: 0,
+    }
+}
+
+#[test]
+fn gemini_31_pro_over_200k_bills_the_higher_tier() {
+    let u = gemini_usage(250_000); // input 200_000, cache_read 50_000, output 3_000
+    let expected = (200_000.0 * 4.00 + 50_000.0 * 0.40 + 3_000.0 * 18.00) / 1_000_000.0;
+    let base = (200_000.0 * 2.00 + 50_000.0 * 0.20 + 3_000.0 * 12.00) / 1_000_000.0;
+    assert!(expected > base, "anti-vacuous: the tier must cost more");
+    for id in GEMINI_31_PRO_IDS {
+        let (cost, tiered) = estimate_request_cost_with(&no_overrides(), &u, id).unwrap();
+        assert!(tiered, "{id}: a 250K prompt must be tiered");
+        assert!(
+            (cost - expected).abs() < 1e-12,
+            "{id}: {cost} != {expected}"
+        );
+        // The flat estimate is still the base rate, so /cost's total can differ.
+        let flat = estimate_cost_with(&no_overrides(), &u, id).unwrap();
+        assert!((flat - base).abs() < 1e-12, "{id}: flat {flat} != {base}");
+    }
+}
+
+#[test]
+fn gemini_31_pro_at_exactly_200k_stays_on_the_base_tier() {
+    // yoagent's tie rule: a tier applies strictly *above* its threshold.
+    let u = gemini_usage(200_000);
+    for id in GEMINI_31_PRO_IDS {
+        assert_eq!(
+            estimate_request_cost_with(&no_overrides(), &u, id),
+            estimate_cost_with(&no_overrides(), &u, id).map(|c| (c, false)),
+            "{id}"
+        );
+    }
+}
+
+#[test]
+fn untiered_gemini_pro_and_a_user_override_stay_flat_over_200k() {
+    let u = gemini_usage(250_000);
+    // The estimated `pro` arm carries no tier.
+    let id = "gemini-3-pro-preview";
+    assert_eq!(
+        estimate_request_cost_with(&no_overrides(), &u, id),
+        estimate_cost_with(&no_overrides(), &u, id).map(|c| (c, false))
+    );
+    // A `[model_pricing]` override replaces pricing wholesale: no tier.
+    let user = crate::config::parse_model_pricing_from_config(
+        "[model_pricing.\"gemini-3.1-pro-preview\"]\ninput = 1\noutput = 2\n",
+    );
+    assert!(
+        user.lookup("gemini-3.1-pro-preview").is_some(),
+        "anti-vacuous"
+    );
+    let (cost, tiered) = estimate_request_cost_with(&user, &u, "gemini-3.1-pro-preview").unwrap();
+    assert!(!tiered);
+    assert_eq!(
+        Some(cost),
+        estimate_cost_with(&user, &u, "gemini-3.1-pro-preview")
+    );
+}

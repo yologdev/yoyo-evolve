@@ -50,7 +50,14 @@ Use `/tokens` to see a full breakdown including cache usage:
 
 ## Supported models
 
-Costs are estimated based on published pricing for all major providers:
+Costs are estimated based on published pricing for all major providers.
+
+**Error direction.** Where a vendor's price varies (a promotion, a context tier,
+a time-of-day rate), the table either models the variation or uses the higher
+rate, so an estimate is meant to read high, not low. Two places do not meet that
+yet, and both read low: DeepSeek is priced at its off-peak rate (see below), and
+the session cost line for a tiered model (Haiku 5.5, Gemini 3.1 Pro) uses the
+base rate, where only the per-turn breakdown applies the tier.
 
 ### Anthropic
 
@@ -91,7 +98,7 @@ the base rates, so they **understate** a Haiku 5.5 session with very long
 prompts. When the two disagree, the per-turn total is the closer one (it covers
 only turns still in the conversation, so after `/compact` it can be lower). A
 `[model_pricing]` override for the model replaces its pricing wholesale and no
-tier applies. Haiku 5.5 is the only model yoyo currently prices with a tier.
+tier applies. Gemini 3.1 Pro (see Google below) is tiered the same way.
 
 ### OpenAI
 
@@ -129,8 +136,11 @@ through 2026-12-31, so until then `/cost` reads about twice the bill. The 3.1 im
 ids and `gemini-3.5-live-translate-preview` have exact prices too (image or audio output rates).
 Other `gemini-3*` flash ids Google's pricing page does not list (for example `gemini-3.5-flash`)
 are still estimated at $0.15 / $0.60, and other `gemini-3*` pro ids (for example
-`gemini-3-pro-preview`, `gemini-3-pro-image-preview`) at $1.25 / $10. Gemini 3.1 Pro is billed at
-its base rate; Google charges $4 / $18 for prompts over 200K tokens, which `/cost` does not model.
+`gemini-3-pro-preview`, `gemini-3-pro-image-preview`) at $1.25 / $10. Gemini 3.1 Pro (both ids) is billed at
+$2 / $0.20 cache read / $12; Google charges $4 / $0.40 / $18 for a prompt over 200K tokens, and
+since Day 239 the per-turn breakdown prices each such turn at those rates and marks it `*`, as for
+Haiku 5.5 above (a prompt of exactly 200K stays at the base rate). The session cost line still
+uses the base rate, so for those sessions it reads low; the per-turn total is the closer one.
 Gemini 3 Pro Image is billed at its image output rate ($120); its text output is $12.
 
 ### DeepSeek

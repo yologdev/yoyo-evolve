@@ -201,7 +201,7 @@ fn builtin_model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
             "gemini-3.1-flash-tts-preview" => return Some((1.00, 0.0, 0.0, 20.00)),
             "gemini-3.5-live-translate-preview" => return Some((3.50, 0.0, 0.0, 21.00)),
             "gemini-3.6-flash" => return Some((1.50, 0.0, 0.15, 7.50)),
-            // #1012 (2026-10-25): base tier; >200K prompts bill 4/0.40/18, not modelled.
+            // #1012: base tier; >200K prompts bill 4/0.40/18 via `yoyo_side_tier_cost`.
             "gemini-3.1-pro-preview" | "gemini-3.1-pro-preview-customtools" => {
                 return Some((2.00, 0.0, 0.20, 12.00));
             }
@@ -435,7 +435,8 @@ pub fn estimate_request_cost_with(
         .or_else(|| crate::agent_builder::openai_preset(stripped))
         .or_else(|| crate::agent_builder::vendor_preset_by_id(stripped))
         .and_then(|preset| preset.cost)
-        .filter(|cost| !cost.context_tiers.is_empty());
+        .filter(|cost| !cost.context_tiers.is_empty())
+        .or_else(|| yoyo_side_tier_cost(stripped));
     let Some(cost) = tiers else {
         return Some((base, false));
     };
@@ -450,6 +451,21 @@ pub fn estimate_request_cost_with(
         // Below (or at) the threshold: byte-identical to the flat estimate.
         Some((base, false))
     }
+}
+
+/// Tiers Google publishes for ids no yoagent preset prices (#1012): the base
+/// row of `model_pricing_with` plus Google's >200K-prompt rates.
+fn yoyo_side_tier_cost(model: &str) -> Option<yoagent::provider::CostConfig> {
+    use yoagent::provider::{ContextTier, CostConfig};
+    matches!(
+        model,
+        "gemini-3.1-pro-preview" | "gemini-3.1-pro-preview-customtools"
+    )
+    .then(|| {
+        CostConfig::new(2.00, 12.00)
+            .with_cache_read(0.20)
+            .with_context_tier(ContextTier::new(200_000, 4.00, 18.00).with_cache_read(0.40))
+    })
 }
 
 /// Get individual cost components for a usage and model.
