@@ -1364,7 +1364,13 @@ impl AgentTool for HookedTool {
         {
             Ok(post_result) => {
                 let mut final_result = result;
-                // If any post-hook returned feedback, append it as additional context
+                // If any post-hook returned feedback, append it as additional context.
+                // This extra block reaches the model only since yoagent 0.25.9;
+                // before that the provider sent a tool result's first text block
+                // alone, so it was built and dropped (#1054). On the Anthropic wire
+                // a text-only result is one string, blocks joined by "\n", and
+                // tests/hook_feedback_request.rs pins that at the request body.
+                // yoagent-version-claim: 0.25
                 if let Some(feedback) = post_result.feedback {
                     final_result.content.push(Content::Text {
                         text: format!("\n[Hook feedback]\n{feedback}"),
