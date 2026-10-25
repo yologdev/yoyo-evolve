@@ -111,6 +111,9 @@ tier applies. Haiku 5.5 is the only model yoyo currently prices with a tier.
 | Model | Input | Output |
 |-------|-------|--------|
 | Gemini 2.5 Pro | $1.25/MTok | $10/MTok |
+| Gemini 2.5 Pro TTS (`gemini-2.5-pro-preview-tts`) | $1/MTok | $20/MTok |
+| Gemini 3.1 Pro Preview (`gemini-3.1-pro-preview`, `-customtools`) | $2/MTok | $12/MTok |
+| Gemini 3 Pro Image (`gemini-3-pro-image`) | $2/MTok | $120/MTok |
 | Gemini 2.5 Flash | $0.30/MTok | $2.50/MTok |
 | Gemini 2.5 Flash-Lite | $0.10/MTok | $0.40/MTok |
 | Gemini 2.5 Flash Image (`gemini-2.5-flash-image`) | $0.30/MTok | $30/MTok |
@@ -125,7 +128,10 @@ Gemini 3.6 Flash is billed at Google's regular rate; Google charges an introduct
 through 2026-12-31, so until then `/cost` reads about twice the bill. The 3.1 image, TTS and live
 ids and `gemini-3.5-live-translate-preview` have exact prices too (image or audio output rates).
 Other `gemini-3*` flash ids Google's pricing page does not list (for example `gemini-3.5-flash`)
-are still estimated at $0.15 / $0.60.
+are still estimated at $0.15 / $0.60, and other `gemini-3*` pro ids (for example
+`gemini-3-pro-preview`, `gemini-3-pro-image-preview`) at $1.25 / $10. Gemini 3.1 Pro is billed at
+its base rate; Google charges $4 / $18 for prompts over 200K tokens, which `/cost` does not model.
+Gemini 3 Pro Image is billed at its image output rate ($120); its text output is $12.
 
 ### DeepSeek
 

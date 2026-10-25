@@ -1714,3 +1714,37 @@ fn reconciled_gemini_3x_flash_rows_bill_googles_price() {
         Some((1.25, 0.0, 0.0, 10.00))
     );
 }
+
+/// #1012, Day 239: the gemini pro rows Google's pricing page lists
+/// (ai.google.dev/gemini-api/docs/pricing, read 2026-10-25), each agreeing with
+/// models.dev. Base tier only: Google bills 3.1 Pro at 4/0.40/18 above 200K
+/// prompt tokens, which the flat table does not model (as for gemini-2.5-pro).
+/// `gemini-3-pro-image` bills the **image** output rate (120); its text output is
+/// 12, the same choice the flash-image arms make.
+#[test]
+fn reconciled_gemini_3x_pro_rows_bill_googles_price() {
+    let rows: [(&str, Rates); 4] = [
+        ("gemini-3.1-pro-preview", (2.0, 0.0, 0.2, 12.0)),
+        ("gemini-3.1-pro-preview-customtools", (2.0, 0.0, 0.2, 12.0)),
+        ("gemini-3-pro-image", (2.0, 0.0, 0.0, 120.0)),
+        ("gemini-2.5-pro-preview-tts", (1.0, 0.0, 0.0, 20.0)),
+    ];
+    for (id, expected) in rows {
+        let got = price_of(id).unwrap_or_else(|| panic!("{id} must be priced by /cost"));
+        assert!(
+            cells_within(got, expected, 1e-9),
+            "{id}: /cost resolves {got:?}, Google's pricing page (2026-10-25) says {expected:?}"
+        );
+    }
+    // Near-misses: pro ids Google's page does not list keep the estimate arm, and
+    // the arms are exact, so `-preview` does not inherit `gemini-3-pro-image`'s price.
+    for id in [
+        "gemini-3-pro-preview",
+        "gemini-3-pro-image-preview",
+        "gemini-3.5-pro",
+    ] {
+        assert_eq!(price_of(id), Some((1.25, 0.0, 0.0, 10.00)), "{id}");
+    }
+    // The 2.5 pro arm the tts id used to fall into is unchanged.
+    assert_eq!(price_of("gemini-2.5-pro"), Some((1.25, 0.0, 0.0, 10.00)));
+}

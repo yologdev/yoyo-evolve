@@ -201,6 +201,11 @@ fn builtin_model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
             "gemini-3.1-flash-tts-preview" => return Some((1.00, 0.0, 0.0, 20.00)),
             "gemini-3.5-live-translate-preview" => return Some((3.50, 0.0, 0.0, 21.00)),
             "gemini-3.6-flash" => return Some((1.50, 0.0, 0.15, 7.50)),
+            // #1012 (2026-10-25): base tier; >200K prompts bill 4/0.40/18, not modelled.
+            "gemini-3.1-pro-preview" | "gemini-3.1-pro-preview-customtools" => {
+                return Some((2.00, 0.0, 0.20, 12.00));
+            }
+            "gemini-3-pro-image" => return Some((2.00, 0.0, 0.0, 120.00)), // image output; text 12
             _ => {} // the rest stay estimated, based on 2.5 pricing tiers
         }
         if model.contains("pro") {
@@ -208,6 +213,9 @@ fn builtin_model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
         }
         // flash variants
         return Some((0.15, 0.0, 0.0, 0.60)); // gemini-3.x flash, e.g. gemini-3-flash-preview (estimated)
+    }
+    if model == "gemini-2.5-pro-preview-tts" {
+        return Some((1.00, 0.0, 0.0, 20.00)); // #1012, Google's page (2026-10-25)
     }
     if model.contains("gemini-2.5-pro") {
         return Some((1.25, 0.0, 0.0, 10.00));
