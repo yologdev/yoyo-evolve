@@ -1671,3 +1671,46 @@ fn test_estimate_cost_glm5() {
     let cost = super::estimate_cost(&usage, "glm-5").unwrap();
     assert!((cost - 4.20).abs() < 0.001, "glm-5 cost: {cost}");
 }
+
+/// #1012 (Day 239): the gemini 3.x flash ids the `contains("gemini-3")` estimate arm
+/// billed at a made-up $0.15 / $0.60. Each row is Google's own pricing page
+/// (ai.google.dev/gemini-api/docs/pricing, read 2026-10-25) and agrees with models.dev,
+/// except `gemini-3.6-flash`: Google bills an introductory $0.75 / $3.75 / $0.075 through
+/// 2026-12-31 (models.dev lists that), and yoyo bills the regular $1.50 / $7.50 / $0.15,
+/// the upper-bound rule yoagent uses for `gemini-3.8-flash`. All are typed-only ids (none
+/// is in yoyo's google picker), read through `price_of`, the `/cost` resolver.
+#[test]
+fn reconciled_gemini_3x_flash_rows_bill_googles_price() {
+    let rows: [(&str, Rates); 9] = [
+        ("gemini-3-flash-preview", (0.5, 0.0, 0.05, 3.0)),
+        ("gemini-3.1-flash-lite", (0.25, 0.0, 0.025, 1.5)),
+        ("gemini-3.5-flash-lite", (0.3, 0.0, 0.03, 2.5)),
+        ("gemini-3.1-flash-image", (0.5, 0.0, 0.0, 60.0)),
+        ("gemini-3.1-flash-lite-image", (0.25, 0.0, 0.0, 30.0)),
+        ("gemini-3.1-flash-live-preview", (0.75, 0.0, 0.0, 4.5)),
+        ("gemini-3.1-flash-tts-preview", (1.0, 0.0, 0.0, 20.0)),
+        ("gemini-3.5-live-translate-preview", (3.5, 0.0, 0.0, 21.0)),
+        ("gemini-3.6-flash", (1.5, 0.0, 0.15, 7.5)),
+    ];
+    for (id, expected) in rows {
+        let got = price_of(id).unwrap_or_else(|| panic!("{id} must be priced by /cost"));
+        assert!(
+            cells_within(got, expected, 1e-9),
+            "{id}: /cost resolves {got:?}, Google's pricing page (2026-10-25) says {expected:?}"
+        );
+    }
+    // Near-misses: ids Google's page does not list keep the estimate arm, and the
+    // arms are exact, so a `-preview` alias does not inherit its base id's price.
+    for id in [
+        "gemini-3.5-flash",
+        "gemini-3.7-flash",
+        "gemini-3.1-flash-lite-preview",
+    ] {
+        assert_eq!(price_of(id), Some((0.15, 0.0, 0.0, 0.60)), "{id}");
+    }
+    // The pro sub-arm of the same block is untouched by this slice.
+    assert_eq!(
+        price_of("gemini-3-pro-preview"),
+        Some((1.25, 0.0, 0.0, 10.00))
+    );
+}

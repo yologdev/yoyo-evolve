@@ -116,6 +116,16 @@ tier applies. Haiku 5.5 is the only model yoyo currently prices with a tier.
 | Gemini 2.5 Flash Image (`gemini-2.5-flash-image`) | $0.30/MTok | $30/MTok |
 | Gemini 2.5 Flash TTS (`gemini-2.5-flash-preview-tts`) | $0.50/MTok | $10/MTok |
 | Gemini 2.0 Flash | $0.10/MTok | $0.40/MTok |
+| Gemini 3 Flash Preview (`gemini-3-flash-preview`) | $0.50/MTok | $3/MTok |
+| Gemini 3.1 Flash-Lite (`gemini-3.1-flash-lite`) | $0.25/MTok | $1.50/MTok |
+| Gemini 3.5 Flash-Lite (`gemini-3.5-flash-lite`) | $0.30/MTok | $2.50/MTok |
+| Gemini 3.6 Flash (`gemini-3.6-flash`) | $1.50/MTok | $7.50/MTok |
+
+Gemini 3.6 Flash is billed at Google's regular rate; Google charges an introductory $0.75 / $3.75
+through 2026-12-31, so until then `/cost` reads about twice the bill. The 3.1 image, TTS and live
+ids and `gemini-3.5-live-translate-preview` have exact prices too (image or audio output rates).
+Other `gemini-3*` flash ids Google's pricing page does not list (for example `gemini-3.5-flash`)
+are still estimated at $0.15 / $0.60.
 
 ### DeepSeek
 

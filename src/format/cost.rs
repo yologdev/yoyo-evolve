@@ -186,8 +186,23 @@ fn builtin_model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
 
     // ── Google Gemini ─────────────────────────────────────────────────
     // https://ai.google.dev/pricing
-    // Gemini 3.x (estimated, based on 2.5 pricing tiers)
+    // Gemini 3.x: exact ids from Google's page, agreeing with models.dev (2026-10-25, #1012).
+    // Image/tts/live rows bill the image/audio/text output rate models.dev lists.
+    // gemini-3.6-flash: regular rate; Google bills $0.75/$3.75/$0.075 through 2026-12-31
+    // (an upper bound, the rule yoagent uses for gemini-3.8-flash).
     if model.contains("gemini-3") {
+        match model {
+            "gemini-3-flash-preview" => return Some((0.50, 0.0, 0.05, 3.00)),
+            "gemini-3.1-flash-lite" => return Some((0.25, 0.0, 0.025, 1.50)),
+            "gemini-3.5-flash-lite" => return Some((0.30, 0.0, 0.03, 2.50)),
+            "gemini-3.1-flash-image" => return Some((0.50, 0.0, 0.0, 60.00)),
+            "gemini-3.1-flash-lite-image" => return Some((0.25, 0.0, 0.0, 30.00)),
+            "gemini-3.1-flash-live-preview" => return Some((0.75, 0.0, 0.0, 4.50)),
+            "gemini-3.1-flash-tts-preview" => return Some((1.00, 0.0, 0.0, 20.00)),
+            "gemini-3.5-live-translate-preview" => return Some((3.50, 0.0, 0.0, 21.00)),
+            "gemini-3.6-flash" => return Some((1.50, 0.0, 0.15, 7.50)),
+            _ => {} // the rest stay estimated, based on 2.5 pricing tiers
+        }
         if model.contains("pro") {
             return Some((1.25, 0.0, 0.0, 10.00)); // gemini-3.x pro, e.g. gemini-3-pro-preview (estimated)
         }
@@ -2704,11 +2719,11 @@ mod tests {
 
     #[test]
     fn test_pricing_gemini_30_flash() {
-        // Was `gemini-3.0-flash`, an id Google never listed (#1021, Day 237).
+        // Was `gemini-3.0-flash` (#1021); Google's price since #1012 (Day 239), was 0.15/0.60.
         assert!(model_pricing("gemini-3-flash-preview").is_some());
         let (inp, _, _, out) = model_pricing("gemini-3-flash-preview").unwrap();
-        assert!((inp - 0.15).abs() < 0.001);
-        assert!((out - 0.60).abs() < 0.001);
+        assert!((inp - 0.50).abs() < 0.001);
+        assert!((out - 3.00).abs() < 0.001);
     }
 
     #[test]
