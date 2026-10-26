@@ -1,0 +1,19 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git grep -n 'with_mcp_server_stdio… ✓ (380ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; mkdir -p sessi… (9 lines) ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 20.1s (2 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_1.md, and all four checked lines are PASS.
+
+• What changed: every MCP server now connects through one function, mcp_prefix::connect_mcp, whether it comes from --mcp or [mcp_servers.*] and whether it is prefixed or not. That function installs yoagent's McpToolSource, adding the prefix only when there is one. I confirmed that constructor exists in yoagent-0.25.15/src/mcp/source.rs:83.
+• Failure handling: an MCP connect failure no longer rebuilds the agent, so earlier servers survive it. The failure is still reported to the model through record_failed_server, and no "connections lost" note is printed. Only the OpenAPI failure path still rebuilds. The source guard now counts 1 rebuild, 1 mcp_count reset, 1 openapi_count reset and 2 notes (was 3/3/1/4), and its comment explains why.
+• Tests: a stub sh server in a tempdir shows that a dead server's tools are withdrawn, while a live server keeps its tool and gets the right prefix. I re-ran only the mcp_prefix tests, not the full suite, and all 10 passed. The tests sit in mcp_prefix.rs's own test module rather than a new tests/mcp_server_exit.rs, which the task allows.
+• Leftovers and docs: a search finds no remaining uses of the removed names in src/ or docs/, only comments marking the old wording as superseded. CLAUDE.md and ARCHITECTURE.md were updated, with the history under the mcp_prefix.rs entry and the new yoagent 0.25 claims marked.
+• Not tried: I did not run the binary against a real MCP server.
+• One visible change: the success line for a plain --mcp server now shows the whole command rather than just its first word. ARCHITECTURE.md records this.
+  watch: no files changed this turn — skipping
