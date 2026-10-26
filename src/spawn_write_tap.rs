@@ -23,6 +23,11 @@
 //!   an untracked nested repo). Its other writes are a git branch for the
 //!   handoff and `git worktree` metadata, both under `.git/`, which `git status`
 //!   never lists. `.yoyo/spawn_runs/` manifests belong to `--parallel` only.
+//!   **And `.yoyo/audit.jsonl` while audit logging is on**: yoyo appends a line
+//!   there for every tool call the worker makes, so the first real run (Day
+//!   239, `YOYO_AUDIT=1`) reported it as an outside write. This census had
+//!   missed it. The cost: a worker that itself writes that file while audit is
+//!   on is not counted. With audit off it is counted like any other path.
 //!   Nothing else is excluded: a worker that writes `.yoyo/memory.json` in the
 //!   main checkout did write outside its worktree, and is counted.
 //! - `None` from [`snapshot`] means **could not check** (not a repository, git
@@ -35,6 +40,10 @@ use std::path::Path;
 
 /// Prefix of the worker's own tree, relative to the repo root.
 const WORKTREES_PREFIX: &str = ".yoyo/worktrees/";
+
+/// The audit log yoyo appends to (relative to the process cwd, which is the
+/// main checkout `/spawn` snapshots) while audit logging is on.
+const AUDIT_LOG: &str = ".yoyo/audit.jsonl";
 
 /// How many names the printed line shows before "and N more".
 const MAX_NAMES: usize = 10;
@@ -80,10 +89,22 @@ fn parse_porcelain_z(raw: &[u8]) -> BTreeSet<String> {
 }
 
 /// Paths in `after` that were not in `before`, minus the worker's own tree.
-pub fn outside_writes(before: &BTreeSet<String>, after: &BTreeSet<String>) -> Vec<String> {
+///
+/// `audit_on` says whether yoyo itself is writing the audit log this run
+/// (`--audit`, `YOYO_AUDIT=1`, `audit = true`). When it is, yoyo appends one
+/// line to [`AUDIT_LOG`] in the main checkout for every tool call the worker
+/// makes, so that path is the harness's own write, not the worker's, and is
+/// excluded. When audit is off yoyo never writes it, so a change there came
+/// from someone else and is counted.
+pub fn outside_writes(
+    before: &BTreeSet<String>,
+    after: &BTreeSet<String>,
+    audit_on: bool,
+) -> Vec<String> {
     after
         .difference(before)
         .filter(|p| !p.starts_with(WORKTREES_PREFIX))
+        .filter(|p| !(audit_on && p.as_str() == AUDIT_LOG))
         .cloned()
         .collect()
 }
@@ -125,7 +146,7 @@ pub fn tap_line(result: Option<&[String]>, plain: bool) -> String {
 pub fn report(before: Option<&BTreeSet<String>>, repo: &Path) {
     let result = before
         .zip(snapshot(repo))
-        .map(|(b, a)| outside_writes(b, &a));
+        .map(|(b, a)| outside_writes(b, &a, crate::prompt_budget::is_audit_enabled()));
     let plain = crate::format::is_plain_output();
     let line = tap_line(result.as_deref(), plain);
     let colour = if result.as_ref().is_some_and(|r| r.is_empty()) {
@@ -165,7 +186,7 @@ mod tests {
             (&[], &[], &[]),
         ];
         for (before, after, want) in rows {
-            let got = outside_writes(&set(before), &set(after));
+            let got = outside_writes(&set(before), &set(after), false);
             let want: Vec<String> = want.iter().map(|s| s.to_string()).collect();
             assert_eq!(got, want, "before={before:?} after={after:?}");
         }
@@ -289,7 +310,7 @@ mod tests {
         std::fs::write(p.join("outside.txt"), "x").unwrap();
         let after = snapshot(p).expect("still checkable");
         assert_eq!(
-            outside_writes(&before, &after),
+            outside_writes(&before, &after, false),
             vec!["outside.txt".to_string()]
         );
     }
@@ -307,7 +328,56 @@ mod tests {
             after.iter().any(|a| a.starts_with(WORKTREES_PREFIX)),
             "fixture not seen by git: {after:?}"
         );
-        assert_eq!(outside_writes(&before, &after), Vec::<String>::new());
+        assert_eq!(outside_writes(&before, &after, false), Vec::<String>::new());
+    }
+
+    /// Found by the first real foreground `/spawn` run (Day 239, #1014): with
+    /// `YOYO_AUDIT=1` the tap reported `.yoyo/audit.jsonl`, which yoyo itself
+    /// had written while logging the worker's tool calls.
+    #[test]
+    fn audit_log_is_excluded_only_while_yoyo_writes_it() {
+        let after = set(&[".yoyo/audit.jsonl", "src/x.rs"]);
+        // audit on: yoyo's own log is not the worker's write
+        assert_eq!(
+            outside_writes(&set(&[]), &after, true),
+            vec!["src/x.rs".to_string()]
+        );
+        // audit off: nothing of ours writes there, so it is counted
+        assert_eq!(
+            outside_writes(&set(&[]), &after, false),
+            vec![".yoyo/audit.jsonl".to_string(), "src/x.rs".to_string()]
+        );
+        // near-miss: a sibling .yoyo file and a nested name stay counted
+        let near = set(&[".yoyo/audit.jsonl.bak", "sub/.yoyo/audit.jsonl"]);
+        assert_eq!(
+            outside_writes(&set(&[]), &near, true),
+            vec![
+                ".yoyo/audit.jsonl.bak".to_string(),
+                "sub/.yoyo/audit.jsonl".to_string()
+            ]
+        );
+    }
+
+    /// The real shape: a scratch repo where audit.jsonl first appears during
+    /// the run (an untracked `.yoyo/` lists each file under
+    /// `--untracked-files=all`).
+    #[test]
+    fn real_repo_new_audit_log_is_excluded_while_audit_is_on() {
+        let tmp = scratch_repo();
+        let p = tmp.path();
+        let before = snapshot(p).expect("checkable");
+        std::fs::create_dir_all(p.join(".yoyo")).unwrap();
+        std::fs::write(p.join(".yoyo").join("audit.jsonl"), "{}\n").unwrap();
+        let after = snapshot(p).expect("checkable");
+        assert!(
+            after.contains(AUDIT_LOG),
+            "fixture not seen by git: {after:?}"
+        );
+        assert_eq!(outside_writes(&before, &after, true), Vec::<String>::new());
+        assert_eq!(
+            outside_writes(&before, &after, false),
+            vec![AUDIT_LOG.to_string()]
+        );
     }
 
     #[test]
