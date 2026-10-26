@@ -2602,12 +2602,12 @@ mod tests {
 
         for flag in ["--safe-mode", "--restricted"] {
             std::env::set_var("ANTHROPIC_API_KEY", "test-key");
-            // Start from the documented default so the row does not inherit
-            // whatever ran before it in this binary.
+            // Start from the documented default so the row does not inherit what ran before.
             crate::cli_config::set_safe_mode(false);
 
-            let config = crate::cli::parse_args(&["yoyo".to_string(), flag.to_string()])
+            let mut config = crate::cli::parse_args(&["yoyo".to_string(), flag.to_string()])
                 .unwrap_or_else(|| panic!("`{flag}` must parse"));
+            config.audit = false; // #1071: an ambient YOYO_AUDIT=1 must not switch on the one-way audit global for every later test
             assert!(
                 config.safe_mode,
                 "`{flag}` must resolve to Config.safe_mode — this is the field \

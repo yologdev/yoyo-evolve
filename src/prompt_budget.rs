@@ -84,12 +84,20 @@ thread_local! {
 }
 
 fn audit_base() -> std::path::PathBuf {
+    // #1071: in a test binary the fallback is a per-process temp dir, never the
+    // cwd's `.yoyo`. `AUDIT_ENABLED` is process-global and one-way, so any test
+    // that reaches `apply_config_flags` under an ambient `YOYO_AUDIT=1` turns it
+    // on for every later test, and a test writing without `with_audit_base_dir`
+    // then appended `"test-model"` records to the developer's real log.
     #[cfg(test)]
     {
-        if let Some(d) = AUDIT_BASE_DIR.with(|b| b.borrow().clone()) {
-            return d;
-        }
+        AUDIT_BASE_DIR
+            .with(|b| b.borrow().clone())
+            .unwrap_or_else(|| {
+                std::env::temp_dir().join(format!("yoyo-test-audit-{}", std::process::id()))
+            })
     }
+    #[cfg(not(test))]
     std::path::PathBuf::from(".yoyo")
 }
 
@@ -1284,6 +1292,51 @@ mod tests {
             assert_eq!(rec["is_error"], true);
             assert_eq!(rec["input_tokens"], 1200);
         });
+    }
+
+    /// #1071: an enabled write from a test that never called
+    /// `with_audit_base_dir` must not land in the cwd's real
+    /// `.yoyo/audit.jsonl`. It used to: one `#[serial]` test in
+    /// `commands_spawn` parsed real argv, so an ambient `YOYO_AUDIT=1` set the
+    /// one-way `AUDIT_ENABLED` global, and the four `emit_output` tests in
+    /// `main_tests.rs` (model `"test-model"`) plus two `stream_json` rename
+    /// tests in `prompt.rs` then appended to the repo's own log. Four of those
+    /// records reached the synthesize spend row of 2026-10-26T06:44:57Z.
+    /// The model id is unique per run, so a concurrent writer to the real log
+    /// (a live yoyo session in this checkout) cannot satisfy or break this.
+    #[test]
+    fn an_enabled_write_with_no_test_dir_never_reaches_the_cwd_audit_log() {
+        let marker = format!(
+            "zz1071-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+        );
+        assert_ne!(
+            audit_base(),
+            std::path::PathBuf::from(".yoyo"),
+            "under cfg(test) the default audit dir must not be the cwd's .yoyo"
+        );
+        audit_log_usage_when(
+            true,
+            &yoagent::Usage::default(),
+            &yoagent::SubAgentSpend::default(),
+            &marker,
+            Duration::ZERO,
+            1,
+            false,
+        );
+        let real = std::fs::read_to_string(".yoyo/audit.jsonl").unwrap_or_default();
+        assert!(
+            !real.contains(&marker),
+            "a test's usage record reached the cwd's real .yoyo/audit.jsonl (#1071)"
+        );
+        // Anti-vacuous: the record was written, just not there.
+        let fallback =
+            std::fs::read_to_string(audit_base().join("audit.jsonl")).unwrap_or_default();
+        assert!(
+            fallback.contains(&marker),
+            "the record must reach the per-process test audit dir"
+        );
     }
 
     #[test]
