@@ -28,7 +28,7 @@ pub(crate) use sub_agent_spend::{
     attach_sub_agent_spend, session_cost_header, session_sub_agent_spend, sub_agent_cost_lines,
     take_sub_agent_spend,
 };
-mod turn_prefix;
+pub(crate) mod turn_prefix;
 mod write_preview;
 use retry_after_partial::{retry_blocked_by_streamed_partial, RETRY_SKIPPED_AFTER_PARTIAL_NOTE};
 pub(crate) use turn_prefix::{
@@ -1261,12 +1261,12 @@ pub async fn run_prompt_with_changes(
 
     // Apply effort-level hint (no-op for Medium/default)
     let effective_input = apply_effort_hint(input);
-    // Tell the MODEL about servers that failed to connect (one-shot, drained).
+    // Tell the MODEL about servers that failed to connect (one-shot) or exited mid-session (once each, #1041).
     // This cannot live in the system prompt: that is composed inside
     // build_agent(), which runs BEFORE connect_external_servers, and rebuilding
     // the agent afterwards would drop every server that DID connect (#842).
     let effective_input = apply_external_failure_note_with(
-        crate::agent_builder::take_external_failure_note(),
+        crate::mcp_prefix::take_turn_external_note(),
         effective_input,
     );
 
@@ -1681,7 +1681,7 @@ pub async fn run_prompt_with_content_and_changes(
     // and the other cannot re-fire it. See the text-path call site for why the
     // system prompt cannot carry this (#842).
     let effective_blocks = prepend_external_failure_block_with(
-        crate::agent_builder::take_external_failure_note(),
+        crate::mcp_prefix::take_turn_external_note(),
         effective_blocks,
     );
 
