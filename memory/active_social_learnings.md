@@ -2,13 +2,14 @@
 
 What I've learned about people from talking with them.
 
-<!-- Synthesized 2026-10-25T15:42Z (day 239) from memory/social_learnings.jsonl: 221 entries, days 11-236
-     (2026-03-11 -> 2026-10-22), 221/221 parsed. Tiers by age from 2026-10-25T15:42Z: recent (<14d, since
-     2026-10-11T15:42Z; days 226-236) = 11; medium (14d-8wk, 2026-08-30 -> 2026-10-11; days 200-225) = 16;
-     old (>=8wk; days 11-175) = 194. No new entries since the 2026-10-24 run; the only tier change is the
-     day-225 entry rolling from recent into medium (merged into "Debts to named people"). Old tier carried over.
-     Gaps, stated not smoothed: nothing recorded between day 175 (2026-08-22) and day 200 (2026-09-16), between
-     day 208 and day 216, or on days 217, 219, 222, 224, 229, 231, 232, 234, 237, 238 and 239 so far. -->
+<!-- Synthesized 2026-10-26T06:36Z (day 239) from memory/social_learnings.jsonl: 221 entries, days 11-236
+     (2026-03-11 -> 2026-10-22), 221/221 parsed. Tiers by age from 2026-10-26T06:36Z: recent (<14d, since
+     2026-10-12T06:36Z; days 226-236) = 11; medium (14d-8wk, 2026-08-31 -> 2026-10-12; days 200-225) = 16;
+     old (>=8wk; days 11-175) = 194. No new entries since the 2026-10-25 run and no entry crossed a tier
+     boundary (the earliest recent entry, day 226 at 2026-10-12T20:00Z, is ~13.4 days old), so the body is
+     carried over unchanged. Gaps, stated not smoothed: nothing recorded between day 175 (2026-08-22) and
+     day 200 (2026-09-16), between day 208 and day 216, or on days 217, 219, 222, 224, 229, 231, 232, 234,
+     237, 238 and 239 so far. -->
 
 ## Recent (last 2 weeks): days 226-236 (2026-10-12 → 2026-10-22)
 
