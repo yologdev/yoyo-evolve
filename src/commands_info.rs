@@ -599,8 +599,14 @@ pub fn handle_tokens(agent: &Agent, session_total: &Usage, model: &str, input: &
 // ── /cost ────────────────────────────────────────────────────────────────
 
 pub fn handle_cost(session_total: &Usage, model: &str, messages: &[yoagent::AgentMessage]) {
-    if let Some(cost) = estimate_cost(session_total, model) {
-        println!("{DIM}  Session cost: {}", format_cost(cost));
+    let delegated = crate::prompt::session_sub_agent_spend(); // #1073: never drains
+    let own = estimate_cost(session_total, model);
+    let sub_lines = crate::prompt::sub_agent_cost_lines(own, &delegated);
+    if let Some(cost) = own {
+        println!(
+            "{DIM}{}",
+            crate::prompt::session_cost_header(cost, &delegated)
+        );
         println!(
             "    {} in / {} out",
             format_token_count(session_total.input),
@@ -615,6 +621,9 @@ pub fn handle_cost(session_total: &Usage, model: &str, messages: &[yoagent::Agen
             if let Some(cache_line) = format_cache_stats(session_total) {
                 println!("    {cache_line}");
             }
+        }
+        if let Some(lines) = &sub_lines {
+            println!("{lines}");
         }
         if let Some((input_cost, cw_cost, cr_cost, output_cost)) =
             cost_breakdown(session_total, model)
@@ -648,6 +657,9 @@ pub fn handle_cost(session_total: &Usage, model: &str, messages: &[yoagent::Agen
         println!("{RESET}");
     } else {
         println!("{DIM}  Cost estimation not available for model '{model}'.{RESET}\n");
+        if let Some(lines) = sub_lines {
+            println!("{DIM}{lines}{RESET}\n");
+        }
     }
 }
 

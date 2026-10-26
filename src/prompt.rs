@@ -24,7 +24,10 @@ mod stream_external_servers;
 mod stream_session_restored;
 mod sub_agent_spend;
 pub(crate) use stream_session_restored::record_session_restored;
-pub(crate) use sub_agent_spend::{attach_sub_agent_spend, take_sub_agent_spend};
+pub(crate) use sub_agent_spend::{
+    attach_sub_agent_spend, session_cost_header, session_sub_agent_spend, sub_agent_cost_lines,
+    take_sub_agent_spend,
+};
 mod turn_prefix;
 mod write_preview;
 use retry_after_partial::{retry_blocked_by_streamed_partial, RETRY_SKIPPED_AFTER_PARTIAL_NOTE};

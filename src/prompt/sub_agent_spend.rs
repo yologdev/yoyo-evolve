@@ -70,9 +70,87 @@ fn drain_with(store: &Mutex<Option<SubAgentSpend>>) -> SubAgentSpend {
     lock_or_recover(store).take().unwrap_or_default()
 }
 
+/// The session-cumulative twin of [`SUB_AGENT_SPEND`], read by `/cost`.
+/// Fed at the same point as the per-run bucket and **never drained**: the
+/// per-run bucket is emptied by `audit_log_usage` once per run, so a second
+/// drainer would steal from it (and it from `/cost`). Placement, stated
+/// (d226): in the authority, so every reader of delegated spend sees it.
+static SESSION_SUB_AGENT_SPEND: Mutex<Option<SubAgentSpend>> = Mutex::new(None);
+
+/// Record one result into both buckets — the per-run one (drained) and the
+/// session one (only ever read).
+fn record_into(
+    run: &Mutex<Option<SubAgentSpend>>,
+    session: &Mutex<Option<SubAgentSpend>>,
+    result: &ToolResult,
+) {
+    record_with(run, result);
+    record_with(session, result);
+}
+
+/// Read a bucket without clearing it.
+fn peek_with(store: &Mutex<Option<SubAgentSpend>>) -> SubAgentSpend {
+    lock_or_recover(store).clone().unwrap_or_default()
+}
+
 /// Called from both `ToolExecutionEnd` arms in `prompt.rs`.
 pub(crate) fn record_sub_agent_spend(result: &ToolResult) {
-    record_with(&SUB_AGENT_SPEND, result);
+    record_into(&SUB_AGENT_SPEND, &SESSION_SUB_AGENT_SPEND, result);
+}
+
+/// Everything delegated so far this session. Does not clear anything, so it
+/// cannot race the per-run drain.
+pub(crate) fn session_sub_agent_spend() -> SubAgentSpend {
+    peek_with(&SESSION_SUB_AGENT_SPEND)
+}
+
+/// The label `/cost` puts on its first line. With nothing delegated it is the
+/// old `Session cost: $X` byte-for-byte; with delegation it says the number
+/// is this session's own spend only, so it cannot be read as the whole bill.
+pub(crate) fn session_cost_header(own_cost: f64, spend: &SubAgentSpend) -> String {
+    let label = if spend.runs == 0 {
+        "Session cost"
+    } else {
+        "Session cost (own, excluding sub-agents)"
+    };
+    format!("  {label}: {}", crate::format::format_cost(own_cost))
+}
+
+/// The delegated-spend block for `/cost`, or `None` when nothing was
+/// delegated (the common case, which keeps `/cost` byte-identical). Unpriced
+/// delegated spend is reported as unknown with its tokens — never as `$0`,
+/// the same rule the usage record follows with `null`. `own_cost` is `None`
+/// when the session's own model has no price either.
+pub(crate) fn sub_agent_cost_lines(own_cost: Option<f64>, spend: &SubAgentSpend) -> Option<String> {
+    use crate::format::{format_cost, format_token_count};
+    if spend.runs == 0 {
+        return None;
+    }
+    let runs = format!(
+        "{} run{}",
+        spend.runs,
+        if spend.runs == 1 { "" } else { "s" }
+    );
+    let tokens = format!(
+        "{} in / {} out",
+        format_token_count(spend.usage.input),
+        format_token_count(spend.usage.output)
+    );
+    let (sub_line, total_line) = match (spend.cost_usd, own_cost) {
+        (Some(sub), Some(own)) => (
+            format!("  sub-agents: {runs}, {} (priced at each child model's rates)", format_cost(sub)),
+            format!("  Total including sub-agents: {}", format_cost(own + sub)),
+        ),
+        (Some(sub), None) => (
+            format!("  sub-agents: {runs}, {} (priced at each child model's rates)", format_cost(sub)),
+            "  Total including sub-agents: unknown (own spend is unpriced)".to_string(),
+        ),
+        (None, _) => (
+            format!("  sub-agents: {runs}, cost unknown (some delegated spend could not be priced; not $0)"),
+            "  Total including sub-agents: unknown (delegated spend is unpriced)".to_string(),
+        ),
+    };
+    Some(format!("{sub_line}\n    {tokens}\n{total_line}"))
 }
 
 /// Drain everything delegated since the last drain (once per run, at emit).
@@ -104,6 +182,10 @@ pub(crate) fn attach_sub_agent_spend(
     }
     record
 }
+
+#[cfg(test)]
+#[path = "sub_agent_spend_session_tests.rs"]
+mod sub_agent_spend_session_tests;
 
 #[cfg(test)]
 mod tests {

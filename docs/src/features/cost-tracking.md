@@ -35,6 +35,26 @@ Use `/cost` for a quick overview with a breakdown by cost category:
       cache read:  $0.0005
 ```
 
+### Sub-agent spend
+
+When the session has delegated work with `sub_agent` or `explore_agent`,
+`/cost` lists that spend on its own line, and the first line says it is the
+session's own spend only:
+
+```
+  Session cost (own, excluding sub-agents): $0.500
+    4.2k in / 2.1k out
+  sub-agents: 2 runs, $0.050 (priced at each child model's rates)
+    2.0k in / 400 out
+  Total including sub-agents: $0.550
+```
+
+If any delegated run could not be priced, the line says `cost unknown` (with
+its tokens) and the total is reported as unknown — it is never shown as `$0`.
+With no delegation, `/cost` looks exactly as above. The per-turn breakdown,
+`/tokens`, `--output-format json` and the `--cost-warn` tally still count the
+session's own spend only (#1073).
+
 ## Detailed breakdown
 
 Use `/tokens` to see a full breakdown including cache usage:
