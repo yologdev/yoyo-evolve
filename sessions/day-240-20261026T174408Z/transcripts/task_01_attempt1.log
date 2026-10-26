@@ -1,0 +1,78 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | head; wc -l…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "take_external_failure_n… ✓ (15ms)
+ ✓ (21ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 120,300p src/mcp_prefix.r… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 4815,4840p src/agent_buil… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 60,130p tests/module_size… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "mcp_tool_source\|conne… ✓ (18ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 145,165p src/mcp_prefix.r… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (207 lines) ✓ (11.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1263,1271p src/prompt.rs;… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's|    // Tell the MODEL … ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's|(o… (163 lines) ✓ (30ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i '31s/^mod turn_prefix;/pu… ✓ (36.3s)
+
+────────────────────────────────────────────────────────────────────────────────
+  12 tools completed in 2m 23s (12 ✓)
+
+Green. Now the positive control, atomic and serial: neuter the composer, watch the Some tests go red by name, restore.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/mcp_p… (7 lines) ✓ (1m 19s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Six Some-path tests went red by name; the near-miss, user-line and join tests stayed green; restored → 20/20. Now the ARCHITECTURE.md entry and the full gate.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "mcp_prefix" ARCHITECTUR… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (10 lines) ✗ (2m 0s)
+    │ Command timed out after 120s
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo FMT…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (1.9s)
+ ✓ (1m 37s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 4195,4265p src/agent_buil… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 4m 2s (4 ✓, 1 ✗)
+
+The source guard slices connect_mcp → #[cfg(test)], and my new block sits in that range. Moving the block above McpConnect keeps the guard's slice exactly connect_mcp (no test edit needed).
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (13 lines) ✓ (33.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (4m 4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4m 50s (2 ✓)
+
+Everything passes: clippy, fmt, 26/26 test suites, harness 309/0. Committing, then posting the comment on #1041.
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (29 lines) ✓ (51ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue com… (6 lines) ✓ (1.1s)
+  2 tools completed in 17.0s (2 ✓)
+
+I've committed this as a7f931cd. When a stdio MCP server exits mid-session, yoyo now tells the model why its tools disappeared, instead of leaving a silent gap the model would read as "this capability doesn't exist." Build, clippy, fmt, all 26 test suites and the harness (309 passed, 0 failed) pass.
+
+What changed
+• Tracking: in src/mcp_prefix.rs, every server that connects is now remembered with its id, its tool names (prefixed if renamed) and a handle to its client. mcp_tool_source grabs that handle before it gets wrapped, since it can't be reached afterwards.
+• Prompt seams: both places in src/prompt.rs that add a note to the start of a turn (the text path and the content path) now take take_turn_external_note(). That joins the existing one-time "failed to connect" note with any server that has exited since the last check.
+• When it fires: the check runs every prompt, but each server is reported only once. If a server is busy with a call when we check, it's skipped and checked again next turn rather than blocking the prompt.
+• What it says: the model gets the server id, the exit reason, and up to 10 tool names plus "and N more". It's told those tools are unavailable, not nonexistent, and to name the server rather than rebuild them by hand. The user gets one yellow line on stderr, with control characters escaped and no glyphs in plain-output mode.
+• No regression when nothing dies: with no servers, or all of them still running, the turn text is byte-identical to before. A test checks this at the point where the note would be added.
+
+Tests: 10 new tests in mcp_prefix.rs. They cover the message (empty, one server, the long-list cap, a hostile multibyte id), the once-only behaviour with a fake client (alive → died on turn 2 → silent on turn 3; only the dead server of two is named), and the no-change case. One more uses a real sh stub server that actually exits.
+• Check that the tests can fail: in a single command, I broke the note-builder, saw the 6 tests that expect a note fail by name while the others stayed green, then restored it (20/20).
+
+Two things worth knowing
+• My new code first broke an existing test that scans the body of connect_mcp for escaping calls, because I'd put the code inside the range it reads. I moved the code above that function rather than editing the test.
+• The check only happens when a user prompt starts. A server that dies partway through a multi-turn run gets reported at the next user prompt, not the next model turn. That's in the commit and on the ticket.
+
+I updated the mcp_prefix.rs entry in ARCHITECTURE.md and marked its old "nobody is told why" sentence as superseded. CLAUDE.md is unchanged.
+
+I posted a comment on #1041 with the sha and what's still open: restarting a dead server, and re-checking for name clashes when a server changes its tool list (list_changed).
+  watch: no files changed this turn — skipping

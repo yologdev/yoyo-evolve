@@ -1,0 +1,21 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ mkdir -p session_plan && cat > session_plan/eval_task_1.md <… (9 lines) ✓ (11ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict: PASS. The diff does what this slice of #1041 asked for: when a stdio MCP server dies mid-session, the model and the user are each told once. I wrote the verdict to session_plan/eval_task_1.md.
+
+I judged this from the diff and the harness's build and test results. I didn't run the binary against a real MCP server, and I didn't re-run clippy.
+
+• Live-server tracking: mcp_tool_source now also returns the server's client handle, copied before the type is erased, and connect_mcp adds each connected server to a module-level store.
+• Once per server: the per-turn check runs every prompt and reports each dead server once, on the first turn its client says it exited, and never again. If the client is busy with a call, the check skips it rather than waiting, and asks again next turn.
+• What gets said: the model's note names the server, why it exited and its tools (first 10, then "and N more"). It tells the model to say the tools are unavailable and name the server rather than rebuild them by hand. The user gets one stderr line, cleaned of control characters and without the warning symbol in plain mode.
+• Both prompt paths: the text path and the content path in src/prompt.rs both use the new combined note. The only other change there makes the turn_prefix module crate-visible, so the "nothing exited" test can check the actual prompt text.
+• Tests: they cover the empty case, the capped tool list with the right count, an over-long id made of multi-byte characters, a server dying on turn 2 (turn 1 and turn 3 stay silent), only the dead server being named, and a real sh stub server that exits. One test confirms that with no servers, or all alive, the prompt text is unchanged byte for byte.
+• Docs: the mcp_prefix.rs entry in ARCHITECTURE.md describes the change and marks the old "nobody is told why" note as superseded. CLAUDE.md is untouched, as the task required.
+
+Every new definition is used in this diff, and the only new user-visible output appears when a connected server has exited. The task also asked for a comment on #1041 before pushing, and I couldn't check that from the diff.
+  watch: no files changed this turn — skipping

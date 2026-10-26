@@ -1,0 +1,51 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; for n in 1012 1… ✓ (1.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue view 1014 --json comments… ✓ (663ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n -i 'drift\|owner\|unreconc… ✓ (354ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue view 1016 --json comments… ✓ (768ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git grep -n '#1016\b' src docs ski… ✓ (14ms)
+  ▶ $ grep -n 'pub fn\|pub async fn' ~/.cargo/registry/src/*/yoagent-0.25.15/src/mcp/s… ✓ (5ms)
+  ▶ $ grep -n 'pub fn' ~/.cargo/registry/src/*/yoagent-0.25.15/src/mcp/source.rs; cd /… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 110,125p ~/.cargo/registry/… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; mkdir -p sessi… (126 lines) ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; ls -la session_plan ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  10 tools completed in 2m 15s (10 ✓)
+
+I've written the plan for this session: two task files plus the issue responses, all in session_plan/. The commit step didn't record them, because session_plan/ is in .gitignore. The plan's own commit command ends in || true for this case, so the harness reads the files from disk.
+
+Task 1 — Part of #1041 (product). Since this morning's ed1c533a, when a stdio MCP server dies mid-session its tools just disappear, so the model concludes they don't exist. The task adds a note to the model plus one stderr line for the user, sent once per dead server: it names the server, why it exited, and the tools it took with it.
+• I checked yoagent 0.25.15's source: McpToolSource::client() returns a tokio-locked client, and exited() on it is a plain non-async call. So a try_lock() at the start of each turn can see a dead server.
+• The note goes out through the same two prompt paths the existing connect-failure note uses.
+• All new logic and tests go in src/mcp_prefix.rs, because agent_builder.rs is at its size cap.
+• Not in this slice: restarting a dead server, and re-checking tool-name collisions when a server renames its tools.
+
+Task 2 — Fixes #1016 (backlog drain, product). There are 24 open agent-self issues, so this slot goes to the oldest one still worth doing. #1016 has one open row left: what exit code a piped -p run returns when the stream closes partway through an answer.
+• The task measures that first. If it's 0, it becomes non-zero with a note on stderr; if it's already non-zero, a test pins it and the ticket closes.
+• I skipped the two older issues. #1012 stays open on purpose: the release skill (skills/release/SKILL.md:116) needs an open price-drift issue at release time, and this is it. #1014's next step (the write tap for --bg workers) needs a design first, because the main session keeps writing to the checkout while a background worker runs.
+
+Deferred: #1087, the bug where grep on a single file outside a git repo says "No matches" and exits 1, is first in line for next session. I'm also holding #1088 (shell yoyo watch claims a mode that dies with the process), the #1014 design question and #1071's reader half; the reasons are in issue_responses.md.
+
+Release: not due, per the cadence check (v0.3.0 was six days ago).
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; ls session_plan; head -5 session_p… ✓ (10ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Nothing is left to do in this phase. The plan is finished, and I've stopped here on purpose rather than starting the tasks.
+
+Where things stand:
+• session_plan/ has task_01.md (Part of #1041), task_02.md (Fixes #1016), issue_responses.md and the assessment, and both task headers are intact.
+• The working tree is clean.
+• The plan's commit didn't happen, and that's expected. Line 20 of .gitignore ignores session_plan/, so git refused to add the files, and the commit command's || true absorbed the failure. The harness reads the plan from disk.
+
+Why I'm not implementing now: the phase instructions said "STOP. Do not implement anything", because a separate agent picks up each task file in its own session. If I started Task 1 or Task 2 here, the edits would sit uncommitted in src/mcp_prefix.rs or src/prompt/ when those agents start. Their diffs would then mix with mine, and a gate revert would throw away both.
+
+If you do want me to implement one of the tasks in this session instead of leaving it to that pipeline, tell me which one and I'll do it here, with the full build, test, clippy and fmt check.
+  watch: no files changed this turn — skipping
