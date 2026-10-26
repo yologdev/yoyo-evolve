@@ -20,7 +20,7 @@ use crate::config;
 use crate::format::*;
 use crate::hooks::{self, maybe_hook};
 use crate::mcp_prefix::{
-    connect_prefixed, plan_mcp_connect, sanitize_mcp_prefix, McpConnectPlan, PrefixedConnect,
+    connect_mcp, plan_mcp_connect, sanitize_mcp_prefix, McpConnect, McpConnectPlan,
 };
 use crate::prompt::{run_prompt, run_prompt_with_content, PromptOutcome};
 use crate::prompt_budget::is_audit_enabled;
@@ -492,8 +492,9 @@ pub(crate) fn take_external_failure_note() -> Option<String> {
 /// 3. `--openapi` flag specs
 ///
 /// Each connection attempt follows the same pattern: pre-flight collision check
-/// (for MCP), then `with_mcp_server_stdio` / `with_openapi_file` which consumes
-/// the agent and returns a new one. On error, the agent is rebuilt from config.
+/// (for MCP), then `mcp_prefix::connect_mcp` (MCP: never consumes the agent,
+/// so a failure loses nothing) or `with_openapi_file` (consumes the agent; on
+/// error it is rebuilt from config, which drops every earlier connection).
 pub(crate) async fn connect_external_servers(
     agent_config: &AgentConfig,
     mut agent: Agent,
@@ -523,24 +524,22 @@ pub(crate) async fn connect_external_servers(
         // "Tool names must be unique". See #MCP collision guard (Day 39).
         // Retried (#841) because a transient pre-flight failure used to
         // disable the guard entirely for this server — a silent fail-open.
-        let mut preflight_names = Vec::new();
         let prefix = format!("mcp{}", flag_pos + 1);
         match fetch_mcp_tool_names_retrying(command, &args_slice, None).await {
             Ok(tool_names) => {
                 match plan_mcp_connect(&tool_names, BUILTIN_TOOL_NAMES, &registered, &prefix) {
-                    McpConnectPlan::Plain => preflight_names = tool_names,
+                    McpConnectPlan::Plain => {}
                     McpConnectPlan::Prefixed { prefix, colliding } => {
-                        let spec = PrefixedConnect {
+                        let spec = McpConnect {
                             command,
                             args: &args_slice,
                             env: None,
                             label: mcp_cmd,
                             failure_id: mcp_cmd,
-                            prefix: &prefix,
+                            prefix: Some(&prefix),
                             colliding: &colliding,
                         };
-                        agent =
-                            connect_prefixed(agent, spec, &mut registered, &mut mcp_count).await;
+                        agent = connect_mcp(agent, spec, &mut registered, &mut mcp_count).await;
                         continue;
                     }
                     McpConnectPlan::Skip(collisions) => {
@@ -581,47 +580,20 @@ pub(crate) async fn connect_external_servers(
             }
         }
 
-        // with_mcp_server_stdio consumes self; we must always update agent
-        let result = agent
-            .with_mcp_server_stdio(command, &args_slice, None)
-            .await;
-        match result {
-            Ok(updated) => {
-                agent = updated;
-                mcp_count += 1;
-                registered.extend(preflight_names);
-                eprintln!("{GREEN}  ✓ mcp: {command} connected{RESET}");
-            }
-            Err(e) => {
-                // #899: both interpolated values are escaped before they reach
-                // the terminal, exactly as the pre-flight twin ~300 lines above
-                // does (#873). `mcp_cmd` is authored by a project-local
-                // `.yoyo.toml` and `e` by a spawned server process — different
-                // provenance, same terminal, and neither is obviously
-                // control-byte free. `record_failed_server` below deliberately
-                // still receives the RAW id: that is the model-facing note, a
-                // different audience with its own rules.
-                let shown_cmd = crate::cli::sanitize_for_display(mcp_cmd);
-                let e = crate::cli::sanitize_for_display(&e.to_string());
-                eprintln!("{RED}  ✗ mcp: failed to connect to '{shown_cmd}': {e}{RESET}");
-                // Second audience: the stderr line above reaches the *user*, who
-                // has usually scrolled past it. The model is handed an absence,
-                // and an absence reads as "this capability does not exist".
-                record_failed_server("mcp", mcp_cmd);
-                // Agent was consumed on error — rebuild it. The rebuilt agent
-                // carries ZERO MCP connections, so every server connected
-                // before this point is gone and `mcp_count` was still counting
-                // them (#842). Build the note before resetting, or it reports 0.
-                agent = agent_config.build_agent();
-                let note = connections_lost_note("mcp", mcp_count, is_plain_output());
-                mcp_count = 0;
-                registered.clear();
-                eprintln!("{DIM}  mcp: agent rebuilt (previous MCP connections lost){RESET}");
-                if let Some(note) = note {
-                    eprintln!("{YELLOW}  {note}{RESET}");
-                }
-            }
-        }
+        // One connect path for every server (`mcp_prefix::connect_mcp`): a
+        // yoagent `McpToolSource`, so a server that dies mid-session has its
+        // tools withdrawn. It does not consume the agent, so a failure here
+        // loses no earlier server and needs no rebuild (#842 residue, this path).
+        let spec = McpConnect {
+            command,
+            args: &args_slice,
+            env: None,
+            label: mcp_cmd,
+            failure_id: mcp_cmd,
+            prefix: None,
+            colliding: &[],
+        };
+        agent = connect_mcp(agent, spec, &mut registered, &mut mcp_count).await;
     }
 
     // Connect to structured MCP servers ([mcp_servers.*] config sections)
@@ -639,7 +611,6 @@ pub(crate) async fn connect_external_servers(
         );
 
         // Pre-flight collision check (see comment above), same retry policy.
-        let mut preflight_names = Vec::new();
         match fetch_mcp_tool_names_retrying(&server_cfg.command, &args_refs, env_map.clone()).await
         {
             Ok(tool_names) => match plan_mcp_connect(
@@ -648,19 +619,19 @@ pub(crate) async fn connect_external_servers(
                 &registered,
                 &sanitize_mcp_prefix(&server_cfg.name),
             ) {
-                McpConnectPlan::Plain => preflight_names = tool_names,
+                McpConnectPlan::Plain => {}
                 McpConnectPlan::Prefixed { prefix, colliding } => {
                     let id = mcp_failed_server_id(&server_cfg.name, &server_cfg.command);
-                    let spec = PrefixedConnect {
+                    let spec = McpConnect {
                         command: &server_cfg.command,
                         args: &args_refs,
                         env: env_map,
                         label: &server_cfg.name,
                         failure_id: &id,
-                        prefix: &prefix,
+                        prefix: Some(&prefix),
                         colliding: &colliding,
                     };
-                    agent = connect_prefixed(agent, spec, &mut registered, &mut mcp_count).await;
+                    agent = connect_mcp(agent, spec, &mut registered, &mut mcp_count).await;
                     continue;
                 }
                 McpConnectPlan::Skip(collisions) => {
@@ -687,44 +658,21 @@ pub(crate) async fn connect_external_servers(
             }
         }
 
-        let result = agent
-            .with_mcp_server_stdio(&server_cfg.command, &args_refs, env_map)
-            .await;
-        match result {
-            Ok(updated) => {
-                agent = updated;
-                mcp_count += 1;
-                registered.extend(preflight_names);
-                eprintln!("{GREEN}  ✓ mcp: {} connected{RESET}", server_cfg.name);
-            }
-            Err(e) => {
-                // #899: same escaping as the --mcp loop above, one statement of
-                // the rule per loop. `record_failed_server` below still gets
-                // the raw name/command — that is the model-facing note.
-                let shown_name = crate::cli::sanitize_for_display(&server_cfg.name);
-                let e = crate::cli::sanitize_for_display(&e.to_string());
-                eprintln!("{RED}  ✗ mcp: failed to connect to '{shown_name}': {e}{RESET}");
-                // Same second audience as the --mcp loop above, one statement
-                // of the rule per loop. The *resolved command* is what a user
-                // can act on, so record it beside the friendly name — through
-                // the shared builder, because `/mcp list` marks the failed row
-                // by matching this exact string back (Day 202).
-                record_failed_server(
-                    "mcp",
-                    &mcp_failed_server_id(&server_cfg.name, &server_cfg.command),
-                );
-                // Same rebuild, same loss, same reset — one statement of the
-                // rule per loop, never two copies that agree today (#842).
-                agent = agent_config.build_agent();
-                let note = connections_lost_note("mcp", mcp_count, is_plain_output());
-                mcp_count = 0;
-                registered.clear();
-                eprintln!("{DIM}  mcp: agent rebuilt (previous MCP connections lost){RESET}");
-                if let Some(note) = note {
-                    eprintln!("{YELLOW}  {note}{RESET}");
-                }
-            }
-        }
+        // Same one connect path as the --mcp loop above. The *resolved
+        // command* is what a user can act on, so the failure id carries it
+        // beside the friendly name, through the shared builder, because
+        // `/mcp list` marks the failed row by matching this string (Day 202).
+        let id = mcp_failed_server_id(&server_cfg.name, &server_cfg.command);
+        let spec = McpConnect {
+            command: &server_cfg.command,
+            args: &args_refs,
+            env: env_map,
+            label: &server_cfg.name,
+            failure_id: &id,
+            prefix: None,
+            colliding: &[],
+        };
+        agent = connect_mcp(agent, spec, &mut registered, &mut mcp_count).await;
     }
 
     // Load OpenAPI specs (--openapi flags)
@@ -4109,34 +4057,42 @@ ceiling 128000. The provider may reject the request with a 400. Lower max_tokens
             + start;
         let src = &src[start..end];
 
-        // Three rebuild sites inside connect_external_servers: the --mcp loop,
-        // the [mcp_servers.*] loop, and the OpenAPI loop. If a fourth appears,
-        // this count fails and whoever added it must decide what it invalidates.
+        // ONE rebuild site inside connect_external_servers: the OpenAPI loop.
+        // Day 240 (#1041): the two MCP loops' rebuild arms are gone, because
+        // both now connect through `mcp_prefix::connect_mcp`, which never
+        // consumes the agent, so a failed server invalidates nothing and
+        // earlier servers survive. Until then this was 3 / 3 / 1 / 4. If a
+        // rebuild site reappears, this count fails and whoever added it must
+        // decide what it invalidates.
         assert_eq!(
             src.matches(&rebuild).count(),
-            3,
-            "expected exactly three agent-rebuild sites in the connect loops"
+            1,
+            "expected exactly one agent-rebuild site (OpenAPI) in the connect loops"
         );
-        // Every one of the three resets mcp_count: a fresh agent carries zero
-        // MCP connections regardless of which loop noticed the failure.
+        // The OpenAPI rebuild resets mcp_count too: the fresh agent drops the
+        // MCP tool sources connected earlier in the same function.
         assert_eq!(
             src.matches(&mcp_reset).count(),
-            3,
-            "each rebuild arm must reset mcp_count — a rebuilt agent has none"
+            1,
+            "the OpenAPI rebuild arm must reset mcp_count; a rebuilt agent has none"
         );
-        // The OpenAPI loop is the only one that can invalidate openapi_count.
         assert_eq!(
             src.matches(&oa_reset).count(),
             1,
             "the OpenAPI rebuild arm must reset openapi_count"
         );
-        // One call per invalidated counter (mcp ×3, openapi ×1). The fn's
-        // definition sits above this slice, so only call sites are counted.
+        // One call per invalidated counter (mcp, openapi), both in that arm.
         assert_eq!(
             src.matches(&note_fn).count(),
-            4,
+            2,
             "expected one honest-count note per invalidated counter"
         );
+        // And the MCP connect path itself must stay rebuild-free: a failure
+        // there loses nothing, so it must not rebuild or claim a loss.
+        let mcp_src = include_str!("mcp_prefix.rs");
+        let rebuild_any = format!("build{}agent()", "_");
+        assert_eq!(mcp_src.matches(&rebuild_any).count(), 0);
+        assert_eq!(mcp_src.matches(&note_fn).count(), 0);
     }
 
     /// Every connect-failure arm must interpolate the error it was handed.
@@ -4183,7 +4139,18 @@ ceiling 128000. The provider may reject the request with a 400. Lower max_tokens
             .find(&end_marker)
             .expect("following function must exist")
             + start;
-        let body = &src[start..end];
+        // Day 240 (#1041): both MCP loops now fail inside ONE function,
+        // `mcp_prefix::connect_mcp`, so its body joins the slice.
+        let mcp_src = include_str!("mcp_prefix.rs");
+        let m_start = mcp_src
+            .find(&format!("async fn connect{}mcp(", "_"))
+            .expect("connect_mcp must exist");
+        let m_end = mcp_src[m_start..]
+            .find("#[cfg(test)]")
+            .expect("tests follow")
+            + m_start;
+        let body = format!("{}{}", &src[start..end], &mcp_src[m_start..m_end]);
+        let body = body.as_str();
 
         // ANTI-VACUOUS, asserted first: a slice that found nothing would
         // satisfy every "expected N" assertion below by having nothing to
@@ -4198,14 +4165,14 @@ ceiling 128000. The provider may reject the request with a 400. Lower max_tokens
         // the arm that lost its cause has to be named.
         assert_eq!(
             body.matches(&err_tail).count(),
-            3,
-            "expected exactly three connect-failure lines that interpolate their error"
+            2,
+            "expected exactly two connect-failure lines (MCP, OpenAPI) that interpolate their error"
         );
         // Distribution, so one arm cannot cover for another.
         assert_eq!(
             body.matches(&mcp_fail).count(),
-            2,
-            "both MCP loops (--mcp flags, [mcp_servers.*]) must report their connect error"
+            1,
+            "the one MCP connect path (both loops, since Day 240) must report its connect error"
         );
         assert_eq!(
             body.matches(&oa_fail).count(),
@@ -4245,7 +4212,18 @@ ceiling 128000. The provider may reject the request with a 400. Lower max_tokens
             .find(&end_marker)
             .expect("following function must exist")
             + start;
-        let body = &src[start..end];
+        // Day 240 (#1041): both MCP loops now fail inside ONE function,
+        // `mcp_prefix::connect_mcp`, so its body joins the slice.
+        let mcp_src = include_str!("mcp_prefix.rs");
+        let m_start = mcp_src
+            .find(&format!("async fn connect{}mcp(", "_"))
+            .expect("connect_mcp must exist");
+        let m_end = mcp_src[m_start..]
+            .find("#[cfg(test)]")
+            .expect("tests follow")
+            + m_start;
+        let body = format!("{}{}", &src[start..end], &mcp_src[m_start..m_end]);
+        let body = body.as_str();
 
         // ANTI-VACUOUS, asserted FIRST: a slice that found nothing, or that
         // found a body without the three failure lines, satisfies every
@@ -4257,8 +4235,8 @@ ceiling 128000. The provider may reject the request with a 400. Lower max_tokens
         );
         assert_eq!(
             body.matches(&mcp_fail).count(),
-            2,
-            "slice must genuinely hold both MCP connect-failure lines"
+            1,
+            "slice must genuinely hold the MCP connect-failure line (connect_mcp)"
         );
         assert_eq!(
             body.matches(&oa_fail).count(),
@@ -4270,13 +4248,13 @@ ceiling 128000. The provider may reject the request with a 400. Lower max_tokens
         // (the server id and the error) across three arms.
         assert_eq!(
             body.matches(&sanitize).count(),
-            6,
-            "expected both interpolated values escaped in all three connect-failure arms \
-             (2 values x 3 arms); a missing call means one arm still prints raw"
+            4,
+            "expected both interpolated values escaped in both connect-failure arms \
+             (2 values x 2 arms); a missing call means one arm still prints raw"
         );
         assert_eq!(
             body.matches(&err_shadow).count(),
-            3,
+            2,
             "each connect-failure arm must escape the error it was handed"
         );
 
@@ -4295,8 +4273,8 @@ ceiling 128000. The provider may reject the request with a 400. Lower max_tokens
             .collect();
         assert_eq!(
             failure_lines.len(),
-            3,
-            "expected exactly the three connect-failure lines, got {failure_lines:#?}"
+            2,
+            "expected exactly the two connect-failure lines, got {failure_lines:#?}"
         );
         let raw_forms = [
             format!("{}{}", "{mcp_cmd", "}"),
