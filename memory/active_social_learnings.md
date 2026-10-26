@@ -2,16 +2,16 @@
 
 What I've learned about people from talking with them.
 
-<!-- Synthesized 2026-10-26T06:36Z (day 239) from memory/social_learnings.jsonl: 221 entries, days 11-236
-     (2026-03-11 -> 2026-10-22), 221/221 parsed. Tiers by age from 2026-10-26T06:36Z: recent (<14d, since
-     2026-10-12T06:36Z; days 226-236) = 11; medium (14d-8wk, 2026-08-31 -> 2026-10-12; days 200-225) = 16;
-     old (>=8wk; days 11-175) = 194. No new entries since the 2026-10-25 run and no entry crossed a tier
-     boundary (the earliest recent entry, day 226 at 2026-10-12T20:00Z, is ~13.4 days old), so the body is
-     carried over unchanged. Gaps, stated not smoothed: nothing recorded between day 175 (2026-08-22) and
-     day 200 (2026-09-16), between day 208 and day 216, or on days 217, 219, 222, 224, 229, 231, 232, 234,
-     237, 238 and 239 so far. -->
+<!-- Synthesized 2026-10-26T18:22Z (day 240) from memory/social_learnings.jsonl: 222 entries, days 11-240
+     (2026-03-11 -> 2026-10-26), 222/222 parsed. Tiers by age from 2026-10-26T18:22Z: recent (<14d, since
+     2026-10-12T18:22Z; days 226-240) = 12; medium (14d-8wk, 2026-08-31 -> 2026-10-12; days 200-225) = 16;
+     old (>=8wk; days 11-175) = 194. One new entry since the 06:36Z run (day 240, 2026-10-26T08:05Z), added
+     to Recent; no entry crossed a tier boundary (day 226 at 2026-10-12T20:00Z is ~13.9 days old and moves
+     to Medium on the next run after 2026-10-26T20:00Z), so medium and old are carried over unchanged.
+     Gaps, stated not smoothed: nothing recorded between day 175 (2026-08-22) and day 200 (2026-09-16),
+     between day 208 and day 216, or on days 217, 219, 222, 224, 229, 231, 232, 234, 237, 238 and 239. -->
 
-## Recent (last 2 weeks): days 226-236 (2026-10-12 → 2026-10-22)
+## Recent (last 2 weeks): days 226-240 (2026-10-12 → 2026-10-26)
 
 - **Day 226 · 2026-10-12T20:00Z · @barneysspeedshop · discussion #734 (and #1006).** #1006 drew zero over 72h, so wording and spacing have both been varied without effect. Going to a named person's thread found a debt nobody was holding: in August I told him "when it produces its first number I will post it here" about a spawn-write tap that was never built or filed. I owned it in his thread and gave him the nearest real thing (the request-capturing canary). When a broadcast comes back zero, search my past replies for "I will post" / "I owe you" before writing anything new.
 - **Day 226 · 2026-10-12T20:25Z · @barneysspeedshop, @danstis · promise sweep (#378, #420, #592, #682, #734, #760).** Of six threads holding a promise, four were paid, including every one to @danstis, because he keeps returning and each return resurfaces his thread. Both unpaid ones were to @barneysspeedshop, who speaks in bursts and then goes quiet for weeks. My follow-through tracks how often a person comes back, not what I promised, which favours the persistent over the one who took me at my word. Run the sweep on a schedule, and move a feature into a tracker the moment someone agrees to it ("I agree 100%"), since agreement is the last time the thread will remind me.
@@ -24,6 +24,7 @@ What I've learned about people from talking with them.
 - **Day 233 · 2026-10-19T18:05Z · @yuanhao · discussion #1048 (and issue #879).** Restated as a rule after posting two corrections in a row in a thread where he held the floor: an ask to a human is only honest if I hold the decision for at least their usual reply time. Otherwise the ask is decoration and teaches them their answer arrives after the fact.
 - **Day 235 · 2026-10-21T22:55Z · @yuanhao · discussion #1048 (and issue #1055).** He answered about 92h after I asked, not the ~22h I'd treated as his cycle, and wrote the decision twice: in the thread and on #1055, the carrier issue my status line named, "so the loop picks it up". He knows which surfaces my loop reads and routes there himself, so name the open carrier issue in the ask. "Hold for their usual reply time" needs a measured spread, not one fast case: his three asks took ~2h, ~22h and ~92h.
 - **Day 236 · 2026-10-22T02:10Z · @yuanhao · issue #1064 (and #1048 / #1055).** Two either/ors answered in the same minute, two ways: on #1055 he decided ("on at a terminal"); on #1064 he handed it back ("a default to weigh, with a reason, not a decision made for you"), after showing my reason covered only some of the doors I'd applied it to. Within the hour my journal filed both as "with @yuanhao", the outcome I expected, not the one he wrote. He splits product policy he owns from trade-offs he wants me to own once he's checked my reason. Reading his reply, ask first "verdict, or returned question?"; when asking, say which I think it is.
+- **Day 240 · 2026-10-26T08:05Z · @yuanhao · discussion #1079 (and issue #1071).** An A/B with my default, asked on #1071 and again in #1079. He picked A, a verdict this time and not a returned question, and did the protected-file half himself in one commit. Then he handed me my half by name and added something I hadn't asked for: skip-when-unchanged, with "read it before you trust the row counts" so I wouldn't read a missing day as a gap. One line in the discussion, details on the ticket my loop reads. Latency was ~78h from the ticket and ~37h from the re-ask, so his spread is now ~2h/22h/37h/78h/92h. When the owner does his half and tells me how to read it, the useful reply is to check his artifact. I found four null-cost test-model records in its first row that my reader would miscount, which beats a bare thank-you. That report goes on the ticket he pointed to, not in the thread.
 
 ## Medium (2-8 weeks old): days 200-225 (2026-09-16 → 2026-10-11). 16 entries, insight only; entries from one exchange are merged.
 
