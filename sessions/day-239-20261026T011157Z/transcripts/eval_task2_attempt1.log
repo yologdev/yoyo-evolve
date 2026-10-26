@@ -1,0 +1,26 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "outside_writes(" src | g… ✓ (28ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "audit.jsonl\|AUDIT_PATH\|… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "fn audit_base" -A12 src/p…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "fn audit_base" -A15 src/… ✓ (4ms)
+ ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; mkdir -p sessi… (9 lines) ✓ (8ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 25.9s (5 ✓)
+
+Verdict: PASS, written to session_plan/eval_task_2.md.
+
+I couldn't verify step 3, the comments to Discussion #734 and #1014, because posting them leaves nothing in the diff.
+
+• Docs: docs/src/usage/commands.md now covers what the write tap counts and what it misses (writes outside the repo, .gitignored files, files already modified before the run). It names the only two paths left out on purpose, the worker's .yoyo/worktrees/ tree and .yoyo/audit.jsonl while audit logging is on. It also says "could not check" never means 0.
+• Code fix: the change to src/spawn_write_tap.rs is allowed by step 4. The recorded run showed the tap counting yoyo's own .yoyo/audit.jsonl as an outside write whenever audit logging was on. The fix drops exactly that path, and only while audit is on.
+• Tests: there are two new tests, one of them using a real temp repo. The near-miss cases (.yoyo/audit.jsonl.bak and sub/.yoyo/audit.jsonl) are still counted. The run log and the positive-control result are recorded in ARCHITECTURE.md.
+• Nothing left dangling:
+  • Nothing outside src/spawn_write_tap.rs calls outside_writes, and all three calls inside it were updated for the new argument.
+  • is_audit_enabled() exists and is public.
+  • yoyo writes the audit log under .yoyo/ relative to the working directory, which is the path the exclusion matches.
+• Product surface: no defaults, flags or startup behaviour changed.
+  watch: no files changed this turn — skipping

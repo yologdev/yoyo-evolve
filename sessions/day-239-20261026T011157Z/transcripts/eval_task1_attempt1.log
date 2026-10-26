@@ -1,0 +1,21 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | head; git l… ✓ (1.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p ses… (9 lines) ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 21.8s (2 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_1.md. One gap: I didn't run /cost in a live session, because seeing the new line takes a real session that delegates to a sub-agent through the API. The output is checked only by the formatter tests.
+
+• What the task asked for: the diff adds a second, session-long store of sub-agent spend in src/prompt/sub_agent_spend.rs. It is filled at the same point as the per-run store and nothing ever empties it, so /cost and the once-per-run drain don't take from each other. The per-run drain itself is unchanged.
+• `/cost` output: when sub-agents ran, the first line becomes "Session cost (own, excluding sub-agents)". A sub-agents: line shows the run count and its tokens, then a "Total including sub-agents" line. If any delegated run has no price, it says "cost unknown" and the total is unknown; it never shows $0.
+• No delegation: the output is the same as before. Full-string assert_eq! tests pin both the old header and the absence of the extra lines.
+• Tests: they use local stores rather than the process-wide one, as the task preferred. They cover recording twice, the per-run drain leaving the session store alone, an unpriced run staying unpriced, and the priced and unpriced output. They live in a new src/prompt/sub_agent_spend_session_tests.rs, not in src/format/cost.rs, which is at its size cap.
+• Every new definition is used: each new function is called in this same diff (from the /cost handler handle_cost in src/commands_info.rs or from the recording path), and no enum variants were added.
+• Lint and format: cargo fmt -- --check and cargo clippy --all-targets -- -D warnings are both clean on the committed tree. A few lines in the diff as shown didn't look rustfmt-formatted, but the commit is. Build and tests had already passed in the harness.
+• Docs: docs/src/features/cost-tracking.md has a new "Sub-agent spend" section. It covers the new lines, the never-$0 rule, and the parts that still count own spend only: the per-turn breakdown, /tokens, --output-format json and --cost-warn.
+• Product safety: extra output appears only when sub-agents actually ran. No defaults, flags or startup behaviour changed.
+  watch: no files changed this turn — skipping
