@@ -605,24 +605,31 @@ async fn run_single_prompt(
         final_response
     };
 
+    // #1016: a turn whose event stream closed before `AgentEnd` (the agent
+    // task died mid-run) is a failed run: exit 1, json `is_error: true`, and
+    // no watch pass on an agent that lost its tools with the task.
+    let run_failed = prompt::stream_cut_short();
+
     // Run watch command after prompt if active (auto lint/test loop)
-    run_watch_after_prompt(
-        agent,
-        &mut session_total,
-        &agent_config.model,
-        &session_changes,
-        // Per-process entry point: this tracker was created for this run, so
-        // its session-wide state IS the turn's state and the baseline is 0.
-        0,
-    )
-    .await;
+    if !run_failed {
+        run_watch_after_prompt(
+            agent,
+            &mut session_total,
+            &agent_config.model,
+            &session_changes,
+            // Per-process entry point: this tracker was created for this run, so
+            // its session-wide state IS the turn's state and the baseline is 0.
+            0,
+        )
+        .await;
+    }
 
     format::maybe_ring_bell(prompt_start.elapsed());
     let output_write_failed = emit_output(
         &response,
         &agent_config.model,
         &session_total,
-        false,
+        run_failed,
         &session_changes,
         output_path,
         json_output,
@@ -631,11 +638,11 @@ async fn run_single_prompt(
         count_assistant_turns(agent),
     );
     // A failed `--output` write is a failed run, whatever the model said (#766).
-    // `run_failed: false` is honest rather than a placeholder: every API-error
-    // path in this function has already exited 1 above, so by here the run
-    // succeeded. Sharing the ladder is what keeps the two modes from drifting.
+    // Every API-error path in this function has already exited 1 above, so
+    // `run_failed` is only the #1016 dead-agent ending. Sharing the ladder is
+    // what keeps the two modes from drifting.
     let code = exit_code_for_outcome(
-        false,
+        run_failed,
         output_write_failed,
         CHECKPOINT_TRIGGERED.load(Ordering::SeqCst),
     );
@@ -854,7 +861,8 @@ async fn run_piped_mode(
     // (default OFF, unchanged); once opted in, the full predicate runs, so
     // queue-pending and `looks_incomplete` do drive continuation. Widening
     // the gate to unconditional parity is a separate, arguable task.
-    if !should_exit_error && !prompt::was_interrupted() {
+    // #1016: nor after a dead agent task (stream closed before `AgentEnd`).
+    if !should_exit_error && !prompt::was_interrupted() && !prompt::stream_cut_short() {
         let opted_in = cli::is_continue_on_silence();
         let piped_file_config = crate::config::load_config_file().0;
         let max_continues = crate::repl::get_max_auto_continues(
@@ -931,7 +939,9 @@ async fn run_piped_mode(
     // `response.last_api_error` and never revisited that flag, so a
     // continuation turn killed by a terminal API error exited 0 while
     // `--output-format json` reported `is_error: false`. Both read this now.
-    let run_failed = should_exit_error || response.last_api_error.is_some();
+    // #1016: or the turn's event stream closed before `AgentEnd`.
+    let run_failed =
+        should_exit_error || response.last_api_error.is_some() || prompt::stream_cut_short();
 
     // Run watch command after prompt if active (auto lint/test loop)
     if !run_failed {

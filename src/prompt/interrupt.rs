@@ -8,6 +8,9 @@ static SINGLE_SHOT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBoo
 pub(super) static INTERRUPTED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+/// #1016: set when the event stream closed before the run's `AgentEnd`.
+static STREAM_CUT_SHORT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// Mark this process as a single-shot run (`-p` / piped prompt).
 pub fn mark_single_shot() {
     SINGLE_SHOT.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -20,6 +23,32 @@ pub(super) fn is_single_shot() -> bool {
 /// Whether a SIGINT interrupted a turn in this process (#993: `-p` exits 130).
 pub fn was_interrupted() -> bool {
     INTERRUPTED.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// #1016: did a turn's event stream close before its `AgentEnd` (the agent
+/// task died mid-run)? A single-shot run then counts as failed: exit 1, and
+/// `--output-format json` reports `is_error: true`.
+pub fn stream_cut_short() -> bool {
+    STREAM_CUT_SHORT.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// #1016: record a stream that closed without `AgentEnd` and say so. Nobody
+/// chooses this ending, and stdout holds only what streamed before it, so a
+/// script must be able to tell it from a finished reply.
+pub(super) fn record_stream_cut_short() {
+    use std::io::Write;
+    STREAM_CUT_SHORT.store(true, std::sync::atomic::Ordering::SeqCst);
+    let note = stream_cut_short_note();
+    if is_single_shot() {
+        let _ = std::io::stderr().write_all(note.as_bytes());
+    } else {
+        super::write_chrome(&note);
+    }
+}
+
+/// #1016: the note for a reply cut off by a dead agent task.
+pub(super) fn stream_cut_short_note() -> String {
+    format!("\n{DIM}  (reply cut off: the agent stopped before finishing the turn){RESET}\n")
 }
 
 /// #993/#1015/#1016: the exit code a cut-short single-shot run should use:
@@ -106,6 +135,18 @@ mod tests {
         let single = interrupt_note(true);
         assert_eq!(single, format!("\n{DIM}  (interrupted){RESET}\n"));
         assert!(!single.contains("again"));
+    }
+
+    #[test]
+    fn stream_cut_short_note_says_the_reply_was_cut_off() {
+        assert_eq!(
+            stream_cut_short_note(),
+            format!(
+                "\n{DIM}  (reply cut off: the agent stopped before finishing the turn){RESET}\n"
+            )
+        );
+        // Glyph-free: the note reaches pipes and logs.
+        assert!(stream_cut_short_note().is_ascii());
     }
 
     #[test]

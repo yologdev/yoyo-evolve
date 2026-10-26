@@ -19,7 +19,7 @@ mod output_limit;
 mod retry_after_partial;
 mod retry_safe_pipe;
 mod sigterm;
-pub use interrupt::{interrupted_exit_code, mark_single_shot, was_interrupted};
+pub use interrupt::{interrupted_exit_code, mark_single_shot, stream_cut_short, was_interrupted};
 mod stream_external_servers;
 mod stream_session_restored;
 mod sub_agent_spend;
@@ -1090,7 +1090,7 @@ async fn handle_prompt_events(
     loop {
         tokio::select! {
             event = gate.next(&mut rx) => {
-                let Some(event) = event else { break };
+                let Some(event) = event else { break gate.report_unfinished_run() };
                 match event {
                     AgentEvent::ToolExecutionStart {
                         tool_call_id, tool_name, args, ..

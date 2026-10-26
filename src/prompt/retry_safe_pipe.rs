@@ -89,6 +89,10 @@ pub(super) struct RetrySafeGate {
     /// #1016: where [`Drop`] writes unprinted text if the event loop panics
     /// while this gate is alive. Stdout in production; a buffer in tests.
     panic_sink: Box<dyn std::io::Write + Send>,
+    /// #1016: the loop was handed the run's `AgentEnd`. yoagent sends it on
+    /// every ending it reaches (done, error, abort, rejected input), so a
+    /// close without it means the agent task died (a panic) mid-run.
+    saw_agent_end: bool,
 }
 
 impl RetrySafeGate {
@@ -101,6 +105,7 @@ impl RetrySafeGate {
             open_message: None,
             failed_text: String::new(),
             panic_sink: Box::new(std::io::stdout()),
+            saw_agent_end: false,
         }
     }
 
@@ -211,16 +216,39 @@ impl RetrySafeGate {
     ) -> Option<AgentEvent> {
         loop {
             if let Some(event) = self.queue.pop_front() {
-                return Some(event);
+                return Some(self.seen(event));
             }
             if self.closed {
                 return None;
             }
             let raw = rx.recv().await;
             if self.filter.is_none() {
-                return raw;
+                self.closed = raw.is_none();
+                return raw.map(|event| self.seen(event));
             }
             self.feed(raw);
+        }
+    }
+
+    fn seen(&mut self, event: AgentEvent) -> AgentEvent {
+        if matches!(event, AgentEvent::AgentEnd { .. }) {
+            self.saw_agent_end = true;
+        }
+        event
+    }
+
+    /// #1016: the stream closed and the run never reached its `AgentEnd`, so
+    /// the reply the user got is whatever streamed before the agent task
+    /// died. Keyed on that state, filter on or off, not on the cause.
+    pub(super) fn ended_without_agent_end(&self) -> bool {
+        self.closed && !self.saw_agent_end
+    }
+
+    /// #1016: called by the loop once `next()` returns `None`; records a run
+    /// that ended without its `AgentEnd` (exit 1, a note on stderr).
+    pub(super) fn report_unfinished_run(&self) {
+        if self.ended_without_agent_end() {
+            super::interrupt::record_stream_cut_short();
         }
     }
 
@@ -434,6 +462,88 @@ mod tests {
         }
         drop(gate); // normal drop, not panicking
         out
+    }
+
+    fn agent_end() -> AgentEvent {
+        AgentEvent::agent_end(Vec::new(), yoagent::SessionStats::default())
+    }
+
+    /// Drive `next()` over a real channel to `None`, as the loop does, and
+    /// return whether the gate saw the run end without its `AgentEnd`.
+    async fn ends_without_agent_end(filtering: bool, events: Vec<AgentEvent>) -> bool {
+        let mut gate = RetrySafeGate::with_panic_sink(filtering, Box::new(Sink::default()));
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        for e in events {
+            tx.send(e).expect("send");
+        }
+        drop(tx);
+        // Before the close is seen, nothing is reported: the run may still end.
+        assert!(!gate.ended_without_agent_end());
+        while gate.next(&mut rx).await.is_some() {}
+        gate.ended_without_agent_end()
+    }
+
+    /// #1016 (the 2026-10-24T09:36Z row: "exit code for the closed-mid-attempt
+    /// ending"): the stream closing inside an attempt, with no `AgentEnd`, is
+    /// what `report_unfinished_run` keys on, on a pipe (filter on) and on a
+    /// terminal (filter off) alike. Before this fix nothing recorded it and
+    /// the run exited 0, the same as a finished reply.
+    #[tokio::test]
+    async fn stream_closed_mid_attempt_counts_as_an_unfinished_run() {
+        let cut = vec![start(), text("CUT"), text("_OFF")];
+        assert!(ends_without_agent_end(true, cut.clone()).await);
+        assert!(ends_without_agent_end(false, cut).await);
+        // Between messages (e.g. mid-tool) the run is just as unfinished.
+        let between = vec![start(), text("A"), end(StopReason::Stop)];
+        assert!(ends_without_agent_end(true, between.clone()).await);
+        assert!(ends_without_agent_end(false, between).await);
+    }
+
+    /// Near-misses: every ending yoagent reaches sends `AgentEnd`, and those
+    /// are not unfinished, whether the attempt completed, was retried and
+    /// then completed, or ended in a final error (that one fails on its own
+    /// path, `last_api_error`, not this one).
+    #[tokio::test]
+    async fn runs_that_reach_agent_end_are_not_unfinished() {
+        let done = vec![start(), text("DONE"), end(StopReason::Stop), agent_end()];
+        let retried = vec![
+            start(),
+            text("PARTIAL_"),
+            end(StopReason::Error),
+            retry(),
+            start(),
+            text("DONE"),
+            end(StopReason::Stop),
+            agent_end(),
+        ];
+        let failed = vec![start(), text("X"), end(StopReason::Error), agent_end()];
+        for filtering in [true, false] {
+            assert!(!ends_without_agent_end(filtering, done.clone()).await);
+            assert!(!ends_without_agent_end(filtering, retried.clone()).await);
+            assert!(!ends_without_agent_end(filtering, failed.clone()).await);
+        }
+    }
+
+    /// Near-miss on stdout: a completed, retried-then-completed run prints
+    /// byte-identically with its `AgentEnd` on the wire, filter on and off.
+    #[tokio::test]
+    async fn agent_end_does_not_change_what_the_loop_prints() {
+        let retried = vec![
+            start(),
+            text("PARTIAL_"),
+            end(StopReason::Error),
+            retry(),
+            start(),
+            text("DONE"),
+            end(StopReason::Stop),
+            agent_end(),
+        ];
+        let sink = Sink::default();
+        assert_eq!(loop_prints(true, retried, &sink).await, "DONE");
+        assert_eq!(sink.bytes(), "");
+        let done = vec![start(), text("DONE"), end(StopReason::Stop), agent_end()];
+        assert_eq!(loop_prints(false, done, &sink).await, "DONE");
+        assert_eq!(sink.bytes(), "");
     }
 
     /// #1016, emission point. At HEAD before this fix the loop printed "" and
