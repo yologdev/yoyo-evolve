@@ -31,7 +31,10 @@ pub(crate) fn external_servers_stream_line(report: &ExternalServerReport) -> Opt
         "type".to_string(),
         serde_json::Value::String("externalServers".to_string()),
     );
-    serde_json::to_string(&value).ok()
+    // #1092: a server id may carry bidi/zero-width chars from repo config.
+    serde_json::to_string(&value)
+        .ok()
+        .map(|j| super::escape_unsafe_json_chars(&j))
 }
 
 /// Print the line to stdout if this session's report has a failure.

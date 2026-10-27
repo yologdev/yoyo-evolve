@@ -1608,3 +1608,29 @@ fn save_session_to_round_trips_and_refuses_missing_parent() {
     assert!(msg.contains("s.json"), "{msg}");
     assert!(!msg.as_bytes().contains(&0x1b), "{msg:?}");
 }
+
+/// #1092 at the emission point: a `response` carrying a bidi override leaves
+/// `--output-format json` as `\u202e`, never as the raw bytes `e2 80 ae`, and
+/// parses back to the identical string.
+#[test]
+fn json_output_escapes_bidi_override_in_response() {
+    let (mut response, usage) = json_fixture();
+    response.text = "x\u{202E}y".to_string();
+    let out = build_json_output_with(
+        &response,
+        "m",
+        &usage,
+        false,
+        &SessionChanges::new(),
+        std::time::Duration::from_millis(1),
+        1,
+        &crate::agent_builder::ExternalServerReport::default(),
+    );
+    assert!(
+        !out.as_bytes().windows(3).any(|w| w == [0xe2, 0x80, 0xae]),
+        "raw U+202E leaked: {out}"
+    );
+    assert!(out.contains("\\u202e"), "{out}");
+    let parsed: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(parsed["response"], serde_json::json!("x\u{202E}y"));
+}

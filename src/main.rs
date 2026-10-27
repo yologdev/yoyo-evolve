@@ -288,7 +288,11 @@ fn build_json_output_with(
         // error, and flipping that flag would break every script branching on it.
         "external_servers": crate::agent_builder::external_servers_json(external),
     });
-    serde_json::to_string(&json_obj).unwrap_or_else(|_| "{}".to_string())
+    // #1092: bidi overrides, zero-width, C1 and DEL leave as \uXXXX, so a
+    // human who cats the log sees escapes, not reordered text.
+    serde_json::to_string(&json_obj)
+        .map(|j| prompt::escape_unsafe_json_chars(&j))
+        .unwrap_or_else(|_| "{}".to_string())
 }
 
 /// Count the number of assistant turns in the agent's message history.

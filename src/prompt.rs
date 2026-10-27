@@ -23,7 +23,7 @@ pub use interrupt::{interrupted_exit_code, mark_single_shot, stream_cut_short, w
 mod stream_external_servers;
 mod stream_session_restored;
 mod sub_agent_spend;
-pub(crate) use stream_session_restored::record_session_restored;
+pub(crate) use stream_session_restored::{escape_unsafe_json_chars, record_session_restored};
 pub(crate) use sub_agent_spend::{
     attach_sub_agent_spend, session_cost_header, session_sub_agent_spend, sub_agent_cost_lines,
     take_sub_agent_spend,

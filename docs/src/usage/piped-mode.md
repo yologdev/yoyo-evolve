@@ -71,6 +71,12 @@ that can follow it). Tool activity appears as
 `messageStart` / `messageUpdate` / `messageEnd`. Turn boundaries are
 `turnStart` / `turnEnd`.
 
+In both `json` and `stream-json`, characters that are invisible or reorder
+text on a terminal (Unicode format characters such as the bidi override
+U+202E and zero-width spaces, plus DEL, the C1 controls and U+2028/U+2029)
+are written as lowercase `\uXXXX` escapes. Any JSON parser reads them back as
+the identical character; only a raw-byte search for them sees a difference.
+
 ```bash
 echo "list the files" | yoyo --output-format stream-json
 ```
