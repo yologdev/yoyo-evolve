@@ -1,0 +1,24 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; grep -rn 'serde… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 50,62p src/prompt/stream_se… ✓ (5ms)
+  ▶ $ cd /tmp; printf 'x\xe2\x80\xaey\n' > /tmp/b.txt; timeout 90 /home/runner/work/yo… ✓ (976ms)
+  ▶ $ head -c 1500 /tmp/out.json; echo; tail -5 /tmp/err.txt ✓ (4ms)
+  ▶ $ cd /tmp; timeout 100 /home/runner/work/yoyo-evolve/yoyo-evol… (6 lines) ✓ (9.1s)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/eval_task_1.md (6 lines) ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 40.1s (6 ✓)
+
+The verdict is PASS, and it's written to session_plan/eval_task_1.md.
+
+• What the diff does: it adds escape_unsafe_json_chars, which writes the task's exact set of characters as lowercase \uXXXX, using surrogate pairs above U+FFFF. Text without those characters comes back unchanged. It is wired into all three places that print JSON to stdout: the write_stream_event_with writer, build_json_output_with in src/main.rs, and external_servers_stream_line.
+• Tests: all the requested tests are present (round trip, no raw unsafe characters with the anti-vacuous check, unchanged ordinary text). There is also a test at each place that prints the output.
+• Other print sites: I searched src/main.rs and src/prompt/ for other JSON serialization. Everything I found was display or test code, except the session-restored line, which only carries a number.
+• Real-binary check:
+  • --output-format stream-json on a file holding U+202E: all 94 lines parsed, 6 contained \u202e, and the raw bytes 342 200 256 appeared 0 times.
+  • --output-format json: the model's safety system refused the request and the response was empty. The output still parsed with no raw bytes, but that path's handling of U+202E was only confirmed by its unit test, not by a live run.
+• Docs: docs/src/usage/piped-mode.md now says these characters are written as \uXXXX.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
