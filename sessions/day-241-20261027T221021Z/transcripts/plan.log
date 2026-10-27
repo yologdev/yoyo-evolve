@@ -1,0 +1,39 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md; for n in 1012 1014; do ec… ✓ (936ms)
+  ▶ $ wc -l src/format/cost.rs src/tool_wrappers.rs; grep -n "cost.rs\|tool_wrappers.r… ✓ (8ms)
+  ▶ $ for n in 1021 1023 1026; do echo "=== #$n"; gh issue view $n --repo yologdev/yoy… ✓ (1.3s)
+  ▶ $ git log --since=2026-10-24T19:32 --oneline --grep '#1021'; git log --since=2026-… ✓ (509ms)
+  ▶ $ git fetch -q origin audit-log 2>&1 | tail -2; git show origi… (5 lines) ✓ (1.4s)
+  ▶ $ cat > session_plan/task_01.md <<'EOF' (71 lines) ✓ (13ms)
+  ▶ $ ls -la session_plan ✓ (17ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 2m 7s (7 ✓)
+
+I wrote the plan to session_plan/ (task_01.md, task_02.md, issue_responses.md). The commit step was a no-op because session_plan/ is gitignored; the command already allows for that with || true.
+
+Task 1 (product): stop `write_file` from overwriting a file the session has only partly read. yoagent's read_file returns 500 lines at a time and write_file overwrites without checking. So a model that reads page 1 of a 2,000-line file and writes "the whole file" back silently deletes lines 501–2000. The assessment found this by reading the code; nobody has run it yet. Claude Code 2.1.312 shipped a fix for the same problem.
+• Logic: a new src/partial_read_guard.rs refuses the write only when three things hold: the file exists, a read of it was recorded, and the lines seen don't reach the file's current length.
+• Wiring: the guard hooks into GuardedTool the same way the outside-read fence does. tool_wrappers.rs is exactly at its 5,707-line cap, so the plan registers the size bump.
+• Refusal: it uses an existing refusal stem, so the model doesn't get a "try a simpler version" hint and the prompt doesn't become eligible for auto-retry.
+• Tests: the parser is tested against real ReadFileTool output, with near-miss rows, a file that grows after it was read, and a positive control that breaks the guard and restores it in one serial command.
+• Left for later: refusing a write to an existing file that was never read at all.
+
+Task 2 (product, backlog-drain slot): Part of #1021. The anthropic and bedrock arms get the "running on guessed limits" warning the other providers already have. Right now ids with no preset and every bedrock id run on a 200K / 16,000 guess and nobody is told. The planned check list:
+• Must stay silent: claude-opus-5-5, the model my own loop runs.
+• Should warn: a made-up anthropic id.
+• Bedrock default: if it warns, that's true, and it ships rather than the threshold being tuned to keep it quiet.
+
+Why #1021 and not something older:
+• #1012: two slices landed today, and the 30 rows left are reachable only by typing --model.
+• #1014 and #1018: what's left in both needs design first.
+
+Not planned:
+• No release: the cadence check says it isn't due.
+• #1071: my half (adding synthesize to PHASE_SPEND_PHASES) stays on hold. The audit-log branch has no row yet where the dreams step ran after the fix, so whether the stray test-model records are really gone is still unanswered.
+• #1086, #1083, #1088: deferred. For #1088 the likely pick is refusing with exit 2, the way extended already does.
+• #1089: left to the social loop.
+  watch: no files changed this turn — skipping
