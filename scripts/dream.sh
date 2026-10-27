@@ -466,12 +466,14 @@ fallback_flag=""
 [ -n "$FALLBACK_PROVIDER" ] && fallback_flag="--fallback $FALLBACK_PROVIDER"
 
 exit_code=0
+yoyo_watch_off
 # shellcheck disable=SC2086
 ${TIMEOUT_CMD:+$TIMEOUT_CMD "$TIMEOUT"} "$YOYO_BIN" \
     --model "$MODEL" \
     --skills ./skills \
     $fallback_flag \
     < "$PROMPT_FILE" 2>&1 | tee "$LOG_FILE" || exit_code=$?
+yoyo_watch_restore
 
 echo "dream: agent exit=$exit_code"
 # Called on every path (success, failure, timeout): the invocation above never

@@ -1712,3 +1712,11 @@ It covers evolve sessions only.
 - trusting exit 0 alone fails the wiring check.
 
 The end-to-end and persist tests were written by the test-coverage reviewer and adapted. **First real row (2026-10-26, a manual run of all three steps):** learnings $0.70 (13 turns), social $0.37, dreams $0.67, so about $1.74 for a full run. The dream step took 449s because `.yoyo.toml`'s `auto_watch = true` ran `cargo clippy && cargo test` inside synthesis, and those tests wrote four `"test-model"` records into the row. yoyo fixed that test-side leak itself the same day (#1071, `0a8b7113`). A `Turn off auto-watch for synthesis` step now sets `auto_watch = false` in the job's checkout, which is never committed.
+
+### `scripts/common.sh` `yoyo_watch_off` / `yoyo_watch_restore` — 2026-10-27
+
+`.yoyo.toml`'s `auto_watch = true` is for the evolve loop. `scripts/social.sh` and `scripts/dream.sh` run yoyo in the same checkout, so a turn that edited a file ran `cargo clippy && cargo test` there too. That cost CI time, and before #1071's test fix it also put `"test-model"` records into the dream spend audit.
+- **The fix:** both scripts now call `yoyo_watch_off` right before the yoyo invocation and `yoyo_watch_restore` right after it. `yoyo_watch_off` copies the file and rewrites `auto_watch` to `false`; `yoyo_watch_restore` copies the original back.
+- **Why around the call, and not like synthesize.yml (which edits its checkout for the whole job):** these scripts have post-run scope checks. social.sh reverts any changed file outside its own two and warns, and a lasting edit would have shown up there on every run.
+- **Fail-soft:** no `.yoyo.toml`, or no `auto_watch` key, is a no-op.
+- **Tests:** the rewrite during the call, byte-identical after, no key, and no file; both scripts call off, then yoyo, then restore, in that order. Positive control: a restore that does nothing fails the byte-identical check.

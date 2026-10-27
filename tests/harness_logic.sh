@@ -1271,6 +1271,29 @@ P_S2=$(syn_sink_case with-branch "" 2)
 check "synthesize sink: two runs -> two rows (appended, not overwritten)" "$(syn_has "$P_S2" 'rows=2')" "yes"
 check "synthesize sink: one rejected push -> retry lands one row" "$(syn_has "$P_SF" 'rows=1')$(syn_has "$P_SF" 'FAILED')" "yesno"
 
+# ── social/dream: auto_watch off around the yoyo call, file restored after ───
+CM="$ROOT/scripts/common.sh"
+WO_FN="$(awk '/^YOYO_WATCH_BACKUP=""$/{p=1} p' "$CM")"
+if require "common.sh yoyo_watch_off/restore extracted" "$WO_FN"; then
+    wo_case() { # $1 = .yoyo.toml content (printf) or "-" for none → "during|restored-identical"
+        ( d=$(mktemp -d); cd "$d" || exit 1; [ "$1" = "-" ] || printf "$1" > .yoyo.toml
+          [ -f .yoyo.toml ] && cp .yoyo.toml orig
+          eval "$WO_FN"; yoyo_watch_off >/dev/null
+          during=$(grep '^auto_watch' .yoyo.toml 2>/dev/null || echo none)
+          yoyo_watch_restore
+          same=$( [ ! -f orig ] && [ ! -f .yoyo.toml ] && echo n/a || { cmp -s orig .yoyo.toml && echo identical || echo DIFFERENT; } )
+          echo "$during|$same"; cd /; rm -rf "$d" )
+    }
+    check "watch off: auto_watch = true becomes false during the call, file byte-identical after" \
+        "$(wo_case 'provider = "x"\nauto_watch = true\n# auto_watch = true in a comment stays\nmodel = "m"\n')" "auto_watch = false|identical"
+    check "watch off: no auto_watch key -> file untouched" "$(wo_case 'provider = "x"\n')" "none|identical"
+    check "watch off: no .yoyo.toml -> nothing created" "$(wo_case -)" "none|n/a"
+fi
+for f in social dream; do
+    check "$f.sh: auto_watch is off for the yoyo call and restored right after it" \
+        "$(awk '/^yoyo_watch_off$/{o=NR} /"\$YOYO_BIN" \\$/{y=NR} /^yoyo_watch_restore$/{r=NR} END{print (o && y && r && o<y && y<r) ? "yes" : "no"}' "$ROOT/scripts/$f.sh")" "yes"
+done
+
 check "skill_evolve.sh: diff-scope guard lists a retire by its attic path (-M)" \
     "$(grep -c 'CHANGED_FILES=$(git diff --name-only -M ' "$SE")" "1"
 

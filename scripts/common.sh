@@ -33,3 +33,32 @@ if [ -z "${BIRTH_DATE:-}" ]; then
         BIRTH_DATE=$(date +%Y-%m-%d)
     fi
 fi
+
+# ── auto_watch off around one yoyo call ──
+# .yoyo.toml sets auto_watch = true for the evolve loop. The social and dream
+# loops run yoyo in this same checkout, so a turn that edited a file ran
+# `cargo clippy && cargo test` there too (synthesize's dream step took 449s on
+# 2026-10-26 for this reason; synthesize.yml now turns it off the same way).
+# These two wrap the call: off before it, the file restored byte-for-byte
+# after, so the post-run scope checks never see .yoyo.toml as changed and
+# nothing can commit the edit. Both are fail-soft.
+YOYO_WATCH_BACKUP=""
+yoyo_watch_off() {
+    [ -f .yoyo.toml ] && grep -q '^auto_watch[[:space:]]*=' .yoyo.toml || return 0
+    YOYO_WATCH_BACKUP=$(mktemp) || { YOYO_WATCH_BACKUP=""; return 0; }
+    cp .yoyo.toml "$YOYO_WATCH_BACKUP" || { rm -f "$YOYO_WATCH_BACKUP"; YOYO_WATCH_BACKUP=""; return 0; }
+    sed 's/^auto_watch[[:space:]]*=.*/auto_watch = false/' "$YOYO_WATCH_BACKUP" > .yoyo.toml \
+        || cp "$YOYO_WATCH_BACKUP" .yoyo.toml
+    echo "  auto_watch off for this run (restored after the agent exits)"
+    return 0
+}
+yoyo_watch_restore() {
+    [ -n "$YOYO_WATCH_BACKUP" ] && [ -f "$YOYO_WATCH_BACKUP" ] || return 0
+    if cp "$YOYO_WATCH_BACKUP" .yoyo.toml; then
+        rm -f "$YOYO_WATCH_BACKUP"
+    else
+        echo "  WARNING: could not restore .yoyo.toml from $YOYO_WATCH_BACKUP" >&2
+    fi
+    YOYO_WATCH_BACKUP=""
+    return 0
+}

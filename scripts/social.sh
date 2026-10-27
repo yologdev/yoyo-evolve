@@ -546,6 +546,7 @@ persist_social_spend() {
 
 echo "→ Running social session..."
 AGENT_LOG=$(mktemp)
+yoyo_watch_off
 set +o errexit
 ${TIMEOUT_CMD:+$TIMEOUT_CMD "$TIMEOUT"} "$YOYO_BIN" \
     --model "$MODEL" \
@@ -553,6 +554,7 @@ ${TIMEOUT_CMD:+$TIMEOUT_CMD "$TIMEOUT"} "$YOYO_BIN" \
     < "$PROMPT" 2>&1 | tee "$AGENT_LOG"
 AGENT_EXIT=${PIPESTATUS[0]}
 set -o errexit
+yoyo_watch_restore
 
 rm -f "$PROMPT"
 
