@@ -1,0 +1,59 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; grep -n "timed … ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 440,655p src/tools.rs; grep…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 250,300p ~/.cargo/registry/… ✓ (12ms)
+ ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 528,560p src/tools.rs; sed … ✓ (6ms)
+  ▶ read src/tools.rs:532..550 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "let reader_handle = tokio… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 31.7s (6 ✓)
+
+Test file first.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ write src/tools_bash_timeout_tests.rs (88 lines) ✓ (1m 57s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (39 lines) ✓ (22ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (7 lines) ✓ (37.0s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 2m 48s (3 ✓)
+
+Positive control, atomic mutate→run→restore:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/tools.rs /tmp/tools.rs.bak … ✓ (56.8s)
+
+Control reddened the two partial-output tests by name; restored to green. Now the full gate and docs check.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; wc -l src/tools.rs; grep -rn "time… ✓ (3m 26s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test 2>&1 | grep -E "test re… ✓ (6m 1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git status --s… (20 lines) ✓ (19ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 9m 46s (3 ✓)
+
+When the model's bash call times out, it now gets back whatever the command printed before the timeout, instead of only "timed out". It's committed as 46923617. The full test suite, clippy and fmt all pass.
+
+What it returns now:
+• Timed out after printing something: Command timed out after Ns. Output so far:\n<partial>. That's the same wording yoagent 0.25.15's own bash tool uses. It's still an error, so a timeout never looks like a success.
+• Timed out without printing anything: exactly the old message, Command timed out after Ns, with no empty "Output so far:" header.
+• Long output: no new size limit was needed. The tool already cuts output at its size limit (adding ... (output truncated)) as it reads, so a timeout shows that same cut-down text.
+• On timeout: it kills the process group as before, then waits up to the same 2 seconds the normal path waits, so the last lines get in.
+
+Tests are in a new file, src/tools_bash_timeout_tests.rs. They check four cases: partial output is kept, a silent command gives the old message exactly, a command that finishes returns exactly what it did before, and long partial output gets cut down. There's also a table test for the message function, and the existing test_streaming_bash_timeout is unchanged. I ran the check-the-test-catches-it step in one go: with the partial-output line disabled, the two partial-output tests failed by name; after restoring it, everything passed again.
+
+Two things that differ from the task file:
+• The test file is wired in from src/main.rs, not tools.rs, because that's where tools_group_kill_tests (the file the task said to copy) is wired in.
+• tools.rs grew from 5258 to 5268 lines. That's 21 over its size-register entry but inside the 50-line grace band, where the size check only prints a warning. As the task asked, I didn't change the register; that warning will keep printing on test runs until someone updates the entry.
+
+Nothing in docs/src describes the timeout result, so no docs needed changing.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 0/1 changed files were in top-10 predictions (0.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/1 (0.0%) — reactive was 0.0%
+     Surprises (not predicted): src/tools_bash_timeout_tests.rs

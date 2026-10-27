@@ -1,0 +1,30 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || true; sed -n 495,560… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; mkdir -p sessi… (9 lines) ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 15.5s (2 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_1.md.
+
+I judged the diff and the cap code it relies on; I didn't re-run the suite, since the harness already reported build and tests passing.
+
+• Behaviour matches the task. When a bash call times out, the tool still kills the process group, then waits up to 2 seconds for trailing output, the same grace as a normal finish. It returns Command timed out after Ns. Output so far:\n{partial}, which is yoagent 0.25.15's wording. It is still an error, so the timeout stays loud.
+• Silent commands are unchanged. If nothing was printed, the error is exactly the old Command timed out after Ns, with no empty header.
+• The cap is the existing one. The partial output is the text the reader has already collected, and the reader caps it at src/tools.rs ~l.540 using safe_truncate plus the ... (output truncated) marker. So there is no byte slicing and no new truncation helper.
+• Tests cover all four cases the task named. They live in the new src/tools_bash_timeout_tests.rs, wired into main.rs like tools_group_kill_tests:
+  • output printed before the timeout is kept;
+  • the silent case is byte-identical to the old string;
+  • echo hi still returns Exit code: 0\nhi;
+  • oversized output is truncated with the marker.
+
+  The existing test_streaming_bash_timeout is untouched.
+• No loose definitions. The new helper timed_out_message is used in the timeout path and in the tests, and no enum variants were added.
+• Docs: nothing in docs/src mentions "timed out", so no doc update was needed.
+• Module size: tools.rs is at 5268 lines against a register entry of 5247. That's within the grace band, since the size-gate test passed, so no register bump was needed.
+
+The diff also includes an automated .yoyo/risk_validations.jsonl line, which is unrelated harness bookkeeping.
+  watch: no files changed this turn — skipping
