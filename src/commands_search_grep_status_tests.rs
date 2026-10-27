@@ -16,7 +16,7 @@ use tempfile::TempDir;
 fn match_args(pattern: &str) -> GrepArgs {
     GrepArgs {
         pattern: pattern.to_string(),
-        path: ".".to_string(),
+        paths: vec![".".to_string()],
         case_sensitive: true,
         context_lines: None,
         include: None,
@@ -124,7 +124,7 @@ fn grep_missing_path_is_an_error_in_every_mode_not_no_matches() {
     let m = run_grep_in(
         tmp.path(),
         &GrepArgs {
-            path: path.clone(),
+            paths: vec![path.clone()],
             ..match_args("x")
         },
     )
@@ -132,7 +132,7 @@ fn grep_missing_path_is_an_error_in_every_mode_not_no_matches() {
     let c = run_grep_count_in(
         tmp.path(),
         &GrepArgs {
-            path: path.clone(),
+            paths: vec![path.clone()],
             ..count_args("x")
         },
     )
@@ -140,7 +140,7 @@ fn grep_missing_path_is_an_error_in_every_mode_not_no_matches() {
     let x = run_grep_with_context_in(
         tmp.path(),
         &GrepArgs {
-            path: path.clone(),
+            paths: vec![path.clone()],
             ..context_args("x")
         },
     )

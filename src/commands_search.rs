@@ -1233,7 +1233,8 @@ const GREP_MAX_MATCHES: usize = 50;
 #[derive(Debug, Clone, PartialEq)]
 pub struct GrepArgs {
     pub pattern: String,
-    pub path: String,
+    /// Path operands, each its own argv element (#1091); `["."]` when none.
+    pub paths: Vec<String>,
     pub case_sensitive: bool,
     /// Lines of context around matches: (before, after).
     /// Set by `-C N` (symmetric), `-B N` (before only), `-A N` (after only).
@@ -1368,10 +1369,10 @@ pub fn parse_grep_args(input: &str) -> Option<GrepArgs> {
     }
 
     let pattern = remaining_parts[0].clone();
-    let path = if remaining_parts.len() > 1 {
-        remaining_parts[1..].join(" ")
+    let paths = if remaining_parts.len() > 1 {
+        remaining_parts[1..].to_vec()
     } else {
-        ".".to_string()
+        vec![".".to_string()]
     };
 
     let context_lines = match (context_before, context_after) {
@@ -1383,7 +1384,7 @@ pub fn parse_grep_args(input: &str) -> Option<GrepArgs> {
 
     Some(GrepArgs {
         pattern,
-        path,
+        paths,
         case_sensitive,
         context_lines,
         include,
@@ -1460,8 +1461,8 @@ pub(crate) fn run_grep_in(
         }
         argv.push("--".to_string());
         argv.push(args.pattern.clone());
-        if args.path != "." {
-            argv.push(args.path.clone());
+        if args.paths != ["."] {
+            argv.extend(args.paths.iter().cloned());
         }
         if let Some(ref glob) = args.include {
             argv.push(glob.clone());
@@ -1499,7 +1500,7 @@ pub(crate) fn run_grep_in(
             "--exclude-dir=.venv",
         ]);
         cmd.arg(&args.pattern);
-        cmd.arg(&args.path);
+        cmd.args(&args.paths);
         // Same wrapper text as before. The git arm's inner `e` now carries the
         // chokepoint's own error string; both arms still surface as
         // `Failed to run grep: …`, so no caller sees a different failure mode.
@@ -1508,7 +1509,7 @@ pub(crate) fn run_grep_in(
 
     match output {
         Ok(out) => {
-            let (stdout, error) = grep_output_parts(&out, &args.path);
+            let (stdout, error) = grep_output_parts(&out, &args.paths.join("`, `"));
             let matches: Vec<GrepMatch> = stdout
                 .lines()
                 .filter(|l| !l.is_empty())
@@ -1601,8 +1602,8 @@ pub(crate) fn run_grep_count_in(
         }
         argv.push("--".to_string());
         argv.push(args.pattern.clone());
-        if args.path != "." {
-            argv.push(args.path.clone());
+        if args.paths != ["."] {
+            argv.extend(args.paths.iter().cloned());
         }
         if let Some(ref glob) = args.include {
             argv.push(glob.clone());
@@ -1633,7 +1634,7 @@ pub(crate) fn run_grep_count_in(
             "--exclude-dir=.venv",
         ]);
         cmd.arg(&args.pattern);
-        cmd.arg(&args.path);
+        cmd.args(&args.paths);
         // Same wrapper text as before. The git arm's inner `e` now carries the
         // chokepoint's own `git not found: …` prefix, in a branch that is
         // unreachable when git is absent — the probe above also spawns git, so a
@@ -1643,7 +1644,7 @@ pub(crate) fn run_grep_count_in(
 
     match output {
         Ok(out) => {
-            let (stdout, error) = grep_output_parts(&out, &args.path);
+            let (stdout, error) = grep_output_parts(&out, &args.paths.join("`, `"));
             let entries: Vec<GrepCountEntry> = stdout
                 .lines()
                 .filter(|l| !l.is_empty())
@@ -1771,8 +1772,8 @@ pub(crate) fn run_grep_with_context_in(
         }
         argv.push("--".to_string());
         argv.push(args.pattern.clone());
-        if args.path != "." {
-            argv.push(args.path.clone());
+        if args.paths != ["."] {
+            argv.extend(args.paths.iter().cloned());
         }
         if let Some(ref glob) = args.include {
             argv.push(glob.clone());
@@ -1813,7 +1814,7 @@ pub(crate) fn run_grep_with_context_in(
             "--exclude-dir=.venv",
         ]);
         cmd.arg(&args.pattern);
-        cmd.arg(&args.path);
+        cmd.args(&args.paths);
         // Same wrapper text as before. The git arm's inner `e` now carries the
         // chokepoint's own error string; both arms still surface as
         // `Failed to run grep: …`, so no caller sees a different failure mode.
@@ -1822,7 +1823,7 @@ pub(crate) fn run_grep_with_context_in(
 
     match output {
         Ok(out) => {
-            let (found, error) = grep_output_parts(&out, &args.path);
+            let (found, error) = grep_output_parts(&out, &args.paths.join("`, `"));
             Ok(GrepRun { found, error })
         }
         // Both arms already wrapped their own error above, so no second wrap here.
@@ -2926,7 +2927,7 @@ mod tests {
     fn parse_grep_args_basic_pattern() {
         let args = parse_grep_args("/grep TODO").unwrap();
         assert_eq!(args.pattern, "TODO");
-        assert_eq!(args.path, ".");
+        assert_eq!(args.paths, ["."]);
         assert!(!args.case_sensitive);
     }
 
@@ -2934,7 +2935,7 @@ mod tests {
     fn parse_grep_args_with_path() {
         let args = parse_grep_args("/grep fn_main src/").unwrap();
         assert_eq!(args.pattern, "fn_main");
-        assert_eq!(args.path, "src/");
+        assert_eq!(args.paths, ["src/"]);
         assert!(!args.case_sensitive);
     }
 
@@ -2942,7 +2943,7 @@ mod tests {
     fn parse_grep_args_case_sensitive_flag() {
         let args = parse_grep_args("/grep -s MyStruct src/").unwrap();
         assert_eq!(args.pattern, "MyStruct");
-        assert_eq!(args.path, "src/");
+        assert_eq!(args.paths, ["src/"]);
         assert!(args.case_sensitive);
     }
 
@@ -2969,7 +2970,7 @@ mod tests {
     fn parse_grep_args_quoted_pattern() {
         let args = parse_grep_args(r#"/grep "fn main""#).unwrap();
         assert_eq!(args.pattern, "fn main");
-        assert_eq!(args.path, ".");
+        assert_eq!(args.paths, ["."]);
         assert!(!args.case_sensitive);
     }
 
@@ -2977,7 +2978,7 @@ mod tests {
     fn parse_grep_args_quoted_pattern_with_path() {
         let args = parse_grep_args(r#"/grep "fn main" src/"#).unwrap();
         assert_eq!(args.pattern, "fn main");
-        assert_eq!(args.path, "src/");
+        assert_eq!(args.paths, ["src/"]);
         assert!(!args.case_sensitive);
     }
 
@@ -2985,7 +2986,7 @@ mod tests {
     fn parse_grep_args_quoted_pattern_case_sensitive() {
         let args = parse_grep_args(r#"/grep -s "fn main" src/"#).unwrap();
         assert_eq!(args.pattern, "fn main");
-        assert_eq!(args.path, "src/");
+        assert_eq!(args.paths, ["src/"]);
         assert!(args.case_sensitive);
     }
 
@@ -2994,7 +2995,7 @@ mod tests {
         // Ensure single-word patterns still work without quotes
         let args = parse_grep_args("/grep TODO").unwrap();
         assert_eq!(args.pattern, "TODO");
-        assert_eq!(args.path, ".");
+        assert_eq!(args.paths, ["."]);
     }
 
     // --- #706: flag names must be searchable ---
@@ -3013,7 +3014,7 @@ mod tests {
         // `--` itself is consumed, never becomes the pattern.
         let args = parse_grep_args("/grep -- -C src/").unwrap();
         assert_eq!(args.pattern, "-C");
-        assert_eq!(args.path, "src/");
+        assert_eq!(args.paths, ["src/"]);
         assert_eq!(args.context_lines, None);
     }
 
@@ -3021,7 +3022,7 @@ mod tests {
     fn parse_grep_args_end_of_flags_long_flag() {
         let args = parse_grep_args("/grep -- --count foo").unwrap();
         assert_eq!(args.pattern, "--count");
-        assert_eq!(args.path, "foo");
+        assert_eq!(args.paths, ["foo"]);
         assert!(!args.count_only);
     }
 
@@ -3031,7 +3032,7 @@ mod tests {
         // `src/` is not a number, so `-C` is not a context flag here.
         let args = parse_grep_args(r#"/grep "-C" src/"#).unwrap();
         assert_eq!(args.pattern, "-C");
-        assert_eq!(args.path, "src/");
+        assert_eq!(args.paths, ["src/"]);
         assert_eq!(args.context_lines, None);
     }
 
@@ -3059,7 +3060,7 @@ mod tests {
     fn parse_grep_args_context_normal_path_untouched() {
         let args = parse_grep_args("/grep -C 3 foo src/").unwrap();
         assert_eq!(args.pattern, "foo");
-        assert_eq!(args.path, "src/");
+        assert_eq!(args.paths, ["src/"]);
         assert_eq!(args.context_lines, Some((3, 3)));
     }
 
@@ -3149,7 +3150,7 @@ mod tests {
         // This tests run_grep on the actual project — "fn main" should exist in src/
         let args = GrepArgs {
             pattern: "fn main".to_string(),
-            path: "src/".to_string(),
+            paths: vec!["src/".to_string()],
             case_sensitive: true,
             context_lines: None,
             include: None,
@@ -3182,7 +3183,7 @@ mod tests {
     fn parse_grep_args_context_c_flag() {
         let args = parse_grep_args("/grep -C 3 TODO src/").unwrap();
         assert_eq!(args.pattern, "TODO");
-        assert_eq!(args.path, "src/");
+        assert_eq!(args.paths, ["src/"]);
         assert_eq!(args.context_lines, Some((3, 3)));
     }
 
@@ -3211,7 +3212,7 @@ mod tests {
     fn parse_grep_args_before_and_after_combined() {
         let args = parse_grep_args("/grep -B 2 -A 1 TODO src/").unwrap();
         assert_eq!(args.pattern, "TODO");
-        assert_eq!(args.path, "src/");
+        assert_eq!(args.paths, ["src/"]);
         assert_eq!(args.context_lines, Some((2, 1)));
     }
 
@@ -3230,7 +3231,7 @@ mod tests {
         // so the flag token becomes the pattern and TODO becomes the path.
         let args = parse_grep_args("/grep -C TODO").unwrap();
         assert_eq!(args.pattern, "-C");
-        assert_eq!(args.path, "TODO");
+        assert_eq!(args.paths, ["TODO"]);
         assert_eq!(args.context_lines, None);
     }
 
@@ -3251,7 +3252,7 @@ mod tests {
     fn parse_grep_args_include_with_other_flags() {
         let args = parse_grep_args(r#"/grep -C 3 --include "*.rs" TODO src/"#).unwrap();
         assert_eq!(args.pattern, "TODO");
-        assert_eq!(args.path, "src/");
+        assert_eq!(args.paths, ["src/"]);
         assert_eq!(args.context_lines, Some((3, 3)));
         assert_eq!(args.include, Some("*.rs".to_string()));
     }
@@ -3276,7 +3277,7 @@ mod tests {
         // Search for "fn main" but only in *.rs files — should find it
         let args = GrepArgs {
             pattern: "fn main".to_string(),
-            path: "src/".to_string(),
+            paths: vec!["src/".to_string()],
             case_sensitive: true,
             context_lines: None,
             include: Some("*.rs".to_string()),
@@ -3303,7 +3304,7 @@ mod tests {
         // Search for "version" only in *.toml files — should not match any .rs files
         let args = GrepArgs {
             pattern: "version".to_string(),
-            path: ".".to_string(),
+            paths: vec![".".to_string()],
             case_sensitive: false,
             context_lines: None,
             include: Some("*.toml".to_string()),
@@ -3375,7 +3376,7 @@ src/b.rs:20:match two";
         // Test that context mode actually works on the real project
         let args = GrepArgs {
             pattern: "fn main".to_string(),
-            path: "src/main.rs".to_string(),
+            paths: vec!["src/main.rs".to_string()],
             case_sensitive: true,
             context_lines: Some((1, 1)),
             include: None,
@@ -3401,7 +3402,7 @@ src/b.rs:20:match two";
     fn parse_grep_args_count_short_flag() {
         let args = parse_grep_args("/grep -c fn src/").unwrap();
         assert_eq!(args.pattern, "fn");
-        assert_eq!(args.path, "src/");
+        assert_eq!(args.paths, ["src/"]);
         assert!(args.count_only);
     }
 
@@ -3416,7 +3417,7 @@ src/b.rs:20:match two";
     fn parse_grep_args_include_and_exclude() {
         let args = parse_grep_args(r#"/grep --include "*.rs" --exclude "test*" pub fn"#).unwrap();
         assert_eq!(args.pattern, "pub");
-        assert_eq!(args.path, "fn");
+        assert_eq!(args.paths, ["fn"]);
         assert_eq!(args.include, Some("*.rs".to_string()));
         assert_eq!(args.exclude, Some("test*".to_string()));
     }
@@ -3499,7 +3500,7 @@ src/b.rs:20:match two";
         // Count mode on the real project — "fn main" should exist in src/
         let args = GrepArgs {
             pattern: "fn main".to_string(),
-            path: "src/".to_string(),
+            paths: vec!["src/".to_string()],
             case_sensitive: true,
             context_lines: None,
             include: None,
@@ -3548,7 +3549,7 @@ src/b.rs:20:match two";
     fn count_args(pattern: &str) -> GrepArgs {
         GrepArgs {
             pattern: pattern.to_string(),
-            path: ".".to_string(),
+            paths: vec![".".to_string()],
             case_sensitive: true,
             context_lines: None,
             include: None,
@@ -3643,7 +3644,7 @@ src/b.rs:20:match two";
     fn match_args(pattern: &str) -> GrepArgs {
         GrepArgs {
             pattern: pattern.to_string(),
-            path: ".".to_string(),
+            paths: vec![".".to_string()],
             case_sensitive: true,
             context_lines: None,
             include: None,
@@ -3839,7 +3840,7 @@ src/b.rs:20:match two";
         // (since src/ only has .rs files)
         let args = GrepArgs {
             pattern: "fn".to_string(),
-            path: "src/".to_string(),
+            paths: vec!["src/".to_string()],
             case_sensitive: false,
             context_lines: None,
             include: None,
@@ -4584,3 +4585,7 @@ src/b.rs:20:match two";
 #[cfg(test)]
 #[path = "commands_search_grep_h_tests.rs"]
 mod commands_search_grep_h_tests;
+
+#[cfg(test)]
+#[path = "commands_search_grep_paths_tests.rs"]
+mod commands_search_grep_paths_tests;

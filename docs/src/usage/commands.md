@@ -895,7 +895,7 @@ Features:
 - **Git-aware** — uses `git grep` in git repos (faster, respects `.gitignore`), falls back to `grep -rnH` (the `-H` keeps the filename on a single-file search)
 - **Colored output** — filenames in green, line numbers in cyan, matches highlighted in yellow
 - **Truncated results** — shows up to 50 matches with a "narrow your search" hint
-- **Optional path** — `/grep pattern src/` restricts search to a specific file or directory
+- **Optional path** — `/grep pattern src/` restricts search to a specific file or directory. Several paths are each searched, as grep and `git grep` do: `/grep pattern src/ tests/`. A path containing a space is one path when quoted (`/grep pattern "my dir"`). If one of several paths is missing, plain grep still shows the other paths' matches and reports the error (exit 2); `git grep` refuses the whole search with an error naming the missing path
 - **Literal flag names** — `--` ends flag parsing, so `/grep -- -C src/` searches for the literal text `-C`. A value-taking flag whose value is missing or unparseable (e.g. `/grep -C src/`) is treated as the search pattern rather than being silently dropped.
 - **Errors are not "no matches"** — if the path does not exist or cannot be read, `/grep` prints grep's error (to stderr) instead of `No matches found.`, and `yoyo grep` exits 2. Matches found before the error are still shown. A genuine search with zero matches still prints `No matches found.` and exits 0. Inside a git repo the search runs through `git grep`, which cannot search a path outside the repository, so that also reports an error.
 
