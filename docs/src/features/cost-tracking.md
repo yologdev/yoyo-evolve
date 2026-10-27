@@ -74,10 +74,12 @@ Costs are estimated based on published pricing for all major providers.
 
 **Error direction.** Where a vendor's price varies (a promotion, a context tier,
 a time-of-day rate), the table either models the variation or uses the higher
-rate, so an estimate is meant to read high, not low. Two places do not meet that
-yet, and both read low: DeepSeek is priced at its off-peak rate (see below), and
-the session cost line for a tiered model (Haiku 5.5, Gemini 3.1 Pro) uses the
-base rate, where only the per-turn breakdown applies the tier.
+rate, so an estimate is meant to read high, not low. Three places do not meet
+that yet, and all read low: DeepSeek is priced at its off-peak rate (see below);
+the session cost line for a tiered model (Haiku 5.5, Gemini 3.1 Pro, Grok 4.x)
+uses the base rate, where only the per-turn breakdown applies the tier; and
+Grok 4.7 takes yoagent's preset, which bills xAI's lower regional rate (see xAI
+below; tracked on #1012).
 
 ### Anthropic
 
@@ -195,11 +197,24 @@ a second source.
 
 ### xAI (Grok)
 
-| Model | Input | Output |
-|-------|-------|--------|
-| Grok 3 | $3/MTok | $15/MTok |
-| Grok 3 Mini | $0.30/MTok | $0.50/MTok |
-| Grok 2 | $2/MTok | $10/MTok |
+| Model | Input | Cache Read | Output |
+|-------|-------|------------|--------|
+| Grok 4.3, Grok 4.20 (`grok-4.20-0309-reasoning`, `-non-reasoning`, `grok-4.20-multi-agent-0309`) | $1.25/MTok | $0.20/MTok | $2.50/MTok |
+| Grok 4.5 | $2/MTok | $0.30/MTok | $6/MTok |
+| Grok 4.6 | $2.20/MTok | $0.55/MTok | $6.60/MTok |
+| Grok 3 | $3/MTok | — | $15/MTok |
+| Grok 3 Mini | $0.30/MTok | — | $0.50/MTok |
+| Grok 2 | $2/MTok | — | $10/MTok |
+
+The Grok 4.x rows are from xAI's models page (2026-10-27) and match models.dev,
+except Grok 4.6: xAI bills it $2 / $0.50 / $6 in us-east-1 and us-west-2 and 10%
+more in us-central-1, and yoyo cannot tell which cluster served a request, so it
+bills the higher rate. Above a 200,000-token prompt xAI doubles every rate; the
+per-turn breakdown in `/cost` applies that tier, the same way it does for Gemini
+3.1 Pro, and the session cost line does not. Only the exact ids above are
+priced this way: xAI's aliases (`grok-4.3-latest`, `grok-4.20-reasoning`, ...)
+and other `grok-4*` ids are still estimated at $3 / $15. Grok 4.7 is priced by
+yoagent's preset ($2 / $0.50 / $6, the lower, non-us-central-1 rate).
 
 ### Groq (hosted models)
 

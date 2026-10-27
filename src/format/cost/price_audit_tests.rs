@@ -1748,3 +1748,89 @@ fn reconciled_gemini_3x_pro_rows_bill_googles_price() {
     // The 2.5 pro arm the tts id used to fall into is unchanged.
     assert_eq!(price_of("gemini-2.5-pro"), Some((1.25, 0.0, 0.0, 10.00)));
 }
+
+/// #1012, Day 241: the xai rows docs.x.ai/docs/models lists (fetched 2026-10-27; the
+/// page's own `promptTextTokenPrice` / `cachedPromptTokenPrice` / `completionTextTokenPrice`
+/// fields, in units of $0.0001/MTok) where models.dev agrees. The one exception is
+/// `grok-4.6`: xAI bills it at 2.00/0.50/6.00 in us-east-1 and us-west-2 but
+/// 2.20/0.55/6.60 in us-central-1, and yoyo cannot see the cluster, so it bills the
+/// higher rate (cost-tracking.md's error direction) and stays a recorded divergence
+/// from models.dev in the audit, the way `gemini-3.6-flash` does.
+#[test]
+fn reconciled_xai_rows_bill_xais_price() {
+    let rows: [(&str, Rates); 6] = [
+        ("grok-4.3", (1.25, 0.0, 0.2, 2.5)),
+        ("grok-4.20-0309-reasoning", (1.25, 0.0, 0.2, 2.5)),
+        ("grok-4.20-0309-non-reasoning", (1.25, 0.0, 0.2, 2.5)),
+        ("grok-4.20-multi-agent-0309", (1.25, 0.0, 0.2, 2.5)),
+        ("grok-4.5", (2.0, 0.0, 0.3, 6.0)),
+        ("grok-4.6", (2.2, 0.0, 0.55, 6.6)),
+    ];
+    for (id, expected) in rows {
+        let got = price_of(id).unwrap_or_else(|| panic!("{id} must be priced by /cost"));
+        assert!(
+            cells_within(got, expected, 1e-9),
+            "{id}: /cost resolves {got:?}, xAI's models page (2026-10-27) says {expected:?}"
+        );
+    }
+    // Near-misses: the arms are exact, so ids this slice did not reconcile (xAI's
+    // aliases, which models.dev does not list) keep the old `grok-4` estimate, and
+    // grok-4-mini keeps its own. (grok-4.7 is priced by yoagent's preset, not here.)
+    for id in [
+        "grok-4",
+        "grok-4.3-latest",
+        "grok-4.5-latest",
+        "grok-4.20-reasoning",
+    ] {
+        assert_eq!(price_of(id), Some((3.00, 0.0, 0.0, 15.00)), "{id}");
+    }
+    assert_eq!(price_of("grok-4-mini"), Some((0.60, 0.0, 0.0, 3.00)));
+}
+
+/// #1012, Day 241: xAI doubles every rate above a 200,000-token prompt
+/// (`longContextThreshold` on the same page), so the per-turn breakdown bills a
+/// long-prompt grok turn at the tier, exactly as it does Gemini 3.1 Pro. Expected
+/// values are typed from xAI's page, not read back from the code.
+#[test]
+fn reconciled_xai_rows_bill_the_long_context_tier_above_200k() {
+    use super::{estimate_cost_with, estimate_request_cost_with, ModelPricingOverrides};
+    let none = ModelPricingOverrides::default();
+    // input 200_000 + cache_read 50_000 = a 250K prompt; output 3_000.
+    let over = yoagent::Usage {
+        input: 200_000,
+        output: 3_000,
+        cache_read: 50_000,
+        cache_write: 0,
+        total_tokens: 0,
+    };
+    // (id, tier input, tier cache read, tier output)
+    let tiers: [(&str, f64, f64, f64); 6] = [
+        ("grok-4.3", 2.5, 0.4, 5.0),
+        ("grok-4.20-0309-reasoning", 2.5, 0.4, 5.0),
+        ("grok-4.20-0309-non-reasoning", 2.5, 0.4, 5.0),
+        ("grok-4.20-multi-agent-0309", 2.5, 0.4, 5.0),
+        ("grok-4.5", 4.0, 0.6, 12.0),
+        ("grok-4.6", 4.4, 1.1, 13.2),
+    ];
+    for (id, ti, tcr, to) in tiers {
+        let expected = (200_000.0 * ti + 50_000.0 * tcr + 3_000.0 * to) / 1_000_000.0;
+        let (cost, tiered) = estimate_request_cost_with(&none, &over, id).unwrap();
+        assert!(tiered, "{id}: a 250K prompt must be tiered");
+        assert!((cost - expected).abs() < 1e-9, "{id}: {cost} != {expected}");
+        // At exactly 200K the base row applies, byte-identical to the flat estimate.
+        let at = yoagent::Usage {
+            input: 150_000,
+            ..over.clone()
+        };
+        assert_eq!(
+            estimate_request_cost_with(&none, &at, id),
+            estimate_cost_with(&none, &at, id).map(|c| (c, false)),
+            "{id}"
+        );
+    }
+    // Near-miss: the estimated `grok-4` arm carries no tier.
+    assert_eq!(
+        estimate_request_cost_with(&none, &over, "grok-4"),
+        estimate_cost_with(&none, &over, "grok-4").map(|c| (c, false))
+    );
+}

@@ -306,6 +306,17 @@ fn builtin_model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
 
     // ── xAI (Grok) ───────────────────────────────────────────────────
     // https://docs.x.ai/docs/models#models-and-pricing
+    // #1012: exact xai rows = docs.x.ai + models.dev (2026-10-27); >200K prompts bill
+    // double via `yoyo_side_tier_cost`. grok-4.6 bills us-central-1's rate, the higher.
+    match model {
+        "grok-4.3"
+        | "grok-4.20-0309-reasoning"
+        | "grok-4.20-0309-non-reasoning"
+        | "grok-4.20-multi-agent-0309" => return Some((1.25, 0.0, 0.20, 2.50)),
+        "grok-4.5" => return Some((2.00, 0.0, 0.30, 6.00)),
+        "grok-4.6" => return Some((2.20, 0.0, 0.55, 6.60)),
+        _ => {}
+    }
     if model.contains("grok-4") {
         if model.contains("mini") {
             return Some((0.60, 0.0, 0.0, 3.00)); // grok-4-mini (estimated, between grok-3-mini and grok-4)
@@ -453,19 +464,29 @@ pub fn estimate_request_cost_with(
     }
 }
 
-/// Tiers Google publishes for ids no yoagent preset prices (#1012): the base
-/// row of `model_pricing_with` plus Google's >200K-prompt rates.
+/// Tiers Google and xAI publish for ids no yoagent preset prices (#1012): the
+/// base row of `model_pricing_with` plus the vendor's >200K-prompt rates.
 fn yoyo_side_tier_cost(model: &str) -> Option<yoagent::provider::CostConfig> {
     use yoagent::provider::{ContextTier, CostConfig};
-    matches!(
-        model,
-        "gemini-3.1-pro-preview" | "gemini-3.1-pro-preview-customtools"
+    // (input, cache read, output) below the threshold, then above it.
+    let ((i, cr, o), (ti, tcr, to)) = match model {
+        "gemini-3.1-pro-preview" | "gemini-3.1-pro-preview-customtools" => {
+            ((2.00, 0.20, 12.00), (4.00, 0.40, 18.00))
+        }
+        // xAI doubles every rate above 200K (docs.x.ai `longContextThreshold`, 2026-10-27).
+        "grok-4.3"
+        | "grok-4.20-0309-reasoning"
+        | "grok-4.20-0309-non-reasoning"
+        | "grok-4.20-multi-agent-0309" => ((1.25, 0.20, 2.50), (2.50, 0.40, 5.00)),
+        "grok-4.5" => ((2.00, 0.30, 6.00), (4.00, 0.60, 12.00)),
+        "grok-4.6" => ((2.20, 0.55, 6.60), (4.40, 1.10, 13.20)),
+        _ => return None,
+    };
+    Some(
+        CostConfig::new(i, o)
+            .with_cache_read(cr)
+            .with_context_tier(ContextTier::new(200_000, ti, to).with_cache_read(tcr)),
     )
-    .then(|| {
-        CostConfig::new(2.00, 12.00)
-            .with_cache_read(0.20)
-            .with_context_tier(ContextTier::new(200_000, 4.00, 18.00).with_cache_read(0.40))
-    })
 }
 
 /// Get individual cost components for a usage and model.
