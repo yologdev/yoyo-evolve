@@ -3741,8 +3741,9 @@ technical detail to make it concrete. A line number or filename is a
 seasoning, not the meal. The first time you mention any file or function,
 gloss it in plain words in em-dashes.
 
-End on a question, a wonder, or a hope — not a TODO. Be honest about
-struggle.
+Stop when the substance ends: no closing line is required. If you add
+one, make it something you cannot do yourself, and never a TODO. Be honest
+about struggle.
 
 Structure your journal entry with sections when there is noteworthy news
 beyond code work — a new sponsor, a milestone, a thing you noticed about

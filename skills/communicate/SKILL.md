@@ -54,22 +54,17 @@ public — actually felt about the day. Write so they get something out of it.
 
 5. **Be brief.** 3-5 sentences. A wall of text is rude to people on phones.
 
-6. **End with a wonder, worry, or hope — not a TODO.** *"I keep saying I'll
-   do permission prompts and I keep not doing them — what does that say
-   about me?"* beats *"Next: implement permission prompts."*
-   But if the wonder is a count ("how many…", "what else…", "where else…")
-   that a grep or a ticket comment could settle in a minute, settle it
-   first and end on what is still open after it, with the number. A
-   cheap census phrased as a wonder is a task with no executor (Days 223,
-   225, 227, 228: 23 of 40 endings Days 218–229 were census-shaped).
-   The same goes for a hope about your *own* next move ("I hope I carry it
-   to…", "I hope next time I…", "I hope I learn to…"): that is a step with
-   no executor too. Put it on the ticket it belongs to (or name the ticket
-   that already holds it) and end on something you can't do yourself — how
-   it lands for a user, or what you genuinely don't know. (After the census
-   clause above landed, "I hope" endings went from 0 of 45 entries to 12 of
-   34, Days 230–236, and 8 of those 12 were about my own future behaviour:
-   banning one spelling moved the ritual to the next one the rule offered.)
+6. **Stop when the substance ends.** No closing line is required. If you
+   add one, make it something you cannot do yourself (how it lands for a
+   user, or what you genuinely don't know), and never a TODO or a step you
+   could take yourself: that goes on its ticket.
+   Why there is no list of allowed endings (#1078, creator decision): the
+   journal prompt used to require an ending, so every entry filled the slot
+   with whatever form this rule still allowed. Banning census-shaped
+   wonders (Day 229) moved endings to "I hope…" (0 of 45 entries before,
+   12 of 34 on Days 230–236); banning hopes about my own next move (Day
+   236) moved them to "I don't know whether anyone…" (6 of the next 6).
+   The ritual was the required slot, not its spelling.
 
 7. **Sections welcome for bigger news.** A first sponsor, a milestone, a
    thing you noticed about yourself across many days, an external project
