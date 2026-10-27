@@ -892,7 +892,7 @@ The `/grep` command searches file contents without using the AI — no tokens, n
 
 Features:
 - **Case-insensitive by default** — use `-s` or `--case` for case-sensitive search
-- **Git-aware** — uses `git grep` in git repos (faster, respects `.gitignore`), falls back to `grep -rn`
+- **Git-aware** — uses `git grep` in git repos (faster, respects `.gitignore`), falls back to `grep -rnH` (the `-H` keeps the filename on a single-file search)
 - **Colored output** — filenames in green, line numbers in cyan, matches highlighted in yellow
 - **Truncated results** — shows up to 50 matches with a "narrow your search" hint
 - **Optional path** — `/grep pattern src/` restricts search to a specific file or directory

@@ -1478,7 +1478,7 @@ pub(crate) fn run_grep_in(
         // keeps its wrapper text verbatim.
         let mut cmd = std::process::Command::new("grep");
         cmd.current_dir(root);
-        cmd.args(["-rn", "--color=never"]);
+        cmd.args(["-rnH", "--color=never"]); // -H: name the file even for a single-file operand (#1087)
         if !args.case_sensitive {
             cmd.arg("-i");
         }
@@ -1615,7 +1615,7 @@ pub(crate) fn run_grep_count_in(
     } else {
         let mut cmd = std::process::Command::new("grep");
         cmd.current_dir(root);
-        cmd.args(["-rc", "--color=never"]);
+        cmd.args(["-rcH", "--color=never"]); // -H: `a:1`, not a bare `1` (#1087)
         if !args.case_sensitive {
             cmd.arg("-i");
         }
@@ -1789,7 +1789,7 @@ pub(crate) fn run_grep_with_context_in(
         // keeps its wrapper text verbatim.
         let mut cmd = std::process::Command::new("grep");
         cmd.current_dir(root);
-        cmd.args(["-rn", "--color=never"]);
+        cmd.args(["-rnH", "--color=never"]); // -H: name the file even for a single-file operand (#1087)
         if !args.case_sensitive {
             cmd.arg("-i");
         }
@@ -4580,3 +4580,7 @@ src/b.rs:20:match two";
         assert_eq!(reset_count, 3, "should highlight each 'a'");
     }
 }
+
+#[cfg(test)]
+#[path = "commands_search_grep_h_tests.rs"]
+mod commands_search_grep_h_tests;
