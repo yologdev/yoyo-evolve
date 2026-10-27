@@ -1376,6 +1376,9 @@ async fn main() {
     if !run_setup_wizard_if_needed(is_interactive, &mut agent_config) {
         return;
     }
+    // #1012: xAI bills grok-4.6/4.7 10% more on us.api.x.ai; the endpoint decides.
+    // After the wizard, which can set base_url on a first run.
+    format::set_xai_us_region(format::is_xai_us_endpoint(agent_config.base_url.as_deref()));
 
     apply_bedrock_credentials(&mut agent_config);
 

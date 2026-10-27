@@ -2679,8 +2679,6 @@ directory ({e}); this run is trusted, later runs will not be."
 
     // Parse model/provider/API-key/fallback configuration
     let mc = parse_model_config(args, &file_config, &prompt_arg);
-    // #1012: xAI bills grok-4.6/4.7 10% more on us.api.x.ai; the endpoint decides.
-    crate::format::set_xai_us_region(crate::format::is_xai_us_endpoint(mc.base_url.as_deref()));
 
     // --editor-model <name>: explicit editor model for architect mode (issue #542).
     // Editor defaults to the main model; this flag overrides it.

@@ -1634,3 +1634,32 @@ fn json_output_escapes_bidi_override_in_response() {
     let parsed: serde_json::Value = serde_json::from_str(&out).unwrap();
     assert_eq!(parsed["response"], serde_json::json!("x\u{202E}y"));
 }
+
+/// #1012 (Day 241): the xAI US-endpoint decision reads `agent_config.base_url`
+/// AFTER the first-run setup wizard, which can set that field for a `custom`
+/// provider. Read before it, the first session on `us.api.x.ai` billed 10% low.
+/// Weak by design: a source-order guard proves the call sits after the wizard,
+/// never that the price is right (`format::cost::xai_region`'s tests do that).
+/// Needles are assembled at runtime so this test cannot match itself.
+#[test]
+fn xai_region_is_decided_after_the_setup_wizard() {
+    let src = include_str!("main.rs");
+    // The call site, not the `fn` definition (which also precedes `main`).
+    let wizard = ["!run_setup_wizard_if_needed(", "is_interactive"].concat();
+    let setter = [
+        "set_xai_us_region(",
+        "format::is_xai_us_endpoint(agent_config",
+    ]
+    .concat();
+    let w = src.find(&wizard).expect("main must run the setup wizard");
+    let s = src.find(&setter).expect("main must decide the xAI region");
+    assert_eq!(
+        src.matches(&setter).count(),
+        1,
+        "exactly one region decision"
+    );
+    assert!(
+        w < s,
+        "the region must be decided after the wizard can set base_url"
+    );
+}
