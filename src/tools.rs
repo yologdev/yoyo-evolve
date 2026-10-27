@@ -483,7 +483,7 @@ impl AgentTool for StreamingBashTool {
         let ctx_clone = ctx.clone();
         let emit_progress = !self.progress_requires_tty || crate::format::stderr_is_terminal();
 
-        let reader_handle = tokio::spawn(async move {
+        let mut reader_handle = tokio::spawn(async move {
             let stdout_reader = stdout.map(tokio::io::BufReader::new);
             let stderr_reader = stderr.map(tokio::io::BufReader::new);
 
@@ -586,11 +586,13 @@ impl AgentTool for StreamingBashTool {
             _ = tokio::time::sleep(timeout) => {
                 group.kill_now();
                 let _ = child.kill().await;
-                reader_handle.abort();
-                return Err(ToolError::Failed(format!(
-                    "Command timed out after {}s",
-                    timeout.as_secs()
-                )));
+                // Same 2s straggler grace as the normal path, so trailing lines land.
+                if tokio::time::timeout(Duration::from_secs(2), &mut reader_handle).await.is_err() {
+                    reader_handle.abort();
+                    let _ = reader_handle.await;
+                }
+                let partial = accumulated.lock().await.clone(); // already capped by the reader
+                return Err(ToolError::Failed(timed_out_message(timeout.as_secs(), &partial)));
             }
             status = child.wait() => {
                 // Finished on its own: whatever it deliberately left running
@@ -611,7 +613,6 @@ impl AgentTool for StreamingBashTool {
         // so the orphan's NEXT write to them gets EPIPE/SIGPIPE — the same
         // thing that happens to it when yoyo exits. Output already read is
         // in `accumulated` and is kept; the orphan itself is not killed.
-        let mut reader_handle = reader_handle;
         if tokio::time::timeout(Duration::from_secs(2), &mut reader_handle)
             .await
             .is_err()
@@ -650,6 +651,15 @@ impl AgentTool for StreamingBashTool {
 }
 
 // ── rename_symbol agent tool ─────────────────────────────────────────────
+
+/// A bash timeout's error, with what the command printed so far (yoagent 0.25.15's wording); an empty
+/// partial keeps the bare old string. Still an error, so the timeout stays loud. Tests: tools_bash_timeout_tests.rs.
+pub(crate) fn timed_out_message(secs: u64, partial: &str) -> String {
+    if partial.is_empty() {
+        return format!("Command timed out after {secs}s");
+    }
+    format!("Command timed out after {secs}s. Output so far:\n{partial}")
+}
 
 /// Kills a command's process group (SIGKILL) on a timeout, a cancel, or the
 /// tool's future being dropped — unless the command finished first and the
