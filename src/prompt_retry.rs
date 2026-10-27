@@ -474,6 +474,7 @@ pub fn is_deterministic_tool_error(err: &str) -> bool {
     err.contains(REFUSAL_STEM_MODE_ACTIVE)
         || err.contains(REFUSAL_STEM_SESSION_CAP)
         || err.contains(REFUSAL_STEM_PATH_DENIED)
+        || err.contains(crate::partial_read_guard::REFUSAL_STEM_PARTIAL_READ)
         || crate::tool_wrappers::BASH_REFUSAL_STEMS
             .iter()
             .any(|s| err.contains(s))

@@ -582,7 +582,8 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // `is_deterministic_tool_error` (tests in src/bash_refusal_tests.rs).
     // Day 236 (#1062): +65 for `KeySource` and the pure `auth_failure_message`
     // the 401 branch now calls; its table tests live in src/prompt_retry_auth_tests.rs.
-    ("src/prompt_retry.rs", 2785),
+    // Day 241 (20:26): 2785 -> 2786 -- +1 for REFUSAL_STEM_PARTIAL_READ in is_deterministic_tool_error.
+    ("src/prompt_retry.rs", 2786),
     // Day 162 (#689): +14 lines — double Ctrl+C at the idle REPL prompt now
     // exits (consecutive-flag `ctrl_c_armed`, dim hint on first press).
     // Day 174: +91 absorbed since Day 166.
@@ -638,7 +639,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // no-text-block pass-through). Registered rather than split: the wrapper
     // belongs beside the two sub-agent decorators it sits outside of, and a
     // split would scatter one seam's three layers across two files.
-    ("src/tool_wrappers.rs", 5707), // Day 236 (#1068): 5696 -> 5707 -- +11 for BASH_REFUSAL_STEMS beside the REFUSAL_STEM_* consts (tests in src/bash_refusal_tests.rs). Day 235 (#1061): 5692 -> 5696 — +4 for the Cancelled short-circuit in RecoveryHintTool (tests in src/tool_wrappers_cancel_tests.rs). Day 231 (#1047): 5684 -> 5692 — +8 for the non-regular-file refusal call in GuardedTool/ArcGuardedTool (logic and tests in src/non_regular_read.rs). Day 231 (#879): 5622 -> 5684 — +52 earlier unregistered drift, +10 for the outside-read fence call in GuardedTool/ArcGuardedTool (logic and tests in src/outside_read.rs). Day 220 (#988 Q3): 5574 -> 5622 — +12 earlier unregistered drift, +36 for the cancel short-circuits in FallbackSubAgentTool/DiagnosticSubAgentTool and `sub_agent_cancelled_report`; tests live in src/tool_wrappers_cancel_tests.rs.
+    ("src/tool_wrappers.rs", 5713), // Day 241 (20:26): 5707 -> 5713 -- +6 for the partial-read overwrite guard call (gate + record) in GuardedTool/ArcGuardedTool (logic and tests in src/partial_read_guard.rs). Day 236 (#1068): 5696 -> 5707 -- +11 for BASH_REFUSAL_STEMS beside the REFUSAL_STEM_* consts (tests in src/bash_refusal_tests.rs). Day 235 (#1061): 5692 -> 5696 — +4 for the Cancelled short-circuit in RecoveryHintTool (tests in src/tool_wrappers_cancel_tests.rs). Day 231 (#1047): 5684 -> 5692 — +8 for the non-regular-file refusal call in GuardedTool/ArcGuardedTool (logic and tests in src/non_regular_read.rs). Day 231 (#879): 5622 -> 5684 — +52 earlier unregistered drift, +10 for the outside-read fence call in GuardedTool/ArcGuardedTool (logic and tests in src/outside_read.rs). Day 220 (#988 Q3): 5574 -> 5622 — +12 earlier unregistered drift, +36 for the cancel short-circuits in FallbackSubAgentTool/DiagnosticSubAgentTool and `sub_agent_cancelled_report`; tests live in src/tool_wrappers_cancel_tests.rs.
     // Day 162 (#709): raised 3245 -> 3264 to wrap the sub-agent tool list in
     // the mode guard, plus the comment stating what is enforced and what is not.
     // Day 163 (#714): raised 3264 -> 3290 — RenameSymbolTool now carries the

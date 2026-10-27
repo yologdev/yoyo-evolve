@@ -179,6 +179,20 @@ would be a refusal. `YOYO_ASK_OUTSIDE_READS=0` turns the fence off,
 reads are then refused). `bash` is not covered: it can still `cat` the
 same file. Details: [Permissions](../configuration/permissions.md).
 
+## Overwriting a file you have only partly read is refused
+
+`read_file` returns long files one page at a time (500 lines by default).
+If the model has only seen part of an existing file this session and then
+asks `write_file` to replace it whole, yoyo refuses, because the write
+would destroy the lines it never saw. The refusal names the file, its line
+count and the lines that were read, and gives the two ways forward: read
+the rest with `read_file` `offset`/`limit`, or change the file in place
+with `edit_file`. The check compares against the file as it is on disk at
+write time, so a file that grew after being read whole is refused too.
+New files, files the model wrote itself, and files read completely are
+written as before. Not covered yet (#1094): an existing file that was
+never read at all is still overwritten without a read.
+
 ## Keeping provider keys out of subprocesses
 
 yoyo removes every provider credential variable it knows

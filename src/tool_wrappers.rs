@@ -143,6 +143,8 @@ impl AgentTool for GuardedTool {
         if let Some(r) = crate::outside_read::check(self.inner.name(), path, &self.restrictions) {
             return Err(yoagent::types::ToolError::Failed(r));
         }
+        // Overwriting a file read only in part destroys unseen lines (src/partial_read_guard.rs).
+        let seen = crate::partial_read_guard::gate(self.inner.name(), path)?;
         // `search`/`list_files` take a ROOT: fence what they return too (#1022).
         // The root as the inner tool will see it (yoagent defaults to `.`), and
         // whether ANY fence source is live, for the fail-closed mode (#1023).
@@ -156,6 +158,7 @@ impl AgentTool for GuardedTool {
                 &crate::cd_config_note::cd_denied_dirs_handle(),
             );
         let result = self.inner.execute(params, ctx).await?;
+        crate::partial_read_guard::record(seen, &result);
         let refused =
             |p: &str| crate::cd_config_note::path_guard_refusal(&self.restrictions, p).is_some();
         Ok(crate::fence_result_filter::fence_tool_result(
@@ -251,6 +254,8 @@ impl AgentTool for ArcGuardedTool {
         if let Some(r) = crate::outside_read::check(self.inner.name(), path, &self.restrictions) {
             return Err(yoagent::types::ToolError::Failed(r));
         }
+        // Overwriting a file read only in part destroys unseen lines (src/partial_read_guard.rs).
+        let seen = crate::partial_read_guard::gate(self.inner.name(), path)?;
         // `search`/`list_files` take a ROOT: fence what they return too (#1022).
         // The root as the inner tool will see it (yoagent defaults to `.`), and
         // whether ANY fence source is live, for the fail-closed mode (#1023).
@@ -264,6 +269,7 @@ impl AgentTool for ArcGuardedTool {
                 &crate::cd_config_note::cd_denied_dirs_handle(),
             );
         let result = self.inner.execute(params, ctx).await?;
+        crate::partial_read_guard::record(seen, &result);
         let refused =
             |p: &str| crate::cd_config_note::path_guard_refusal(&self.restrictions, p).is_some();
         Ok(crate::fence_result_filter::fence_tool_result(

@@ -137,6 +137,7 @@ mod openai_preset_tests;
 #[cfg(test)]
 mod output_ceiling_tests;
 mod outside_read;
+mod partial_read_guard;
 #[cfg(test)]
 mod provider_presets_tests;
 mod spawn_worktree;
