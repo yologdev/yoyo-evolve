@@ -1166,6 +1166,8 @@ check "synthesize.yml: the spend step is told which steps were planned" \
     "$(grep -c 'synth_persist_spend "\$PLANNED"' "$SYN_WF")" "1"
 check "synthesize.yml: the spend row is recorded even when a step failed (always())" \
     "$(grep -A3 'name: Record spend on audit-log' "$SYN_WF" | grep -c "if: always() && steps.check.outputs.skip == 'false'")" "1"
+check "synthesize.yml: auto-watch is turned off before the first synthesis step" \
+    "$(awk '/name: Turn off auto-watch for synthesis/{t=NR} /name: Synthesize active learnings/{l=NR} END{print (t && l && t<l) ? "yes" : "no"}' "$SYN_WF")$(grep -c "sed -i 's/^auto_watch\[\[:space:\]\]\*=.\*/auto_watch = false/' .yoyo.toml" "$SYN_WF")" "yes1"
 check "synthesize.yml: the input-hash state is committed with the active files" \
     "$(grep -c 'dreams/active_dream_arc.md memory/.synthesize_inputs; do' "$SYN_WF")" "1"
 

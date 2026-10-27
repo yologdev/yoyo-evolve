@@ -1705,4 +1705,4 @@ It covers evolve sessions only.
 - wiring the learnings step to `sha_social` fails the end-to-end hash checks;
 - trusting exit 0 alone fails the wiring check.
 
-The end-to-end and persist tests were written by the test-coverage reviewer and adapted.
+The end-to-end and persist tests were written by the test-coverage reviewer and adapted. **First real row (2026-10-26, a manual run of all three steps):** learnings $0.70 (13 turns), social $0.37, dreams $0.67, so about $1.74 for a full run. The dream step took 449s because `.yoyo.toml`'s `auto_watch = true` ran `cargo clippy && cargo test` inside synthesis, and those tests wrote four `"test-model"` records into the row. yoyo fixed that test-side leak itself the same day (#1071, `0a8b7113`). A `Turn off auto-watch for synthesis` step now sets `auto_watch = false` in the job's checkout, which is never committed.

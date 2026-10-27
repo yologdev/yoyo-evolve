@@ -50,6 +50,20 @@ jobs:
           git config user.name "${{ steps.bot-info.outputs.login }}"
           git config user.email "${{ steps.bot-info.outputs.email }}"
 
+      - name: Turn off auto-watch for synthesis
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          # .yoyo.toml sets auto_watch = true for the evolve loop, so every turn
+          # that edits a file ran `cargo clippy && cargo test` inside synthesis
+          # (the dream step took 449s on 2026-10-26, against about 40s without).
+          # Synthesis writes only markdown, so the watch checks nothing it does.
+          # This edits this checkout only: the commit step stages the active
+          # files and memory/.synthesize_inputs by name, never .yoyo.toml.
+          if [ -f .yoyo.toml ]; then
+            sed -i 's/^auto_watch[[:space:]]*=.*/auto_watch = false/' .yoyo.toml
+          fi
+          grep -n '^auto_watch' .yoyo.toml || echo "auto_watch not set"
+
       - name: Backup active files
         if: steps.check.outputs.skip != 'true'
         run: |
