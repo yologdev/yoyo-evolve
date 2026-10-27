@@ -99,10 +99,10 @@ If the model allows more, set max_tokens and context_window in .yoyo.toml \
 
 /// Print [`unknown_model_limits_note`] on stderr, once per `(provider, model)`
 /// per process, for a resolved `config`. Not quiet-gated: stdout is untouched,
-/// so `-p` consumers parse the same bytes. `build_agent` calls this from the
-/// google and OpenAI-compatible arms; the anthropic and bedrock arms do not
-/// (open on #1021: bedrock's every id, anthropic's non-preset ids, run on a
-/// guess and are not told).
+/// so `-p` consumers parse the same bytes. `build_agent` calls this from every
+/// arm: anthropic, google, bedrock and OpenAI-compatible (anthropic and
+/// bedrock since Day 241, #1021; bedrock has no presets, so every bedrock id,
+/// its default included, is warned about until it gets real limits).
 pub(crate) fn warn_once_if_guessing(
     provider: &str,
     model: &str,
@@ -391,13 +391,9 @@ context_window in .yoyo.toml (or pass --max-tokens / --context-window).",
             "fixing a provider's default removes it from this list; a new provider here \
 means its default trips the guessed-limits warning (#1037)"
         );
-        // Residue, stated rather than implied: the anthropic and bedrock arms
-        // of `build_agent` do not call the note, so bedrock's row above is a
-        // guess its user is NOT told about (open on #1021).
-        for p in &tripping {
-            let wired = !["anthropic", "bedrock"].contains(p);
-            assert!(wired || *p == "bedrock", "{p}: unwired and tripping");
-        }
+        // Day 241 (#1021): every `build_agent` arm now calls the note, so
+        // bedrock's row above is a guess its user IS told about. Giving
+        // bedrock's default real limits (removing that row) is still open.
         for silent in ["openai", "anthropic", "google", "deepseek"] {
             assert!(!tripping.contains(&silent), "{silent}");
         }
@@ -444,8 +440,8 @@ means its default trips the guessed-limits warning (#1037)"
         let needle = ["model_limits_note::", "warn_once_if_guessing("].concat();
         assert_eq!(
             src.matches(&needle).count(),
-            2,
-            "google + openai-compat arms"
+            4,
+            "anthropic + google + bedrock + openai-compat arms (Day 241, #1021)"
         );
         for (at, _) in src.match_indices(&needle) {
             let window = &src[src[..at].rfind("let output_ceiling").unwrap()..at + 300];

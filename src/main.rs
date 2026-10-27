@@ -127,6 +127,8 @@ mod fence_result_filter;
 mod format;
 #[cfg(feature = "gasp")]
 mod gasp;
+#[cfg(test)]
+mod guessed_limits_arms_tests;
 mod image_cap;
 mod instruction_size;
 mod mcp_prefix;

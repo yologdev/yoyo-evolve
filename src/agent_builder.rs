@@ -1666,6 +1666,14 @@ impl AgentConfig {
             // comparing against it would warn on a correct 128000.
             let output_ceiling =
                 declared_output_ceiling(&self.provider, &self.model, model_config.max_tokens);
+            // #1021: an id with no preset runs on yoagent's generic guess.
+            crate::model_limits_note::warn_once_if_guessing(
+                &self.provider,
+                &self.model,
+                &model_config,
+                self.max_tokens,
+                self.context_window,
+            );
             let agent = Agent::from_provider(AnthropicProvider, model_config);
             self.configure_agent(agent, context_window, output_ceiling)
         } else if self.provider == "google" {
@@ -1690,6 +1698,14 @@ impl AgentConfig {
             let context_window = model_config.context_window;
             let output_ceiling =
                 declared_output_ceiling(&self.provider, &self.model, model_config.max_tokens);
+            // #1021: bedrock has no presets, so every id (default too) is a guess.
+            crate::model_limits_note::warn_once_if_guessing(
+                &self.provider,
+                &self.model,
+                &model_config,
+                self.max_tokens,
+                self.context_window,
+            );
             let agent = Agent::from_provider(BedrockProvider, model_config);
             self.configure_agent(agent, context_window, output_ceiling)
         } else {

@@ -151,9 +151,11 @@ context_window = 400000
 or pass `--max-tokens` / `--context-window`. Setting `max_tokens` is what silences it; setting only
 `context_window` keeps the warning about the output cap. `ollama` and `custom` endpoints use the same
 defaults but are not warned about, since you configure those servers yourself. `deepseek` has one
-preset for the whole provider, so it is not warned about. `anthropic` ids without a preset and every
-`bedrock` id also run on a guess (200,000 / `max_tokens = 16000`), but yoyo does not warn about
-those yet.
+preset for the whole provider, so it is not warned about. `anthropic` ids without a preset (for
+example `claude-made-up-9`) and every `bedrock` id run on a 200,000 / `max_tokens = 16000` guess,
+and yoyo warns about those too. Anthropic ids with a preset, such as the default `claude-opus-5-5`,
+are not warned about. `bedrock` has no presets yet, so even its default
+`anthropic.claude-sonnet-4-6` gets the warning; that is true, since it runs on the guess.
 
 ## Context window
 
