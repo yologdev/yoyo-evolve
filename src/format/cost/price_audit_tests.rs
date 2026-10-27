@@ -1751,11 +1751,11 @@ fn reconciled_gemini_3x_pro_rows_bill_googles_price() {
 
 /// #1012, Day 241: the xai rows docs.x.ai/docs/models lists (fetched 2026-10-27; the
 /// page's own `promptTextTokenPrice` / `cachedPromptTokenPrice` / `completionTextTokenPrice`
-/// fields, in units of $0.0001/MTok) where models.dev agrees. The one exception is
-/// `grok-4.6`: xAI bills it at 2.00/0.50/6.00 in us-east-1 and us-west-2 but
-/// 2.20/0.55/6.60 in us-central-1, and yoyo cannot see the cluster, so it bills the
-/// higher rate (cost-tracking.md's error direction) and stays a recorded divergence
-/// from models.dev in the audit, the way `gemini-3.6-flash` does.
+/// fields, in units of $0.0001/MTok) where models.dev agrees. These are the GLOBAL
+/// endpoint's rates (yoyo's xai default); grok-4.6 / grok-4.7 bill 10% more on
+/// `us.api.x.ai`, which `xai_region`'s tests pin. (Until Day 241 15:44 grok-4.6 was
+/// pinned at 2.20/0.55/6.60 here, on the false premise that the premium was a
+/// cluster yoyo could not see; docs.x.ai's regions page says it is the endpoint.)
 #[test]
 fn reconciled_xai_rows_bill_xais_price() {
     let rows: [(&str, Rates); 6] = [
@@ -1764,7 +1764,7 @@ fn reconciled_xai_rows_bill_xais_price() {
         ("grok-4.20-0309-non-reasoning", (1.25, 0.0, 0.2, 2.5)),
         ("grok-4.20-multi-agent-0309", (1.25, 0.0, 0.2, 2.5)),
         ("grok-4.5", (2.0, 0.0, 0.3, 6.0)),
-        ("grok-4.6", (2.2, 0.0, 0.55, 6.6)),
+        ("grok-4.6", (2.0, 0.0, 0.5, 6.0)),
     ];
     for (id, expected) in rows {
         let got = price_of(id).unwrap_or_else(|| panic!("{id} must be priced by /cost"));
@@ -1775,7 +1775,7 @@ fn reconciled_xai_rows_bill_xais_price() {
     }
     // Near-misses: the arms are exact, so ids this slice did not reconcile (xAI's
     // aliases, which models.dev does not list) keep the old `grok-4` estimate, and
-    // grok-4-mini keeps its own. (grok-4.7 is priced by yoagent's preset, not here.)
+    // grok-4-mini keeps its own. (grok-4.7 is priced by yoagent's preset; see `xai_region`.)
     for id in [
         "grok-4",
         "grok-4.3-latest",
@@ -1810,7 +1810,7 @@ fn reconciled_xai_rows_bill_the_long_context_tier_above_200k() {
         ("grok-4.20-0309-non-reasoning", 2.5, 0.4, 5.0),
         ("grok-4.20-multi-agent-0309", 2.5, 0.4, 5.0),
         ("grok-4.5", 4.0, 0.6, 12.0),
-        ("grok-4.6", 4.4, 1.1, 13.2),
+        ("grok-4.6", 4.0, 1.0, 12.0),
     ];
     for (id, ti, tcr, to) in tiers {
         let expected = (200_000.0 * ti + 50_000.0 * tcr + 3_000.0 * to) / 1_000_000.0;

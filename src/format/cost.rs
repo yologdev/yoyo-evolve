@@ -2,6 +2,10 @@
 
 use crate::config::ModelPricingOverrides;
 
+// #1012: xAI's US-endpoint premium, decided by the endpoint yoyo calls.
+mod xai_region;
+pub use xai_region::{is_xai_us_endpoint, set_xai_us_region};
+
 /// User-supplied per-model prices, set once from the loaded config file.
 ///
 /// Written exactly once, by `cli::parse_args`, before any agent is built.
@@ -52,7 +56,7 @@ pub fn model_pricing_with(
     if let Some(price) = overrides.lookup(model) {
         return Some((price.input_per_million, 0.0, 0.0, price.output_per_million));
     }
-    builtin_model_pricing(model)
+    builtin_model_pricing(model).map(|row| xai_region::region_row(model, row))
 }
 
 /// The local price table, consulted only when neither a user override nor a
@@ -307,14 +311,14 @@ fn builtin_model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
     // ── xAI (Grok) ───────────────────────────────────────────────────
     // https://docs.x.ai/docs/models#models-and-pricing
     // #1012: exact xai rows = docs.x.ai + models.dev (2026-10-27); >200K prompts bill
-    // double via `yoyo_side_tier_cost`. grok-4.6 bills us-central-1's rate, the higher.
+    // double via `yoyo_side_tier_cost`. grok-4.6/4.7: +10% on us.api.x.ai (`xai_region`).
     match model {
         "grok-4.3"
         | "grok-4.20-0309-reasoning"
         | "grok-4.20-0309-non-reasoning"
         | "grok-4.20-multi-agent-0309" => return Some((1.25, 0.0, 0.20, 2.50)),
         "grok-4.5" => return Some((2.00, 0.0, 0.30, 6.00)),
-        "grok-4.6" => return Some((2.20, 0.0, 0.55, 6.60)),
+        "grok-4.6" => return Some((2.00, 0.0, 0.50, 6.00)),
         _ => {}
     }
     if model.contains("grok-4") {
@@ -447,7 +451,8 @@ pub fn estimate_request_cost_with(
         .or_else(|| crate::agent_builder::vendor_preset_by_id(stripped))
         .and_then(|preset| preset.cost)
         .filter(|cost| !cost.context_tiers.is_empty())
-        .or_else(|| yoyo_side_tier_cost(stripped));
+        .or_else(|| yoyo_side_tier_cost(stripped))
+        .map(|cost| xai_region::region_cost(model, cost));
     let Some(cost) = tiers else {
         return Some((base, false));
     };
@@ -479,7 +484,7 @@ fn yoyo_side_tier_cost(model: &str) -> Option<yoagent::provider::CostConfig> {
         | "grok-4.20-0309-non-reasoning"
         | "grok-4.20-multi-agent-0309" => ((1.25, 0.20, 2.50), (2.50, 0.40, 5.00)),
         "grok-4.5" => ((2.00, 0.30, 6.00), (4.00, 0.60, 12.00)),
-        "grok-4.6" => ((2.20, 0.55, 6.60), (4.40, 1.10, 13.20)),
+        "grok-4.6" => ((2.00, 0.50, 6.00), (4.00, 1.00, 12.00)),
         _ => return None,
     };
     Some(
