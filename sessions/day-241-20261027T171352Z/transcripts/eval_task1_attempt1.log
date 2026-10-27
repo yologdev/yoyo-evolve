@@ -1,0 +1,27 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls target/debug/yoyo && B=$PWD/t… ✓ (10.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p ses… (8 lines) ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 25.6s (2 ✓)
+
+Verdict: PASS, written to session_plan/eval_task_1.md.
+
+The diff does what the task asked: /grep now treats each path after the pattern as its own path instead of joining them into one. I ran the existing target/debug/yoyo binary in fresh tempdirs. I didn't rebuild it, so it's whatever the harness built.
+
+| Input | Non-git dir | git init dir |
+|---|---|---|
+| yoyo grep hello a b | a:1: hello and b:1: hello, exit 0 | same, exit 0 |
+| yoyo grep hello "a b" (one file whose name has a space) | a b:1: hello, exit 0 | not run on the binary |
+| yoyo grep hello a nope | a's match, then grep could not search a, nope (exit status 2), exit 2 | not run on the binary |
+
+• Code: every place that read the old single path was updated, including the count and context variants and the existing status tests. Nothing new is left unused.
+• Tests: the new test file covers each row of the task's table in both a non-git and a git init tempdir. The git-dir cells left empty above are covered only by these tests.
+• Size limit: cargo test --test module_size passes.
+• Docs: the /grep path bullet in docs/src/usage/commands.md now describes several paths, a quoted path containing a space, and what each mode does when one path is missing.
+
+One thing I didn't check: whether src/dispatch_sub.rs passes each shell argument to /grep whole or joins and re-splits them. The quoted-path result from the shell above suggests the "a b" case works there too.
+  watch: no files changed this turn — skipping

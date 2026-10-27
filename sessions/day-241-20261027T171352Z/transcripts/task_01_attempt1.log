@@ -1,0 +1,75 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git log --oneline -3; grep… ✓ (22ms)
+  ▶ $ sed -n 1225,1560p src/commands_search.rs  ▶ $ sed -n 1560,1860p src/commands_search.rs; sed -n 2140,2235p src/commands_search.…  ▶ $ sed -n 550,580p src/dispatch_sub.rs; cat src/commands_search_grep_h_tests.rs | h… ✓ (8ms)
+ ✓ (11ms)
+ ✓ (19ms)
+  ▶ $ sed -n 1340,1405p src/commands_search.rs; grep -n "fn grep_output_parts\|fn grep… ✓ (14ms)
+  ▶ $ grep -rn "grep_output_parts\|fn grep_failure_message" src | head; grep -rn "args… ✓ (14ms)
+  ▶ $ sed -n 1,110p src/grep_status.rs; grep -n "args.path\|\.path, \"\|assert_eq!(arg… ✓ (7ms)
+  ▶ $ grep -n "commands_search" tests/module_size.rs; sed -n 330,360p tests/module_siz… ✓ (7ms)
+  ▶ $ sed -n 85,100p tests/module_size.rs; grep -n "REGISTER_DRIFT_GRACE_LINES:" tests… ✓ (4ms)
+  ▶ $ grep -n "fn quote_args_as_command" -A25 src/*.rs | head -40; grep -n "fn tokeniz… ✓ (13ms)
+  ▶ write src/commands_search_grep_paths_tests.rs (166 lines) ✓ (1m 41s)
+  ▶ $ cd $(mktemp -d) && printf 'hello\n' > a && printf 'hello\n' > b && git init -q &… ✓ (11ms)
+  ▶ $ cat >> src/commands_search_grep_paths_tests.rs <<'EOF' (56 lines) ✓ (10.3s)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; cargo test --no-run 2>&1 | grep -… ✓ (17.2s)
+  ▶ $ pwd; cargo test --no-run 2>&1 | grep -E "^(error|warning)" -A6 | head -60 ✓ (17.3s)
+  ▶ $ cargo test --no-run 2>&1 | tail -40 ✓ (17.1s)
+  ▶ $ cargo test --no-run 2>&1 | grep -A1 "^error\[" | grep -- "-->" | sort -u ✓ (17.0s)
+  ▶ $ cargo test --no-run 2>&1 | grep -- "--> src" | sort -u ✓ (17.1s)
+  ▶ $ cargo test --no-run 2>&1 | grep -E "\-\-> " | sort -u ✓ (17.2s)
+  ▶ $ cargo test --no-run 2>&1 | grep -E "\-\-> " | sort -u > /tmp/errs.txt; wc -l /tm… ✓ (17.0s)
+  ▶ $ python3 - <<'EOF' (16 lines) ✓ (32.8s)
+  ▶ $ cargo fmt && cargo test grep 2>&1 | grep -E "test result|FAILED|panicked|failed"… ✓ (32.3s)
+  ▶ $ cp src/commands_search.rs /tmp/cs.bak && python3 - <<'EOF' (6 lines) ✓ (32.5s)
+  ▶ $ cargo build 2>&1 | tail -1; cargo clippy --all-targets -- -D warnings 2>&1 | tai… ✗ (2m 0s)
+    │ Command timed out after 120s. Output so far:
+  ▶ $ cargo test 2>&1 | grep -E "test result|FAILED|panicked" | grep -v "ok\. " | head ✓ (1m 39s)
+  ▶ $ cargo test --test git_chokepoint 2>&1 | grep -A15 panicked | head -30; grep -rln… ✓ (239ms)
+  ▶ $ grep -n "pub(crate) fn run_git_in_dir\|pub fn run_git_in_dir\|pub(crate) fn run_… ✓ (3ms)
+  ▶ $ python3 - <<'EOF' (13 lines) ✓ (32.6s)
+
+────────────────────────────────────────────────────────────────────────────────
+  28 tools completed in 11m 23s (27 ✓, 1 ✗)
+
+Now the full suite, then the real binary checks.
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo clippy --all-targets -- -D warnings 2>&1 | tail -1; cargo test 2>&1 | grep… ✓ (3m 55s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ Y=$PWD/target/debug/yoyo; d=$(mktemp -d); cd $d; printf 'hel… (9 lines) ✓ (48ms)
+  ▶ $ grep -n "grep" docs/src/usage/commands.md | head -20; grep -n "<pattern> \[path\… ✓ (18ms)
+  ▶ $ python3 - <<'EOF' (8 lines) ✓ (25ms)
+  ▶ $ cargo fmt -- --check && git add -A && git commit -q -F - <<'… (48 lines) ✓ (1.7s)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 4m 29s (5 ✓)
+
+yoyo grep hello a b now searches both a and b, the way grep -rnH and git grep -- a b do. Before, it tried to open a single file named a b, printed "grep could not search a b" and exited 2. Committed as 9b1c408a, and the commit title says "Fixes #1091", so the issue will close when it's pushed.
+
+The fix: the parser used to glue every word after the pattern into one path. It now keeps each one as its own path. Plain grep gets each as a separate argument, and git grep gets each as a separate path after --. The normal, count (-c) and context (-A/-B/-C) modes are all updated. When there's only one path, output and error messages are exactly the same as before. With several, the error lists them separately (a, nope) instead of gluing them back together.
+
+Checked on the real binary, once in a plain directory and once in a git init directory with the files added:
+
+| Input | Result | Exit |
+|---|---|---|
+| a b | a:1: hello and b:1: hello | 0 |
+| "a b" (quoted, a file with a space in its name) | searched as one path: a b:1: hello | 0 |
+| a | same as before | 0 |
+| a nope, plain directory | the match in a is shown, then grep's error for nope | 2 |
+| a nope, git directory | git refuses the whole search ("no such path in the working tree") and prints no matches | 2 |
+
+The last row is git grep's own rule for a path it doesn't know about. I kept it rather than working around it.
+
+Tests: 8 new tests in src/commands_search_grep_paths_tests.rs, all run in temporary directories, covering both the plain-grep and git-grep paths. To check they test the fix, I temporarily put the old joining back: 4 of the 8 failed, and they passed again once restored. Existing tests were updated from path to paths with the same values; none were removed. Build, clippy, fmt and the full cargo test all pass.
+
+Size and docs: commands_search.rs grew by 5 lines and is now at 4591, against a recorded limit of 4573. It was already 13 lines over before this change. That's still inside the gate's 100-line allowance, so the module-size test only warns; I didn't raise the recorded limit. The /grep section of docs/src/usage/commands.md now describes multiple paths, quoted paths with spaces, and what happens when one path is missing.
+
+Not done: the usage and help text in four places (src/commands_search.rs, src/help.rs, src/help_data.rs, src/commands.rs) still shows <pattern> [path] with no hint that several paths work. I left them because tests may check those exact strings, and nothing now tracks this.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 0/1 changed files were in top-10 predictions (0.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/1 (0.0%) — reactive was 0.0%
+     Surprises (not predicted): src/commands_search_grep_paths_tests.rs
