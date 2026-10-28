@@ -1,0 +1,22 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "process::exit\|connect_… ✓ (13.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p ses… (9 lines) ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 28.3s (2 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_1.md.
+
+• What the fix does: yoyo now shuts down every connected MCP server when it exits. The new close_live_mcp_servers function waits at most 2 seconds for all of them together, and calling it a second time does nothing.
+• Where it runs:
+  • The 13 process::exit sites in main.rs that come after the servers connect now go through exit_after_shutdown.
+  • The three normal returns (-p, piped input, and the REPL) call it directly.
+  • So does the SIGTERM/SIGHUP/SIGQUIT handler.
+• Exits that don't need it: only two process::exit calls remain in main.rs (lines 1271 and 1284). Both come before connect_external_servers at line 1440, so no server can be running there.
+• Tests: I ran cargo test --test mcp_process_group and all 3 tests passed. That covers the old process-group test and the two new ones, which use a server that keeps running after its stdin closes: one lets yoyo -p exit normally, the other sends it SIGTERM mid-turn. Unit tests also check that a second call closes nothing, and that a server whose close hangs is cut off by the time limit without blocking the others.
+• Missing pieces and docs: every new definition is used in this diff, and the one caller of restore_session was updated now that the function is async. common-issues.md and the Day-242 note in ARCHITECTURE.md both describe the new exit behaviour and what it still misses.
+• Not covered by tests: the REPL /quit exit has no automated test because it needs a terminal. The commit notes say it was checked by hand, which I didn't repeat. A panic or SIGKILL of yoyo, or a server still stuck in a call after 2 seconds, still leaves the server running.
+  watch: no files changed this turn — skipping

@@ -1,0 +1,25 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "fn refused_context_file_l… ✓ (28ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; mkdir -p sessi… (8 lines) ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 16.1s (2 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_2.md; all four checked lines are PASS.
+
+The diff does both parts of #1045:
+
+• `/doctor` project-context row: files the directory fence refuses are now listed as refused instead of disappearing. It reuses the existing formatter from /context (refused_context_file_line), which cleans the reason text before display. When every file is refused, the row warns and names them instead of telling you to "create YOYO.md or run /init".
+• Shell `yoyo doctor`: it now builds the same fence a real session would, through cli::startup_dir_restrictions. That function was pulled out of parse_permission_and_dir_config, so both places use one construction and nothing re-parses the toml. Before, shell doctor passed an empty fence.
+
+What I ran: the real binary, yoyo doctor, in a temp project with CLAUDE.md and a .yoyo.toml [directories] deny covering it. It printed ⚠ Project context: CLAUDE.md (refused by the directory fence: Access denied: …).
+
+Other checks:
+• Missing pieces: none. The new function is used in both places, the new helper is called from run_doctor_checks, the new test file is registered in main.rs, and no enum variants were added.
+• Tests: they cover all the rows the task asked for. The nothing-refused case is checked against the full string. The integration test covers the config deny, the --deny-dir flag and a control case with no fence.
+• Docs: permissions.md and the commands_dev.rs entry in ARCHITECTURE.md were both updated. The latter notes that --restricted and the lists /cd adds don't apply in shell doctor.
+• Product surface: this only changes what doctor prints. The fence can only narrow, and no defaults or flags changed.
+  watch: no files changed this turn — skipping

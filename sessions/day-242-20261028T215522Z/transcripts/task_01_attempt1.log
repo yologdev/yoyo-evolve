@@ -1,0 +1,164 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git log --oneli… ✓ (10ms)
+  ▶ $ sed -n 160,420p src/mcp_prefix.rs; cat tests/mcp_process_group.rs  ▶ $ sed -n 170,200p ~/.cargo/registry/src/*/yoagent-0.25.16/src/mcp/client.rs; grep … ✓ (8ms)
+ ✓ (7ms)
+  ▶ $ sed -n 425,680p src/main.rs  ▶ $ sed -n 680,1000p src/main.rs  ▶ $ sed -n 1420,1545p src/main.rs ✓ (6ms)
+ ✓ (6ms)
+ ✓ (10ms)
+  ▶ $ sed -n 805,880p src/main.rs; grep -rn "process::exit" src/repl.rs src/commands*.… ✓ (9ms)
+  ▶ $ grep -rn "process::exit" src --include=*.rs | grep -v "^src/main.rs" | grep -v t… ✓ (12ms)
+  ▶ $ sed -n 100,160p src/prompt/sigterm.rs; grep -n "process::exit\|fn \|abort" src/p… ✓ (7ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.25.16/src/mcp/; grep -n "async fn close" -A… ✓ (4ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.25.16/src/mcp/; grep -n "fn close(&self)" -… ✓ (4ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.25.16/src/mcp/; grep -n "kill_on_drop\|impl… ✓ (6ms)
+  ▶ $ cd /tmp && mkdir -p nv && cd nv && cat > a.rs <<'E' (5 lines) ✓ (72ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "mod mcp_prefix\|mod promp… ✓ (8ms)
+  ▶ $ grep -n "restore_session(" src/*.rs | grep -v "^src/main.rs.*fn restore_session_… ✓ (11ms)
+  ▶ $ sed -n 350,372p src/mcp_prefix.rs; grep -n "#\[cfg(test)\]\|^mod tests\|^#\[path… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  16 tools completed in 1m 46s (16 ✓)
+
+Now the helper.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/mcp_prefix.rs (1 → 62 lines)
+  + /// The most time exit spends closing live MCP servers, all of them
+  + /// together (#1099).
+  + ///
+  + /// Who waits: the user at their shell prompt after `/quit` or a `yoyo -p`
+  + /// answer (already printed), a script waiting for yoyo's exit code, or a
+  + /// supervisor that sent SIGTERM. A healthy server is closed in
+  + /// milliseconds (a group SIGKILL plus a reap), so the bound only binds
+  + /// when a server's client is locked by a call that never returned. 2s is
+  + /// short enough that the hung case costs a user a noticeable but not
+  + /// confusing pause, and it keeps the SIGTERM path (5s flush grace in
+  + /// `prompt/sigterm.rs` plus this) under the 10s a `docker stop` or
+  + /// Kubernetes gives before SIGKILL, so the close is not itself cut off.
+  + /// A server still locked when it runs out is left running: that is the
+  + /// residue, stated, not a hang.
+  + pub(crate) const MCP_CLOSE_BOUND: std::time::Duration = std::time::Duration::from_secs(2);
+  + 
+  + /// Drain `store` and close every server in it concurrently, waiting at most
+  + /// `bound` in total. Returns how many were drained. Draining is what makes a
+  + /// second call a no-op: two exit doors that both run this cannot close a
+  + /// server twice or wait twice. The std lock is released before any await.
+  ... (42 more lines)
+  ▶ $ sed -n 500,530p src/mcp_prefix.rs; grep -n "fn take_mcp_exited_note_with\|#\[tok… ✓ (30.6s)
+  + /// The most time exit spends closing live MCP servers, all of them
+  + /// together (#1099).
+  + ///
+  + /// Who waits: the user at their shell prompt after `/quit` or a `yoyo -p`
+  + /// answer (already printed), a script waiting for yoyo's exit code, or a
+  + /// supervisor that sent SIGTERM. A healthy server is closed in
+  + /// milliseconds (a group SIGKILL plus a reap), so the bound only binds
+  + /// when a server's client is locked by a call that never returned. 2s is
+  ... (13 more lines)
+ ✓ (30.6s)
+  2 tools completed in 42.1s (2 ✓)
+
+Now main.rs wiring. Add the helper and replace the post-connect exit sites.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 - <<'E' (22 lines) ✓ (26ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ sed -n 1255,1275p src/main.rs ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 12.7s (2 ✓)
+
+Pre-connect, as expected. Now the rest of main.rs.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 - <<'E' (42 lines) ✓ (22ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ grep -n "Calls \`std::process::exit\`\|^/// \`std::process::exit\`" src/main.rs;… ✓ (6ms)
+  ▶ $ sed -i '443s/`std::process::exit`/`exit_after_shutdown`/; 680s/`std::process::ex… ✓ (7ms)
+  ▶ edit src/prompt/sigterm.rs (2 → 5 lines)
+            let _ = std::io::stdout().flush();
+  +         // #1099: MCP servers sit in their own process group, so this
+  +         // signal never reached them; close them (bounded) on the way out.
+  +         crate::mcp_prefix::close_live_mcp_servers(crate::mcp_prefix::MCP_CLOSE_BOUND).await;
+            std::process::exit(terminated_exit_code().unwrap_or(exit_code));
+  ▶ $ cargo build 2>&1 | grep -E "^(error|warning)" -A8 | head -40 ✓ (4m 44s)
+            let _ = std::io::stdout().flush();
+  +         // #1099: MCP servers sit in their own process group, so this
+  +         // signal never reached them; close them (bounded) on the way out.
+  +         crate::mcp_prefix::close_live_mcp_servers(crate::mcp_prefix::MCP_CLOSE_BOUND).await;
+            std::process::exit(terminated_exit_code().unwrap_or(exit_code));
+ ✗ (4m 44s)
+    │ Command timed out after 120s
+  ▶ $ cargo build 2>&1 | grep -E "^(error|warning)" -A8 | head -40 ✓ (157ms)
+  ▶ $ sed -n 660,700p src/mcp_prefix.rs; grep -n "CAP\|const .*: usize" tests/module_s… ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 5m 28s (6 ✓, 1 ✗)
+
+Plenty of headroom. Add unit tests at the end of the tests module.
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ tail -5 src/mcp_prefix.rs ✓ (75ms)
+  ▶ $ python3 - <<'E' (56 lines) ✓ (22ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ sed -n 1,75p tests/mcp_process_group.rs; sed -n 165,170p tests/mcp_process_group… ✓ (5ms)
+  ▶ $ sed -n 75,100p tests/mcp_process_group.rs; sed -n 150,160p tests/mcp_process_gro… ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 30.5s (4 ✓)
+
+Refactor the spawn into a shared helper and add the new test.
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 - <<'E' (22 lines) ✓ (22ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cat >> tests/mcp_process_group.rs <<'E' (73 lines) ✓ (1m 27s)
+  ▶ $ grep -n "retries\|YOYO_MAX_RETR\|retry" src/cli_config.rs src/cli.rs | grep -i "… ✓ (4ms)
+  ▶ $ grep -rn "max_retries\|MAX_RETRIES" src/*.rs | grep -v "^src/.*tests" | head ✓ (15ms)
+  ▶ $ grep -n "closed_port\|base_url" tests/mcp_process_group.rs | head; ls tests | gr… ✓ (7ms)
+  ▶ $ python3 - <<'E' (41 lines) ✓ (2.3s)
+  ▶ $ grep -n "pub(crate) async fn close_live_mcp_servers" src/mcp_prefix.rs ✓ (10ms)
+  ▶ $ cp src/mcp_prefix.rs /tmp/mcp_prefix.rs.bak && sed -i '417a\    return 0; // NEU… ✓ (15.7s)
+  ▶ $ cat >> tests/mcp_process_group.rs <<'E' (80 lines) ✓ (15.0s)
+  ▶ $ cp src/mcp_prefix.rs /tmp/mcp_prefix.rs.bak && sed -i '417a\    return 0; // NEU… ✓ (16.5s)
+  ▶ $ which script; cd /tmp && rm -rf replchk && mkdir -p replchk/… (7 lines) ✓ (9.0s)
+  ▶ $ kill -9 21311; cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "bye 👋\|\"… ✓ (19ms)
+  ▶ $ sed -n 1490,1540p src/repl.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -1; cd /… ✓ (21.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "mcp_prefix.rs\|#1098" ARC… ✓ (5ms)
+  ▶ $ gh issue view 1099 --json title,body,comments --jq '.title, .body, (.comments[]|… ✓ (465ms)
+  ▶ $ grep -rn "process group\|stdin EOF\|ignores stdin" docs/src README.md | head; gr… ✓ (6ms)
+  ▶ $ python3 - <<'E' (12 lines) ✓ (25.1s)
+  ▶ $ timeout 1200 cargo test 2>&1 | grep -E "^test result|FAILED|panicked" | sort | u… ✓ (4m 8s)
+  ▶ $ timeout 1200 cargo test 2>&1 | grep -E "^test result" | grep -v " 0 failed" ; ec… ✓ (3m 30s)
+  ▶ $ gh issue create --title "MCP servers outlive a panicking yoy… (6 lines) ✓ (1.4s)
+  ▶ $ git add -A && git commit -q -F - <<'E' && git log --oneline … (39 lines) ✓ (57ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  22 tools completed in 13m 8s (22 ✓)
+
+Fixed and committed as 67c669b3: yoyo now shuts down every connected stdio MCP server when it exits, including servers that ignore a closed stdin. Build, the full cargo test, clippy -D warnings and fmt --check all pass.
+
+What changed
+• `src/mcp_prefix.rs`: a new close_live_mcp_servers(MCP_CLOSE_BOUND) empties the list of live servers and closes each one by killing its process group. All servers close at once, and the whole step is capped at 2 seconds. Calling it a second time does nothing. The doc comment explains the 2s for users: a healthy server closes in milliseconds, so the cap only matters for a server stuck in a call. On SIGTERM, the existing 5s flush plus these 2s stays under the 10s docker stop waits before it sends SIGKILL.
+• `src/main.rs`: a new exit_after_shutdown(code) helper closes the servers and then exits.
+  • It replaces all 13 process::exit calls that can run after servers have connected: 6 in single-prompt (-p) mode, 5 in piped mode, the -p slash-command refusal, and the --continue-strict failure.
+  • For that last one, restore_session had to become async.
+  • The 3 normal returns (-p, piped, REPL) call the close directly.
+• `src/prompt/sigterm.rs`: the SIGTERM/SIGHUP/SIGQUIT exit also closes servers first.
+• Left alone on purpose: 2 exits in main that run before servers connect, plus the early exits in cli.rs, dispatch_sub.rs and config_syntax.rs. No server can be running at those points.
+
+Tests
+• Two unit tests: the list is emptied once, and a server that never finishes closing costs at most the cap without holding up the others.
+• Two tests against the real binary, using a python3 stub server that ignores stdin closing:
+  • a normal -p exit, with a fake provider that answers 401 so the run fails at once instead of sitting through retries;
+  • a SIGTERM in the middle of a turn, which is the case measured on the ticket.
+• The existing test's spawn code moved into one shared helper so all three tests use the same environment cleanup. It still passes.
+• Positive control: I made the close helper return immediately. Both real-binary tests failed by name, because the server started by the real connect outlived yoyo. After restoring it, they passed again.
+• REPL `/quit` has no automated test because it needs a terminal. I checked it by hand with script(1), and both stub processes were gone after /quit. My first attempt showed them still alive, but that run was using the stale binary from the positive control; after rebuilding, they were gone.
+
+Not covered: a panic in yoyo, or a server still stuck in a call when the 2s run out, still leaves the server running. I filed that as #1100 before pushing, so "Fixes #1099" is accurate. A SIGKILL of yoyo itself can't be handled. I also updated docs/src/troubleshooting/common-issues.md, which had said such servers outlive yoyo, and added a Day-242 note in ARCHITECTURE.md marking the old "close is skipped" sentence as superseded.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 0/2 changed files were in top-10 predictions (0.0% accuracy)
+     Surprises (not predicted): src/mcp_prefix.rs, src/prompt/sigterm.rs
