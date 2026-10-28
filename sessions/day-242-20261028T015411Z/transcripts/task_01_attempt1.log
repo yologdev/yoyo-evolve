@@ -1,0 +1,77 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; cat src/partial… ✓ (21ms)
+  ▶ $ sed -n 130,180p src/tool_wrappers.rs; sed -n 255,365p src/tool_wrappers.rs; grep…  ▶ $ grep -n "read_file\|with_truncation\|maybe_guard" src/tools.rs | sed -n 1,40p; c… ✓ (8ms)
+ ✓ (10ms)
+  ▶ $ gh issue view 1094 --json body,comments -q '.body, (.comments[]|.body)' | head -… ✓ (392ms)
+  ▶ $ sed -n 60,127p tests/module_size.rs; sed -n 320,352p src/tool_wrappers.rs; grep … ✓ (21ms)
+  ▶ $ grep -n "pub struct ToolResult" -B3 -A6 ~/.cargo/registry/src/*/yoagent-0.25.15/… ✓ (5ms)
+  ▶ $ grep -rn "fn truncate_result" -A25 src/ | head -35 ✓ (10ms)
+  ▶ $ sed -n 1,60p src/tool_truncate.rs ✓ (3ms)
+  ▶ $ grep -n "pub(crate) fn check\b\|pub fn check\b" -A30 src/outside_read.rs | head … ✓ (4ms)
+  ▶ $ grep -n "fn is_enabled" -A12 src/outside_read.rs; grep -rn "pub struct Directory… ✓ (10ms)
+  ▶ $ cat >> src/partial_read_guard_tests.rs <<'EOF' (85 lines) ✓ (14.7s)
+  ▶ $ sed -i 's/other => panic!("whole-file write after a truncated read was admitted:… ✓ (25.3s)
+  ▶ $ python3 - <<'EOF' (92 lines) ✓ (24ms)
+  ▶ $ python3 - <<'EOF' (8 lines) ✓ (25.4s)
+  ▶ $ cat >> src/partial_read_guard_tests.rs <<'EOF' (27 lines) ✓ (25.2s)
+
+────────────────────────────────────────────────────────────────────────────────
+  15 tools completed in 3m 21s (15 ✓)
+
+Now the positive control, as one atomic mutate→test→restore:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cp src/partial_read_guard.rs /tmp/prg.bak && sed -i 's|^    retract_cut_with(glo… ✓ (50.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ sed -n 1,45p src/partial_read_guard.rs; wc -l src/tool_wrappers.rs src/partial_r… ✓ (6ms)
+  ▶ $ sed -n 25,45p src/partial_read_guard.rs; sed -n 1396,1410p ARCHITECTURE.md ✓ (5ms)
+  ▶ $ sed -n 25,43p src/partial_read_guard.rs | cat -A | cut -c1-200 | grep -n "" | he… ✓ (4ms)
+  ▶ $ python3 - <<'EOF' (41 lines) ✓ (26.0s)
+  ▶ $ sed -i 's|("src/tool_wrappers.rs", 5722), // Day 242 (01:00): 5713 -> 5722 -- +9… ✗ (2m 0s)
+    │ Command timed out after 120s. Output so far:
+  ▶ $ python3 - <<'EOF' (18 lines) ✓ (1.3s)
+  ▶ $ sed -i 's|("src/tool_wrappers.rs", 5727), // Day 242 (01:00): 5713 -> 5727 -- +1… ✓ (18.0s)
+  ▶ $ sleep 280; tail -3 /tmp/test.log ✓ (4m 40s)
+  ▶ $ grep -E "test result" /tmp/test.log | grep -v " 0 failed" ; grep -c "test result… ✓ (1.3s)
+  ▶ $ grep -rln "partial read\|partly read\|Refusing to overwrite"… (25 lines) ✓ (47ms)
+  ▶ $ grep -n -i "partial\|partly\|overwrite\|truncat" docs/src/troubleshooting/safety… ✓ (3ms)
+  ▶ $ sed -n 182,215p docs/src/troubleshooting/safety.md ✓ (2ms)
+  ▶ $ python3 - <<'EOF' (16 lines) ✓ (929ms)
+  ▶ $ grep -rln "safety.md" src tests | head;  ✓ (10ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  15 tools completed in 9m 29s (14 ✓, 1 ✗)
+
+I fixed item 2 of #1094: a read_file page that output truncation cut in the middle no longer counts as having been read when the model then tries write_file on the whole file. Build, the full cargo test, clippy with -D warnings and fmt all pass. The code is in commit 813a7289, a docs commit 2c22090c follows, and I commented on #1094.
+
+The bug was real. I wrote the test before touching anything. A file of 200 lines × 300 chars, read through the same wrapper stack the main agent uses (with_truncation(maybe_guard(ReadFileTool))), reached the model with its middle cut out (row 120 missing). The guard still let a whole-file write through, because it records coverage from yoagent's uncut header before truncation runs.
+
+The fix:
+• Where the check runs: for read_file only, TruncatingTool keeps the result from before truncation and calls a new partial_read_guard::retract_cut. If the lines the model receives differ from what read_file returned, the page it just recorded is taken back out.
+• What it catches: it compares the text itself, not which cut happened, so the head/tail cut, the hard byte cut and compression all count.
+• What I didn't do: I didn't record the kept head and tail as partial coverage. It would take more lines, and there's no line span to work out when the change came from compression.
+• Earlier reads stay: ranges are now stored unmerged, so only that one page is removed and anything read before it still counts.
+• The model can recover: the refusal now says a truncated page doesn't count and to re-read with a smaller limit, so it can't get stuck on a refusal it has no way to satisfy.
+• I didn't reorder any wrappers in tools.rs. Sub-agents' read_file has no truncation, so it behaves as before.
+
+Tests: I added five rows to src/partial_read_guard_tests.rs:
+• a cut page is refused;
+• a page under the 30k-char limit is admitted exactly as before;
+• a cut page followed by 50-line pages is admitted;
+• the refusal names the path, offset/limit and a smaller limit;
+• a cut takes back only its own page.
+
+As a check that the tests can fail, I disabled retract_cut and re-ran them in one step: exactly the three cut-page tests went red, and after restoring it all 22 passed with no NEUTERED marker left.
+
+Other files changed:
+• Existing test: one test had the full refusal text written out exactly, so I updated it to the new text.
+• Size register: tests/module_size.rs records src/tool_wrappers.rs at 5713 → 5724 lines (+11).
+• Docs: ARCHITECTURE.md marks item 2 fixed and keeps the old "open" claim on record as superseded. docs/src/troubleshooting/safety.md says a truncated page doesn't count as read.
+
+The docs commit went in after the full test run, and I checked that no test reads safety.md.
+
+Items 1, 3 and 4 of #1094 are still open: an existing file that was never read can still be overwritten, the store is shared across the whole process (a sub-agent's reads count for the parent), and a change made by bash is only checked by line count.
+  watch: no files changed this turn — skipping
