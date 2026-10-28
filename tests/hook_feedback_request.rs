@@ -167,16 +167,53 @@ fn start_capturing_stub() -> (u16, Arc<Mutex<Vec<String>>>) {
 struct Run {
     bodies: Vec<String>,
     stderr: String,
+    /// Kept so a red run can say what yoyo printed before it died; capped by
+    /// `cap_on_char_boundary` because a runaway reply would bury the rest.
+    stdout: String,
     exit: Option<i32>,
+    /// The signal that terminated yoyo, if any. `exit=None` alone cannot tell
+    /// a SIGKILL from a SIGTERM from a SIGSEGV, and that is the one datum that
+    /// locates the cause of a flake (the 2026-10-28 01:54 CI red was
+    /// `posts=1 exit=None`, stderr empty, and nothing else).
+    signal: Option<i32>,
+}
+
+/// Bytes of yoyo's stdout kept in a failure message.
+const STDOUT_KEEP_BYTES: usize = 4096;
+
+/// Truncate to at most `max` bytes without splitting a UTF-8 character
+/// (never byte-index a string, #250), marking the cut in band.
+fn cap_on_char_boundary(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        return s.to_string();
+    }
+    let mut b = max;
+    while b > 0 && !s.is_char_boundary(b) {
+        b -= 1;
+    }
+    format!("{}… [{} more bytes]", &s[..b], s.len() - b)
+}
+
+#[cfg(unix)]
+fn termination_signal(status: &std::process::ExitStatus) -> Option<i32> {
+    use std::os::unix::process::ExitStatusExt;
+    status.signal()
+}
+
+#[cfg(not(unix))]
+fn termination_signal(_status: &std::process::ExitStatus) -> Option<i32> {
+    None
 }
 
 impl Run {
     fn ctx(&self) -> String {
         format!(
-            "posts={} exit={:?}\nstderr:\n{}\nbodies:\n{}",
+            "posts={} exit={:?} signal={:?}\nstderr:\n{}\nstdout:\n{}\nbodies:\n{}",
             self.bodies.len(),
             self.exit,
+            self.signal,
             self.stderr,
+            self.stdout,
             self.bodies.join("\n---\n")
         )
     }
@@ -272,7 +309,9 @@ fn run_in(proj: &Path, home: &Path) -> Run {
     Run {
         bodies,
         stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+        stdout: cap_on_char_boundary(&String::from_utf8_lossy(&out.stdout), STDOUT_KEEP_BYTES),
         exit: out.status.code(),
+        signal: termination_signal(&out.status),
     }
 }
 
@@ -293,14 +332,17 @@ fn fixture(with_hook: bool) -> (tempfile::TempDir, std::path::PathBuf, std::path
 }
 
 /// The hooked run's tool result must be EXACTLY the un-hooked run's result,
-/// then yoagent's block separator, then `HookedTool`'s feedback block
+/// then yoagent's block separator, then `HookedTool`'s feedback text
 /// (`"\n[Hook feedback]\n{stderr}"`). Deriving the prefix from a second, hook-
 /// free run keeps this independent of the bash tool's output format while
 /// still proving three things at once: the tool's own output went back
-/// unchanged, the feedback went back too, and it arrived as its own block
-/// after the output rather than spliced into it.
+/// unchanged, the feedback went back too, and it was appended after the
+/// output rather than spliced into it. On the Anthropic wire a text-only
+/// tool result is ONE string (yoagent joins its blocks with `"\n"`), so the
+/// model does not see a separate block — measured Day 239 (be3869a4); this
+/// test's old name claimed it did.
 #[test]
-fn post_hook_feedback_reaches_the_model_as_its_own_tool_result_block() {
+fn post_hook_feedback_is_appended_after_the_tool_output_in_the_same_tool_result() {
     let (_tmp, proj, home) = fixture(true);
     let run = run_in(&proj, &home);
     let ctx = run.ctx();
@@ -318,7 +360,7 @@ fn post_hook_feedback_reaches_the_model_as_its_own_tool_result_block() {
     assert_eq!(
         wire,
         format!("{base}\n{feedback_block}"),
-        "hook feedback did not reach the model as its own block after the output\n{ctx}"
+        "hook feedback was not appended after the tool output in the same tool_result\n{ctx}"
     );
 }
 
@@ -340,4 +382,30 @@ fn no_hook_means_tool_output_and_no_hook_feedback_text() {
         !run.bodies.iter().any(|b| b.contains(HOOK_MARKER)),
         "marker leaked with no hook configured\n{ctx}"
     );
+}
+
+/// The failure context's two new fields, pinned without spawning anything:
+/// a char straddling the cut is dropped whole, and an at-budget string is
+/// untouched (the near-miss every ordinary run takes).
+#[test]
+fn stdout_cap_never_splits_a_char_and_leaves_short_output_alone() {
+    assert_eq!(cap_on_char_boundary("hi\n", 4096), "hi\n");
+    assert_eq!(cap_on_char_boundary("abcd", 4), "abcd");
+    // '🐙' is 4 bytes; a 6-byte budget lands inside the second one.
+    let out = cap_on_char_boundary("a🐙🐙", 6);
+    assert_eq!(out, "a🐙… [4 more bytes]");
+}
+
+/// A process killed by a signal reports it, so `ctx` can name it.
+#[cfg(unix)]
+#[test]
+fn termination_signal_names_a_killed_child() {
+    let mut child = Command::new("sleep")
+        .arg("30")
+        .spawn()
+        .expect("spawn sleep");
+    child.kill().unwrap();
+    let status = child.wait().unwrap();
+    assert_eq!(status.code(), None);
+    assert_eq!(termination_signal(&status), Some(9));
 }

@@ -373,7 +373,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 162 (#692): +108 lines — extract_last_assistant_text now stops at the
     // newest turn's boundary (no stale-turn fallback) plus the regression tests
     // pinning that a text-less newest turn yields None, not an older turn's text.
-    ("src/commands_web.rs", 2415),
+    ("src/commands_web.rs", 2413),
     // Day 164 (#732): +105 lines — TOML basic-string escaping on the write
     // side, matching unescaping (and a lone-quote panic fix) on the read side,
     // plus the round-trip tests that pin writer and reader as one promise.
@@ -530,7 +530,11 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // directions, and the cross-door drift guard. This is a whole new phase
     // with its coverage, not incidental growth — the split is owed and still
     // not done. Number pasted from what the gate printed, not computed.
-    ("src/hooks.rs", 3684),
+    // Day 242: 3684 -> 3732. +38 had already drifted in unregistered; +10 is
+    // the SIGPIPE fix (hook stdin write via sigpipe_safe_write, its comment
+    // and the source guard now refusing a raw stdin.write_all). The helper
+    // and its tests live in their own module to keep this growth small.
+    ("src/hooks.rs", 3732),
     // Day 209: +139 — `pre_hook_block_message` plus its two tests (a table over
     // the pure formatter and a behavioural test through the real registry). A
     // blocking pre-hook's own stderr was captured, capped and dropped, so the

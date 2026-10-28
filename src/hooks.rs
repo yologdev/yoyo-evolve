@@ -738,7 +738,7 @@ impl ShellHook {
         stdin_payload: &str,
         scrub: &[&str],
     ) -> Result<(i32, String), String> {
-        use std::io::{Read, Write};
+        use std::io::Read;
         use std::process::Command;
         use std::time::Duration;
 
@@ -770,9 +770,13 @@ impl ShellHook {
         // that does is not left blocking on a write end nobody will close.
         // A failed write must not kill the hook: reading stdin is optional, the
         // env vars are still set, and the common case is a hook that ignores
-        // this channel entirely.
+        // this channel entirely. Nor yoyo: under SIG_DFL SIGPIPE a plain write to
+        // a hook that already exited killed it by signal 13 (sigpipe_safe_write).
         if let Some(mut stdin) = child.stdin.take() {
-            let _ = stdin.write_all(stdin_payload.as_bytes());
+            let _ = crate::sigpipe_safe_write::write_all_no_sigpipe(
+                &mut stdin,
+                stdin_payload.as_bytes(),
+            );
         }
 
         let timeout = Duration::from_secs(5);
@@ -3711,12 +3715,18 @@ mod tests {
              that stream is the prompt itself."
         );
 
-        let write = format!("stdin.{}(stdin_payload.as_bytes())", "write_all");
+        let write = format!("{}_no_sigpipe(", "write_all");
         assert!(
-            body.contains(&write),
+            body.contains(&write) && body.contains("stdin_payload.as_bytes()"),
             "run_command opens the stdin pipe but never writes the payload — a hook \
              would get an empty channel and every stdin test above would still pass, \
              because they drive the pure builder rather than the spawn."
+        );
+        // A plain write_all is fatal under yoyo's SIG_DFL SIGPIPE once the hook has exited.
+        let raw = format!("stdin.{}(", "write_all");
+        assert!(
+            !body.contains(&raw),
+            "use {write}..), not {raw}: SIGPIPE kills yoyo"
         );
     }
 }
