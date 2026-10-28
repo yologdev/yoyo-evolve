@@ -730,6 +730,7 @@ fn looks_like_slash_command_unicode_after_slash() {
 fn test_config() -> Config {
     Config {
         model: String::new(),
+        api_key_from_cli: false,
         api_key: String::new(),
         provider: String::new(),
         base_url: None,

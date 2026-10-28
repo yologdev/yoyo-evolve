@@ -813,18 +813,18 @@ pub(crate) fn setup_stdin_refusal(stdin_is_terminal: bool) -> Option<&'static st
 ///
 /// Rules:
 /// - `ollama` / `custom` never need a key (local models, custom `base_url`) → no setup
-/// - any reachable key, from env **or** config → no setup
+/// - any reachable key, from `--api-key`, env **or** config → no setup (#1062)
 /// - no reachable key → offer the wizard, *regardless of whether a config exists*
 ///
 /// (`config_exists` is deliberately not a parameter: it never changes the answer,
 /// and carrying it would just re-invite the bug this fixes.)
-pub(crate) fn needs_setup_from(provider: &str, key_from_env: bool, key_in_config: bool) -> bool {
+pub(crate) fn needs_setup_from(provider: &str, cli: bool, env: bool, config: bool) -> bool {
     // Local / self-hosted providers authenticate differently (or not at all).
     // Never drag a local-model user into an API-key prompt.
     if provider == "ollama" || provider == "custom" {
         return false;
     }
-    !(key_from_env || key_in_config)
+    !(cli || env || config)
 }
 
 /// Is there a non-empty top-level `api_key` in this config file content?
@@ -867,13 +867,19 @@ fn api_key_in_env(provider: &str) -> bool {
 
 /// Check whether we should offer the setup wizard.
 /// Thin wrapper: gather the facts, let `needs_setup_from` decide.
-pub fn needs_setup(provider: &str) -> bool {
+/// `key_from_cli` is `Config::api_key_from_cli` (a non-empty `--api-key`).
+pub fn needs_setup(provider: &str, key_from_cli: bool) -> bool {
     needs_setup_from(
         provider,
+        key_from_cli,
         api_key_in_env(provider),
         api_key_in_config_files(),
     )
 }
+
+#[cfg(test)]
+#[path = "setup_needs_tests.rs"]
+mod setup_needs_tests;
 
 #[cfg(test)]
 mod tests {
@@ -898,61 +904,6 @@ mod tests {
     #[test]
     fn setup_proceeds_when_stdin_is_a_terminal() {
         assert_eq!(setup_stdin_refusal(true), None);
-    }
-
-    /// The decision matrix for "can yoyo actually start?" — one row per
-    /// (provider, key_from_env, key_in_config) shape that reaches the wizard
-    /// gate. The enumeration lives here in code, not in my memory.
-    #[test]
-    fn test_needs_setup_from_matrix() {
-        // (provider, key_from_env, key_in_config, expected_needs_setup, why)
-        let cases: &[(&str, bool, bool, bool, &str)] = &[
-            // Local / self-hosted providers never need a key — never prompt them.
-            ("ollama", false, false, false, "ollama needs no key"),
-            (
-                "custom",
-                false,
-                false,
-                false,
-                "custom base_url needs no key",
-            ),
-            (
-                "ollama",
-                true,
-                false,
-                false,
-                "ollama with a key is still fine",
-            ),
-            // A reachable key means yoyo can start.
-            ("anthropic", true, false, false, "key from env"),
-            ("anthropic", false, true, false, "key from config file"),
-            ("openai", true, true, false, "key from both sources"),
-            // No reachable key: the wizard must offer itself. The presence of a
-            // config file is irrelevant — a half-configured file (provider +
-            // model, no key) used to lock the user out entirely (#628).
-            (
-                "anthropic",
-                false,
-                false,
-                true,
-                "keyless config must NOT lock out the wizard",
-            ),
-            ("openai", false, false, true, "no key anywhere, no config"),
-            (
-                "google",
-                false,
-                false,
-                true,
-                "unknown-to-env provider, no key",
-            ),
-        ];
-        for (provider, env, cfg, expected, why) in cases {
-            assert_eq!(
-                needs_setup_from(provider, *env, *cfg),
-                *expected,
-                "provider={provider} env={env} config={cfg}: {why}"
-            );
-        }
     }
 
     #[test]

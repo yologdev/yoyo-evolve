@@ -28,7 +28,7 @@ yoyo --model llama3.2 --provider ollama
 
 Use `--provider <name>` to select a provider. Each provider has a default model and an environment variable for its API key.
 
-> **Tip:** If you run `yoyo` without any API key configured, an interactive setup wizard will walk you through choosing a provider and entering your key. You can also save the config to `.yoyo.toml` directly from the wizard.
+> **Tip:** If you run `yoyo` without any API key configured (no `--api-key`, no key environment variable, no `api_key` in a config file), an interactive setup wizard will walk you through choosing a provider and entering your key. You can also save the config to `.yoyo.toml` directly from the wizard.
 
 | Provider | Default Model | API Key Env Var |
 |----------|--------------|-----------------|

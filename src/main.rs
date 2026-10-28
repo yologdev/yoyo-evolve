@@ -1052,8 +1052,13 @@ fn apply_config_flags(config: &Config) -> bool {
 
 /// Run the interactive setup wizard if needed and apply its results to `agent_config`.
 /// Returns `false` if the user cancelled and main should exit.
-fn run_setup_wizard_if_needed(is_interactive: bool, agent_config: &mut AgentConfig) -> bool {
-    if !is_interactive || !setup::needs_setup(&agent_config.provider) {
+/// `key_from_cli`: `Config::api_key_from_cli`, so `--api-key` skips it (#1062).
+fn run_setup_wizard_if_needed(
+    is_interactive: bool,
+    key_from_cli: bool,
+    agent_config: &mut AgentConfig,
+) -> bool {
+    if !is_interactive || !setup::needs_setup(&agent_config.provider, key_from_cli) {
         return true;
     }
 
@@ -1378,7 +1383,8 @@ async fn main() {
         bash_cwd: None,
     };
 
-    if !run_setup_wizard_if_needed(is_interactive, &mut agent_config) {
+    let key_from_cli = config.api_key_from_cli;
+    if !run_setup_wizard_if_needed(is_interactive, key_from_cli, &mut agent_config) {
         return;
     }
     // #1012: xAI bills grok-4.6/4.7 10% more on us.api.x.ai; the endpoint decides.

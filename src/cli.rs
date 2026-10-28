@@ -1055,6 +1055,8 @@ struct ModelConfig {
     provider: String,
     base_url: Option<String>,
     api_key: String,
+    /// #1062: the key came from a non-empty `--api-key` (`KeySource::Argv`).
+    api_key_from_cli: bool,
     model: String,
     fallback_provider: Option<String>,
     fallback_model: Option<String>,
@@ -1143,6 +1145,7 @@ fn parse_model_config(
             }
         }
     };
+    let api_key_from_cli = matches!(key_source, KeySource::Argv);
     // In-process parse_args tests would otherwise pin a source (first write
     // wins) that the env-driven diagnose_api_error tests then read.
     if !cfg!(test) {
@@ -1184,6 +1187,7 @@ fn parse_model_config(
         provider,
         base_url,
         api_key,
+        api_key_from_cli,
         model,
         fallback_provider,
         fallback_model,
@@ -2937,6 +2941,7 @@ directory ({e}); this run is trusted, later runs will not be."
     let mut result = Some(Config {
         model: mc.model,
         api_key: mc.api_key,
+        api_key_from_cli: mc.api_key_from_cli,
         provider: mc.provider,
         base_url: mc.base_url,
         skills,

@@ -191,6 +191,8 @@ pub enum OutputFormat {
 /// Parsed CLI configuration.
 pub struct Config {
     pub model: String,
+    /// #1062: the key came from a non-empty `--api-key`; skips the setup wizard.
+    pub api_key_from_cli: bool,
     pub api_key: String,
     pub provider: String,
     pub base_url: Option<String>,
