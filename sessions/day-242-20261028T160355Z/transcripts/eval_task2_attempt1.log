@@ -1,0 +1,30 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; B=$(ls target/d… ✓ (20.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p ses… (9 lines) ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 35.6s (2 ✓)
+
+Verdict: PASS. The diff fixes the wizard door of #1062: passing --api-key now skips the first-run setup wizard. It's written to session_plan/eval_task_2.md.
+
+Running the real binary: I used script for a terminal, with env -i and an empty HOME, and ran the command from the task.
+• With --api-key dummy, "Choose your AI provider" appeared 0 times.
+• Without --api-key, it appeared once, so the wizard still opens when there is no key.
+
+The probe exited with code 124 because timeout 8 ended the session once the wizard sat waiting; that's expected.
+
+How the fix works: needs_setup_from now takes a fourth input, true when the key came from --api-key. That value is worked out in parse_model_config, passed on through Config::api_key_from_cli, and given to the wizard check in main.rs. It is not read from the set_key_source global, which tests skip, so the decision can be tested as the task asked.
+
+Tests: The decision table moved to a new file, src/setup_needs_tests.rs, and covers each key source on its own, all of them together, and no key at all, each checked with full assert_eq!. An empty --api-key "" is refused with exit 1 before the wizard is consulted, and a test pins that.
+
+Other changes:
+• Nothing new is left unused, and the build passes.
+• The quick-start and models docs now say --api-key skips the wizard.
+• ARCHITECTURE.md now marks the old "still open on #1062" note as superseded.
+• The tests/module_size.rs size entries were updated.
+
+Product safety: the change only skips the wizard when the user typed a key on the command line. Nothing changes for anyone else.
+  watch: no files changed this turn — skipping
