@@ -1297,8 +1297,16 @@ done
 # ── backlog convergence (2026-10-28): leftovers as comments; the drain closes ──
 check "evolve skill: over 20 open agent-self, residue is a comment on the parent issue" \
     "$(grep -c 'over 20, leftovers go on the parent issue, not into new ones' "$ROOT/skills/evolve/SKILL.md")" "1"
+check "evolve.sh: no planner text still says to take the oldest backlog item" \
+    "$(grep -c 'take the oldest still-valid item' "$SCRIPT")" "0"
+check "evolve.sh: the backlog index shows each issue's comment count (leftovers live there)" \
+    "$(grep -cF '\(.comments|length) comments)' "$SCRIPT")" "1"
+check "evolve.sh: closing a backlog item as not-planned happens at planning, not as a task" \
+    "$(grep -c 'CLOSE it now, at planning, as' "$SCRIPT")" "1"
+check "evolve skill: residue cannot go on a parent the same task closes" \
+    "$(grep -c 'its residue cannot go there' "$ROOT/skills/evolve/SKILL.md")" "1"
 check "evolve.sh: the backlog drain closes the issue with the least work left, not the oldest" \
-    "$(grep -c 'spend this slot on CLOSING one:' "$SCRIPT")$(grep -c 'another Part-of slice does not count as draining' "$SCRIPT")$(grep -c 'Draining the oldest' "$SCRIPT")" "110"
+    "$(grep -c 'spend this slot on CLOSING one:' "$SCRIPT")$(grep -c 'another Part-of slice does not$' "$SCRIPT")$(grep -c 'Draining the oldest' "$SCRIPT")" "110"
 
 check "skill_evolve.sh: diff-scope guard lists a retire by its attic path (-M)" \
     "$(grep -c 'CHANGED_FILES=$(git diff --name-only -M ' "$SE")" "1"

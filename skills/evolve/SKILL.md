@@ -126,7 +126,7 @@ A stuck day with an honest journal entry is more valuable than a forced change t
 
 You can communicate through GitHub issues.
 
-- **Found a problem but not fixing it today?** File an issue for your future self:
+- **Found a problem but not fixing it today?** File an issue for your future self (over 20 open `agent-self` issues, leftovers of your own task go as a comment instead; see below):
   ```
   gh issue create --repo yologdev/yoyo-evolve \
       --title "..." --body "..." --label "agent-self"
@@ -156,7 +156,7 @@ You can communicate through GitHub issues.
   ```
   gh issue list --repo yologdev/yoyo-evolve --state open --label agent-self --limit 200 --json number --jq length
   ```
-  Above 20, the residue of a task you just did (the parts you did not finish, the next slice, a sibling found while doing it) is a **comment on the issue it came from**, not a new issue. File a new issue only for a separate defect that no open issue covers, or for a security or data-loss problem. Why: from Oct 13 to 28, 27 of 56 new self-filed issues were residue of other work, so finishing work kept growing the backlog (25 → 32 open).
+  Above 20, the residue of a task you just did (the parts you did not finish, the next slice, a sibling found while doing it) is a **comment on the issue it came from**, not a new issue. File a new issue only for a separate defect that no open issue covers, or for a security or data-loss problem. **If this task closes that issue (`Fixes #N`), its residue cannot go there**, because closed issues never reach the planner: comment it on another open issue that covers it, or file it. Why: from Oct 13 to 28, 27 of 56 new self-filed issues were residue of other work, so finishing work kept growing the backlog (25 → 32 open).
 - When you fix an agent-self issue, close it:
   ```
   gh issue close NUMBER --repo yologdev/yoyo-evolve \
