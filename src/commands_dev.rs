@@ -190,22 +190,19 @@ pub fn run_doctor_checks(
     }
 
     // 9. Curl
-    match std::process::Command::new("curl").arg("--version").output() {
-        Ok(output) if output.status.success() => {
-            checks.push(DoctorCheck {
-                name: "Curl".to_string(),
-                status: DoctorStatus::Pass,
-                detail: "installed (for /docs and /web)".to_string(),
-            });
-        }
-        _ => {
-            checks.push(DoctorCheck {
-                name: "Curl".to_string(),
-                status: DoctorStatus::Warn,
-                detail: "not found (/docs and /web won't work)".to_string(),
-            });
-        }
-    }
+    let curl_found = matches!(
+        std::process::Command::new("curl").arg("--version").output(),
+        Ok(output) if output.status.success()
+    );
+    checks.push(DoctorCheck {
+        name: "Curl".to_string(),
+        status: if curl_found {
+            DoctorStatus::Pass
+        } else {
+            DoctorStatus::Warn
+        },
+        detail: curl_row_detail(surface, curl_found).to_string(),
+    });
 
     // 10. Memory dir (.yoyo/)
     if std::path::Path::new(".yoyo").is_dir() {
@@ -273,6 +270,17 @@ fn no_context_file_detail(surface: DoctorSurface) -> &'static str {
     match surface {
         DoctorSurface::Repl => "no context file (create YOYO.md or run /init)",
         DoctorSurface::Shell => "no context file (create YOYO.md or run yoyo init)",
+    }
+}
+
+/// Curl row text (#1083). `/docs` has a shell twin (`yoyo docs`), `/web` has
+/// none, so the shell row names `yoyo docs` and calls `/web` in-session.
+fn curl_row_detail(surface: DoctorSurface, found: bool) -> &'static str {
+    match (surface, found) {
+        (DoctorSurface::Repl, true) => "installed (for /docs and /web)",
+        (DoctorSurface::Repl, false) => "not found (/docs and /web won't work)",
+        (DoctorSurface::Shell, true) => "installed (for yoyo docs, and /web inside a session)",
+        (DoctorSurface::Shell, false) => "not found (yoyo docs and the in-session /web won't work)",
     }
 }
 
@@ -1903,6 +1911,29 @@ mod tests {
         for detail in [shell, repl] {
             assert!(!detail.contains("run /remember to create"), "{detail}");
             assert!(detail.contains(&fix.command), "{detail} vs {}", fix.command);
+        }
+    }
+
+    /// #1083: the shell Curl row names `yoyo docs` and never offers `/docs`
+    /// as if typeable; the REPL rows are byte-identical to before.
+    #[test]
+    fn test_curl_row_detail_per_surface() {
+        assert_eq!(
+            curl_row_detail(DoctorSurface::Repl, true),
+            "installed (for /docs and /web)"
+        );
+        assert_eq!(
+            curl_row_detail(DoctorSurface::Repl, false),
+            "not found (/docs and /web won't work)"
+        );
+        for found in [true, false] {
+            let shell = curl_row_detail(DoctorSurface::Shell, found);
+            assert!(shell.contains("yoyo docs"), "{shell}");
+            assert!(!shell.contains("/docs"), "{shell}");
+            assert!(
+                shell.contains("/web inside a session") || shell.contains("in-session /web"),
+                "{shell}"
+            );
         }
     }
 
