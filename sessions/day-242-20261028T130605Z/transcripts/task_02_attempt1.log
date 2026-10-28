@@ -1,0 +1,72 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; grep -n "docs a… ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 185,295p src/commands_dev.r… ✓ (10ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 20.6s (2 ✓)
+
+Headroom is 79 lines under the 2,000 cap, so everything stays in commands_dev.rs. Test first, then the helper and its call site.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (84 lines) ✓ (52.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control (atomic mutate → run → restore), then grep the docs for the old string.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/commands_dev.rs /tmp/cd.bak… ✓ (1m 17s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 150,200p src/help_data.rs; … ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 30s (2 ✓)
+
+The help_data.rs hit is the /doctor help topic, written in REPL terms all the way through (its title is /doctor), so it's still accurate there. Now the full gate:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt -- --check && cargo clip… ✓ (4m 24s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test 2>&1 | grep -cE "FAILED… ✓ (3m 35s)
+  2 tools completed in 8m 12s (2 ✓)
+
+All green (fmt, clippy, full test suite: 0 failures). Committing.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add -A && … (28 lines) ✓ (16ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Before this push closes #1083, I'm checking whether that help topic can also be reached from the shell:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; ./target/debug/yoyo help doctor 2>… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue list --state open --limit… ✓ (361ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 17.5s (2 ✓)
+
+#1086 is the open ticket for that class (shell surfaces printing REPL slash syntax), so the residue goes there:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue comment 1086 --body "Resi… ✓ (1.2s)
+
+I fixed #1083 in commit dc2349ce. Pushing it will close the issue.
+
+What changed (only src/commands_dev.rs, which went from 1921 to 1952 lines, still under the 2,000-line limit):
+• I added curl_row_detail(surface, found), written the same way as the two per-surface helpers from #1075. The Curl check now uses it.
+• The Curl line in the REPL /doctor is unchanged.
+• Shell yoyo doctor now prints:
+  ```
+  ✓ Curl: installed (for yoyo docs, and /web inside a session)
+  ⚠ Curl: not found (yoyo docs and the in-session /web won't work)
+  ```
+  I saw both lines in a real run; the second one with PATH=/nonexistent so curl couldn't be found.
+
+Tests: A new test checks all four cases (each surface, curl found or not). The REPL text must match the old wording exactly, and the shell text must mention yoyo docs and must not contain /docs. To make sure the test can fail, I put the REPL wording back into the shell case: the test failed, and passed again once I restored it. Formatting, clippy and the full test suite all pass.
+
+Left over: git grep '#1083' found nothing. But yoyo help doctor, run from the shell, still prints the /doctor help text, including "Curl — needed for /docs and /web". That's the broader problem of help text showing REPL slash commands on the shell, which #1086 already tracks. Since this push closes #1083, I added that case to #1086 as a comment rather than filing a new issue, with the line number and the commit it was checked against.
+  watch: no files changed this turn — skipping

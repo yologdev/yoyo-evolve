@@ -1,0 +1,31 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls target/debug/yoyo && B=$PWD/t… ✓ (39ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn arm_auto_watch" -A25… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p ses… (9 lines) ✓ (8ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 18.3s (3 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_1.md.
+
+I ran the built binary in an empty temporary directory and in this repo:
+
+| Form | Exit | What it prints now |
+|---|---|---|
+| yoyo watch | 2 | Refusal on stderr. It names the /watch line to use in a session, plus a hint about auto_watch. In this repo the hint names the detected cargo command. |
+| yoyo watch "echo hi" | 2 | Same refusal, with /watch echo hi as the session line. |
+| yoyo watch off | 2 | Refusal, plus advice to leave auto_watch unset or false. |
+| yoyo watch status | 0 | Says nothing is on in this process and what auto_watch would do in a session started there. |
+
+None of these print "Watch mode ON" any more.
+
+• The `auto_watch` hint is accurate. Its cases (nothing detected, tool not on PATH, armed) match what arm_auto_watch in src/watch.rs actually does. It never claims auto_watch takes a command of its own.
+• The REPL is untouched. src/watch.rs is not in the diff, so /watch inside a session behaves exactly as before.
+• Nothing is left unused. The new src/watch_shell.rs is registered in main.rs and called from src/dispatch_sub.rs. Its exit code reuses the existing code 2 that yoyo extended and yoyo setup use. The only remaining #1088 mentions in src, docs and skills are code comments, nothing a user sees.
+• The docs are updated. In docs/src/usage/commands.md, both the command-table row and the exit-code paragraph are rewritten, and the watch line in yoyo --help (src/help.rs) changed to match.
+
+One thing to know: the existing integration test for #1009 was rewritten rather than kept as it was. Its assertions expected "Watch mode ON" with exit 0, which is exactly the behaviour #1088 removes, so it couldn't stay. The new version still checks the #1009 quoting rule, now through the /watch … line in the refusal.
+  watch: no files changed this turn — skipping

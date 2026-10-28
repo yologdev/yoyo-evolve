@@ -1,0 +1,6 @@
+Verdict: PASS
+Reason: The Curl row now comes from curl_row_detail(surface, found). The REPL strings are unchanged and pinned with assert_eq, and the shell row names `yoyo docs` and calls /web an in-session command. A live `yoyo doctor` run printed "✓ Curl: installed (for yoyo docs, and /web inside a session)".
+Checked: intent_alignment: PASS: I compared the diff with the task. The Curl row is now surface-aware through the same per-surface helper pattern as no_context_file_detail (#1075). The table test covers both surfaces and both curl states, and it asserts the shell rows contain no "/docs". I also ran the binary's doctor output.
+Checked: forgotten_touchpoints: PASS: The one new fn, curl_row_detail, has its call site in run_doctor_checks in this diff. No enum variants were added and nothing was renamed. `surface` is already in scope from #1075, and the build passes.
+Checked: doc_sync: PASS: The only behaviour change is the shell-surface row text. The docs have no copy of the old Curl row string and nothing user-facing references #1083. help_data.rs:173 ("Curl — needed for /docs and /web") is in the /doctor help text and is still accurate as a description of the feature.
+Checked: product_surface: PASS: This is a product-kind task that changes only the wording of one doctor diagnostic line. It changes no defaults, flags, wizard or startup behaviour.
