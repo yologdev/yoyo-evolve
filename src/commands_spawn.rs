@@ -86,12 +86,14 @@ pub struct SpawnTask {
     /// for this (background) spawn. Ensures each finish is announced exactly
     /// once. Non-consuming: the result stays collectable via `/spawn collect`.
     pub notified: bool,
+    /// The worktree a `--bg` worker runs in; the stale sweep skips it while `Running` (#1057).
+    pub worktree: Option<PathBuf>,
 }
 
 /// Thread-safe tracker for multiple spawn tasks.
 #[derive(Debug, Clone)]
 pub struct SpawnTracker {
-    inner: Arc<Mutex<Vec<SpawnTask>>>,
+    pub(crate) inner: Arc<Mutex<Vec<SpawnTask>>>,
     /// JoinHandles for background spawns, keyed by spawn ID.
     handles: Arc<Mutex<std::collections::HashMap<usize, tokio::task::JoinHandle<()>>>>,
 }
@@ -128,6 +130,7 @@ impl SpawnTracker {
             background,
             handoff: None,
             notified: false,
+            worktree: None,
         });
         id
     }
@@ -720,9 +723,14 @@ pub async fn handle_spawn(
         return None;
     }
 
-    // Clean up stale worktrees from crashed sessions (max age: 1 hour)
+    // Clean up stale worktrees from crashed sessions (max age: 1 hour),
+    // never one a still-running --bg worker of ours is using (#1057).
     let cwd = std::env::current_dir().unwrap_or_default();
-    cleanup_stale_worktrees(&cwd, std::time::Duration::from_secs(3600));
+    cleanup_stale_worktrees(
+        &cwd,
+        std::time::Duration::from_secs(3600),
+        &tracker.live_worktrees(),
+    );
 
     // Handle /spawn replay [--list|latest|<run_id>] and /spawn runs — the
     // read-back half of the --parallel manifest door (#341): re-launch a
@@ -1010,6 +1018,7 @@ fn handle_spawn_bg(
                 info.path.display(),
                 info.branch
             );
+            tracker.set_worktree(spawn_id, &info.path);
             Some(info)
         }
         Err(e) => {
@@ -3812,25 +3821,6 @@ mod tests {
         cleanup_spawn_worktree(repo, &info2).unwrap();
 
         assert!(list_spawn_worktrees(repo).is_empty());
-    }
-
-    #[test]
-    fn test_cleanup_stale_worktrees() {
-        let tmp = setup_temp_repo();
-        let repo = tmp.path();
-
-        let _info = create_spawn_worktree(repo, 10).expect("create worktree");
-
-        // With a very large max_age, nothing should be cleaned.
-        cleanup_stale_worktrees(repo, std::time::Duration::from_secs(999_999));
-        assert_eq!(list_spawn_worktrees(repo).len(), 1);
-
-        // With zero max_age, everything should be cleaned.
-        cleanup_stale_worktrees(repo, std::time::Duration::ZERO);
-        assert!(
-            list_spawn_worktrees(repo).is_empty(),
-            "stale worktree should be cleaned"
-        );
     }
 
     #[test]

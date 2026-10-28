@@ -224,13 +224,70 @@ pub fn cleanup_spawn_worktree(
     }
 }
 
+/// One spelling per directory, so a live path given relative, with a
+/// trailing slash or through a symlink (`/tmp` vs `/private/tmp`) still
+/// matches the sweep's `read_dir` spelling. A path that cannot be
+/// canonicalized (already gone) falls back to its normalized components.
+fn path_key(p: &Path) -> PathBuf {
+    p.canonicalize()
+        .unwrap_or_else(|_| p.components().collect())
+}
+
+/// The stale sweep's decision, pure so tests can drive it without the
+/// process-global tracker. A candidate is swept only when its age is known,
+/// is over `max_age`, and it is NOT in `live`: the worktree of a `--bg`
+/// worker this process is still running (#1057). Root-dir mtime is not an
+/// activity signal: a running worker that has not written yet, or whose
+/// work is all committed, looks exactly as old as an abandoned one, so the
+/// tracker's state decides instead. Held work is not decided here:
+/// [`remove_spawn_worktree_dir`] still keeps a dirty worktree (Day 234).
+pub(crate) fn worktrees_to_sweep(
+    candidates: &[(PathBuf, Option<std::time::Duration>)],
+    max_age: std::time::Duration,
+    live: &[PathBuf],
+) -> Vec<PathBuf> {
+    let live: std::collections::HashSet<PathBuf> = live.iter().map(|p| path_key(p)).collect();
+    candidates
+        .iter()
+        .filter(|(_, age)| age.is_some_and(|a| a > max_age))
+        .filter(|(p, _)| !live.contains(&path_key(p)))
+        .map(|(p, _)| p.clone())
+        .collect()
+}
+
+impl crate::commands_spawn::SpawnTracker {
+    /// Record the worktree a spawn runs in, so the stale sweep can tell a
+    /// live worker's worktree from an abandoned one (#1057).
+    pub(crate) fn set_worktree(&self, id: usize, path: &Path) {
+        let mut tasks = crate::sync_util::lock_or_recover(&self.inner);
+        if let Some(t) = tasks.iter_mut().find(|t| t.id == id) {
+            t.worktree = Some(path.to_path_buf());
+        }
+    }
+
+    /// Worktrees of spawns whose status is still `Running`. Keyed on state,
+    /// not on how a worker ends: a worker that completes, fails or panics
+    /// mid-run drops out only when its status leaves `Running` (a panicked
+    /// worker stays `Running`, so its worktree is kept: the safe direction).
+    pub(crate) fn live_worktrees(&self) -> Vec<PathBuf> {
+        self.snapshot()
+            .into_iter()
+            .filter(|t| t.status == crate::commands_spawn::SpawnStatus::Running)
+            .filter_map(|t| t.worktree)
+            .collect()
+    }
+}
+
 /// Clean up spawn worktrees older than `max_age`.
 ///
 /// Scans `<repo>/.yoyo/worktrees/spawn-*` and removes any whose root
-/// directory modified-time is older than `max_age` ago — through the same
-/// held-work guard as [`cleanup_spawn_worktree`], so a stale worktree that
-/// still holds uncommitted work is kept and named, never silently removed.
-pub fn cleanup_stale_worktrees(repo_dir: &Path, max_age: std::time::Duration) {
+/// directory modified-time is older than `max_age` ago, except the worktrees
+/// in `live` (still-running `--bg` workers of this process, #1057) — through
+/// the same held-work guard as [`cleanup_spawn_worktree`], so a stale
+/// worktree that still holds uncommitted work is kept and named, never
+/// silently removed. A worker owned by ANOTHER yoyo process is not in
+/// `live`; that case is #1097's.
+pub fn cleanup_stale_worktrees(repo_dir: &Path, max_age: std::time::Duration, live: &[PathBuf]) {
     let root = repo_root(repo_dir);
     let wt_dir = root.join(".yoyo").join("worktrees");
     if !wt_dir.is_dir() {
@@ -238,24 +295,21 @@ pub fn cleanup_stale_worktrees(repo_dir: &Path, max_age: std::time::Duration) {
     }
     let now = std::time::SystemTime::now();
     if let Ok(entries) = std::fs::read_dir(&wt_dir) {
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            if !name.to_string_lossy().starts_with("spawn-") {
-                continue;
-            }
-            let path = entry.path();
-            if !path.is_dir() {
-                continue;
-            }
-            let stale = entry
-                .metadata()
-                .ok()
-                .and_then(|m| m.modified().ok())
-                .and_then(|mt| now.duration_since(mt).ok())
-                .is_some_and(|age| age > max_age);
-            if stale {
-                let _ = remove_spawn_worktree_dir(&root, &path, None);
-            }
+        let candidates: Vec<(PathBuf, Option<std::time::Duration>)> = entries
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().starts_with("spawn-"))
+            .filter(|e| e.path().is_dir())
+            .map(|e| {
+                let age = e
+                    .metadata()
+                    .ok()
+                    .and_then(|m| m.modified().ok())
+                    .and_then(|mt| now.duration_since(mt).ok());
+                (e.path(), age)
+            })
+            .collect();
+        for path in worktrees_to_sweep(&candidates, max_age, live) {
+            let _ = remove_spawn_worktree_dir(&root, &path, None);
         }
         // Prune any dangling worktree metadata.
         let _ = run_git_in(&root, &["worktree", "prune"]);
@@ -389,10 +443,147 @@ mod tests {
         let clean = create_spawn_worktree(tmp.path(), 6).expect("create");
         std::fs::write(dirty.path.join("nested.txt"), "crashed worker").unwrap();
 
-        cleanup_stale_worktrees(tmp.path(), std::time::Duration::ZERO);
+        cleanup_stale_worktrees(tmp.path(), std::time::Duration::ZERO, &[]);
 
         assert!(dirty.path.join("nested.txt").exists(), "dirty swept");
         assert!(!clean.path.exists(), "clean stale worktree should go");
+    }
+
+    // Moved from commands_spawn.rs (size cap) with the new `live` argument.
+    #[test]
+    fn test_cleanup_stale_worktrees() {
+        use crate::commands_spawn::list_spawn_worktrees;
+        let tmp = scratch_repo();
+        let repo = tmp.path();
+
+        let _info = create_spawn_worktree(repo, 10).expect("create worktree");
+
+        // With a very large max_age, nothing should be cleaned.
+        cleanup_stale_worktrees(repo, std::time::Duration::from_secs(999_999), &[]);
+        assert_eq!(list_spawn_worktrees(repo).len(), 1);
+
+        // With zero max_age, everything should be cleaned.
+        cleanup_stale_worktrees(repo, std::time::Duration::ZERO, &[]);
+        assert!(
+            list_spawn_worktrees(repo).is_empty(),
+            "stale worktree should be cleaned"
+        );
+    }
+
+    const HOUR: std::time::Duration = std::time::Duration::from_secs(3600);
+
+    fn old() -> Option<std::time::Duration> {
+        Some(HOUR * 2)
+    }
+
+    /// #1057's table at the decision point. Dirty-vs-clean is decided later,
+    /// by `remove_spawn_worktree_dir` (pinned by
+    /// `stale_sweep_keeps_dirty_and_removes_clean` and the real-repo test below).
+    #[test]
+    fn sweep_decision_table() {
+        let a = PathBuf::from("/nonexistent/yoyo-1057/spawn-1-1");
+        let b = PathBuf::from("/nonexistent/yoyo-1057/spawn-2-2");
+        let young = Some(std::time::Duration::from_secs(60));
+        // (candidates, live, expected swept)
+        type Candidates = Vec<(PathBuf, Option<std::time::Duration>)>;
+        let rows: Vec<(Candidates, Vec<PathBuf>, Vec<PathBuf>)> = vec![
+            // old, not live -> swept (today's behaviour survives)
+            (vec![(a.clone(), old())], vec![], vec![a.clone()]),
+            // old, live -> kept
+            (vec![(a.clone(), old())], vec![a.clone()], vec![]),
+            // old, a DIFFERENT spawn is live -> this one is still swept
+            (
+                vec![(a.clone(), old()), (b.clone(), old())],
+                vec![b.clone()],
+                vec![a.clone()],
+            ),
+            // young, not live -> kept
+            (vec![(a.clone(), young)], vec![], vec![]),
+            // age unreadable -> kept (as before)
+            (vec![(a.clone(), None)], vec![], vec![]),
+            // live given with a trailing slash -> still kept
+            (
+                vec![(a.clone(), old())],
+                vec![PathBuf::from("/nonexistent/yoyo-1057/spawn-1-1/")],
+                vec![],
+            ),
+            // live given with a `.` component -> still kept
+            (
+                vec![(a.clone(), old())],
+                vec![PathBuf::from("/nonexistent/yoyo-1057/./spawn-1-1")],
+                vec![],
+            ),
+        ];
+        for (i, (cands, live, want)) in rows.iter().enumerate() {
+            assert_eq!(&worktrees_to_sweep(cands, HOUR, live), want, "row {i}");
+        }
+    }
+
+    /// A symlinked spelling (macOS `/tmp` -> `/private/tmp` shape) of a live
+    /// worktree must not miss.
+    #[cfg(unix)]
+    #[test]
+    fn sweep_matches_a_live_path_spelled_through_a_symlink() {
+        let tmp = tempfile::tempdir().unwrap();
+        let real = tmp.path().join("real");
+        let wt = real.join("spawn-3-3");
+        std::fs::create_dir_all(&wt).unwrap();
+        let link = tmp.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let live = vec![link.join("spawn-3-3")];
+        assert_ne!(live[0], wt, "anti-vacuous: the two spellings differ");
+        assert!(worktrees_to_sweep(&[(wt.clone(), old())], HOUR, &live).is_empty());
+        // Near-miss: with nothing live the same candidate is swept.
+        assert_eq!(
+            worktrees_to_sweep(&[(wt.clone(), old())], HOUR, &[]),
+            vec![wt]
+        );
+    }
+
+    /// End to end through the tracker: a clean stale worktree whose `--bg`
+    /// worker is still Running survives the sweep; once that worker
+    /// completes, the next sweep removes it.
+    #[test]
+    fn stale_sweep_skips_a_running_workers_worktree_until_it_finishes() {
+        use crate::commands_spawn::SpawnTracker;
+        let tmp = scratch_repo();
+        let live_wt = create_spawn_worktree(tmp.path(), 7).expect("create");
+        let tracker = SpawnTracker::new();
+        let id = tracker.register_with_bg("long task", None, true);
+        tracker.set_worktree(id, &live_wt.path);
+        assert_eq!(tracker.live_worktrees(), vec![live_wt.path.clone()]);
+
+        cleanup_stale_worktrees(
+            tmp.path(),
+            std::time::Duration::ZERO,
+            &tracker.live_worktrees(),
+        );
+        assert!(
+            live_wt.path.exists(),
+            "a running worker's worktree was swept"
+        );
+
+        tracker.complete(id, "done".to_string());
+        assert!(tracker.live_worktrees().is_empty(), "finished is not live");
+        cleanup_stale_worktrees(
+            tmp.path(),
+            std::time::Duration::ZERO,
+            &tracker.live_worktrees(),
+        );
+        assert!(
+            !live_wt.path.exists(),
+            "a finished worker's clean worktree should go"
+        );
+    }
+
+    #[test]
+    fn a_failed_worker_is_not_live() {
+        use crate::commands_spawn::SpawnTracker;
+        let tracker = SpawnTracker::new();
+        let id = tracker.register_with_bg("t", None, true);
+        tracker.set_worktree(id, Path::new("/nonexistent/spawn-9-9"));
+        tracker.fail(id, "boom".to_string());
+        assert!(tracker.live_worktrees().is_empty());
     }
 
     #[test]
