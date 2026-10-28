@@ -29,16 +29,18 @@
 //! recovery-hint wrapper does not append "try a simpler version" and the
 //! refusal does not make the prompt eligible for auto-retry (#1068's class).
 //!
-//! **Not in this slice, named rather than implied (all four tracked in #1094):**
+//! **A page the model did not see whole is not coverage (#1094 item 2).**
+//! Coverage is recorded from yoagent's header inside `GuardedTool`, which sits
+//! *inside* `TruncatingTool`. When truncation (or compression) changes the
+//! page's lines, `TruncatingTool` calls [`retract_cut`] and that page's range
+//! is withdrawn; earlier reads of the same lines stay, because ranges are
+//! stored unmerged. The refusal tells the model to use a smaller limit.
+//!
+//! **Not in this slice, named rather than implied (all tracked in #1094):**
 //! - An existing file that was **never read** is not refused (Claude Code
 //!   requires a read before any overwrite; that is a broader product decision).
 //! - The store is **process-wide**: a sub-agent's read counts as coverage for
 //!   the parent and vice versa.
-//! - Coverage is taken from the header yoagent returns, **inside** yoyo's
-//!   output-truncation wrapper. If `TruncatingTool` cuts the middle out of a
-//!   long page, the header still claims those lines and the guard counts them
-//!   as seen, so a write after a truncated read is allowed (no worse than
-//!   before this guard existed).
 //! - A file changed by `bash` (or another process) is judged only by its line
 //!   count: a shrink or a same-length rewrite is not detected.
 
@@ -125,8 +127,9 @@ pub(crate) fn overwrite_refusal(
     };
     Some(format!(
         "Refusing to overwrite '{}': it has {} lines{}{}, so writing it whole would destroy \
-         the lines you have not seen. Read the rest with read_file offset/limit, or change \
-         it in place with edit_file.",
+         the lines you have not seen. Read the rest with read_file offset/limit (a page whose \
+         output was truncated does not count, so use a smaller limit), or change it in place \
+         with edit_file.",
         crate::cli::sanitize_for_display(path),
         current_total,
         REFUSAL_STEM_PARTIAL_READ,
@@ -204,10 +207,9 @@ pub(crate) fn record_with(store: &Store, pending: Option<Pending>, result: &Tool
                 yoagent::Content::Text { text } => Some(text.as_str()),
                 _ => None,
             });
+            // Kept unmerged so `retract_cut_with` can withdraw exactly this page.
             if let Some((a, b, _)) = text.and_then(parse_read_header) {
-                let e = s.entry(c).or_default();
-                e.push((a, b));
-                *e = merged(e);
+                s.entry(c).or_default().push((a, b));
             }
         }
         Kind::Write | Kind::Edit { was_full: true } => {
@@ -217,6 +219,45 @@ pub(crate) fn record_with(store: &Store, pending: Option<Pending>, result: &Tool
         }
         Kind::Edit { was_full: false } => {}
     }
+}
+
+fn first_text(r: &ToolResult) -> Option<&str> {
+    r.content.iter().find_map(|c| match c {
+        yoagent::Content::Text { text } => Some(text.as_str()),
+        _ => None,
+    })
+}
+
+/// After output truncation (`TruncatingTool`, the wrapper OUTSIDE the one that
+/// recorded): if the lines the model receives are not the lines `read_file`
+/// returned (head/tail cut, byte cut, compression), it did not see that page,
+/// so withdraw the page `record_with` just recorded (#1094 item 2). Keyed on
+/// the state (text differs), not on which cut ran. Earlier reads stay.
+pub(crate) fn retract_cut_with(
+    store: &Store,
+    path: Option<&str>,
+    original: &ToolResult,
+    shown: &ToolResult,
+) {
+    let (Some(orig), Some(path)) = (first_text(original), path) else {
+        return;
+    };
+    if first_text(shown).is_some_and(|t| t.lines().eq(orig.lines())) {
+        return;
+    }
+    let (Some((a, b, _)), Some(c)) = (parse_read_header(orig), canonical(path)) else {
+        return;
+    };
+    if let Some(e) = store.lock().ok().as_mut().and_then(|s| s.get_mut(&c)) {
+        if let Some(i) = e.iter().rposition(|r| *r == (a, b)) {
+            e.remove(i);
+        }
+    }
+}
+
+/// [`retract_cut_with`] on the process-wide store (the `TruncatingTool` call site).
+pub(crate) fn retract_cut(path: Option<&str>, original: &ToolResult, shown: &ToolResult) {
+    retract_cut_with(global_store(), path, original, shown)
 }
 
 /// [`gate_with`] on the process-wide store (the `GuardedTool` call site).

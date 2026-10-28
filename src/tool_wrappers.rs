@@ -338,6 +338,11 @@ impl AgentTool for TruncatingTool {
         params: serde_json::Value,
         ctx: yoagent::types::ToolContext,
     ) -> Result<yoagent::types::ToolResult, yoagent::types::ToolError> {
+        let is_read = self.inner.name() == "read_file";
+        let read_path = params
+            .get("path")
+            .and_then(|v| v.as_str())
+            .map(String::from);
         let result = self
             .inner
             .execute(params, ctx)
@@ -346,7 +351,13 @@ impl AgentTool for TruncatingTool {
         // #665: only bash output can legitimately contain test-runner output;
         // read_file/search results that quote test-shaped lines are content.
         let allow_test_filter = matches!(self.inner.name(), "bash");
-        Ok(truncate_result(result, self.max_chars, allow_test_filter))
+        let original = is_read.then(|| result.clone());
+        let shown = truncate_result(result, self.max_chars, allow_test_filter);
+        // A cut page is not coverage for write_file (#1094, src/partial_read_guard.rs).
+        if let Some(orig) = &original {
+            crate::partial_read_guard::retract_cut(read_path.as_deref(), orig, &shown);
+        }
+        Ok(shown)
     }
 }
 

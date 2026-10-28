@@ -101,7 +101,8 @@ fn overwrite_refusal_names_path_count_and_lines_read_and_both_moves() {
         r,
         "Refusing to overwrite 'src/big.rs': it has 2000 lines but this session has only \
          read lines 1-500, so writing it whole would destroy the lines you have not seen. \
-         Read the rest with read_file offset/limit, or change it in place with edit_file."
+         Read the rest with read_file offset/limit (a page whose output was truncated does not \
+         count, so use a smaller limit), or change it in place with edit_file."
     );
     assert!(crate::prompt_retry::is_deterministic_tool_error(&r));
 }
@@ -268,4 +269,115 @@ async fn guarded_write_file_refuses_after_a_guarded_partial_read() {
     };
     assert!(msg.contains(REFUSAL_STEM_PARTIAL_READ), "{msg}");
     assert_eq!(std::fs::read(&p).unwrap(), before);
+}
+
+// --- #1094 item 2: coverage is what the model saw, not what yoagent read ---
+
+/// `read_file` exactly as `tools::build_tools` stacks it on the main agent:
+/// `with_truncation(maybe_guard(ReadFileTool))`, on the process-wide store.
+async fn read_through_real_stack(path: &str, offset: Option<u64>, limit: Option<u64>) -> String {
+    let tool = crate::tool_wrappers::with_truncation(
+        crate::tool_wrappers::maybe_guard(
+            Box::new(ReadFileTool::default()),
+            &crate::cli::DirectoryRestrictions::default(),
+        ),
+        crate::format::TOOL_OUTPUT_MAX_CHARS,
+    );
+    let mut params = serde_json::json!({ "path": path });
+    if let Some(o) = offset {
+        params["offset"] = serde_json::json!(o);
+    }
+    if let Some(l) = limit {
+        params["limit"] = serde_json::json!(l);
+    }
+    first_text(&tool.execute(params, ctx()).await.unwrap())
+}
+
+/// `n` lines of `width` chars each, numbered so a dropped middle is visible.
+fn wide(n: usize, width: usize) -> String {
+    (1..=n)
+        .map(|i| format!("{:<width$}\n", format!("row {i} "), width = width))
+        .collect()
+}
+
+#[tokio::test]
+async fn truncated_whole_page_read_does_not_cover_the_file_for_write() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write_tmp(&dir, "wide.txt", &wide(200, 300));
+    let shown = read_through_real_stack(&path, None, None).await;
+    // Anti-vacuous: the model really did get a cut page.
+    assert!(
+        shown.contains("[... truncated "),
+        "not truncated: {shown:.200}"
+    );
+    assert!(!shown.contains("row 120 "), "middle row survived the cut");
+    let err = match gate("write_file", Some(&path)) {
+        Err(ToolError::Failed(m)) => m,
+        Ok(_) => panic!("whole-file write after a truncated read was admitted"),
+        Err(e) => panic!("unexpected error kind: {e:?}"),
+    };
+    assert!(err.contains(REFUSAL_STEM_PARTIAL_READ), "{err}");
+}
+
+#[tokio::test]
+async fn untruncated_page_still_covers_the_file_for_write() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write_tmp(&dir, "narrow.txt", &wide(200, 100));
+    let shown = read_through_real_stack(&path, None, None).await;
+    assert!(!shown.contains("[... truncated "), "unexpected cut");
+    assert!(shown.contains("row 120 "));
+    assert!(gate("write_file", Some(&path)).is_ok());
+}
+
+#[tokio::test]
+async fn truncated_read_then_smaller_pages_cover_the_file_for_write() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write_tmp(&dir, "wide2.txt", &wide(200, 300));
+    read_through_real_stack(&path, None, None).await;
+    assert!(gate("write_file", Some(&path)).is_err());
+    // 50 lines x 300 chars = 15k: under the cap, so each page is seen whole.
+    for off in [1u64, 51, 101, 151] {
+        let shown = read_through_real_stack(&path, Some(off), Some(50)).await;
+        assert!(!shown.contains("[... truncated "), "page {off} was cut");
+    }
+    assert!(gate("write_file", Some(&path)).is_ok());
+}
+
+#[tokio::test]
+async fn refusal_after_a_truncated_read_names_the_path_and_the_way_out() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write_tmp(&dir, "wide3.txt", &wide(200, 300));
+    read_through_real_stack(&path, None, None).await;
+    let err = match gate("write_file", Some(&path)) {
+        Err(ToolError::Failed(m)) => m,
+        Ok(_) => panic!("admitted"),
+        Err(e) => panic!("unexpected error kind: {e:?}"),
+    };
+    assert!(err.contains(&format!("'{path}'")), "{err}");
+    assert!(err.contains("offset/limit"), "{err}");
+    assert!(err.contains("smaller limit"), "{err}");
+}
+
+#[tokio::test]
+async fn a_cut_page_withdraws_only_itself_not_earlier_reads() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write_tmp(&dir, "keep.rs", &numbered(600));
+    let s = store();
+    read(&s, &path, Some(501)).await; // lines 501-600, seen whole
+    let pending = gate_with(&s, "read_file", Some(&path)).unwrap();
+    let full = ReadFileTool::default()
+        .execute(serde_json::json!({ "path": path }), ctx())
+        .await
+        .unwrap();
+    record_with(&s, pending, &full);
+    let cut = crate::tool_truncate::truncate_result(full.clone(), 1_000, false);
+    retract_cut_with(&s, Some(&path), &full, &cut);
+    let c = canonical(&path).unwrap();
+    assert_eq!(s.lock().unwrap().get(&c).cloned(), Some(vec![(501, 600)]));
+    // Near-miss: an uncut result withdraws nothing.
+    let pending = gate_with(&s, "read_file", Some(&path)).unwrap();
+    record_with(&s, pending, &full);
+    let same = crate::tool_truncate::truncate_result(full.clone(), usize::MAX, false);
+    retract_cut_with(&s, Some(&path), &full, &same);
+    assert!(covers_all(&s.lock().unwrap()[&c], 600));
 }
