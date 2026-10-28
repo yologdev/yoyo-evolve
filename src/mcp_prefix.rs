@@ -361,6 +361,71 @@ pub(crate) fn take_mcp_exited_note() -> Option<String> {
     take_mcp_exited_note_with(&LIVE_MCP_SERVERS, client_exited)
 }
 
+/// The most time exit spends closing live MCP servers, all of them
+/// together (#1099).
+///
+/// Who waits: the user at their shell prompt after `/quit` or a `yoyo -p`
+/// answer (already printed), a script waiting for yoyo's exit code, or a
+/// supervisor that sent SIGTERM. A healthy server is closed in
+/// milliseconds (a group SIGKILL plus a reap), so the bound only binds
+/// when a server's client is locked by a call that never returned. 2s is
+/// short enough that the hung case costs a user a noticeable but not
+/// confusing pause, and it keeps the SIGTERM path (5s flush grace in
+/// `prompt/sigterm.rs` plus this) under the 10s a `docker stop` or
+/// Kubernetes gives before SIGKILL, so the close is not itself cut off.
+/// A server still locked when it runs out is left running: that is the
+/// residue, stated, not a hang.
+pub(crate) const MCP_CLOSE_BOUND: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Drain `store` and close every server in it concurrently, waiting at most
+/// `bound` in total. Returns how many were drained. Draining is what makes a
+/// second call a no-op: two exit doors that both run this cannot close a
+/// server twice or wait twice. The std lock is released before any await.
+async fn close_live_servers_with<C, F, Fut>(
+    store: &std::sync::Mutex<Vec<LiveServer<C>>>,
+    bound: std::time::Duration,
+    close: F,
+) -> usize
+where
+    F: Fn(C) -> Fut,
+    Fut: std::future::Future<Output = ()> + Send + 'static,
+{
+    let servers = std::mem::take(&mut *crate::sync_util::lock_or_recover(store));
+    let drained = servers.len();
+    if drained == 0 {
+        return 0;
+    }
+    // One task per server, so one hung server cannot hold up the others.
+    let mut closing = tokio::task::JoinSet::new();
+    for server in servers {
+        closing.spawn(close(server.client));
+    }
+    // On timeout the JoinSet drops, aborting whatever is still waiting.
+    let _ = tokio::time::timeout(bound, async {
+        while closing.join_next().await.is_some() {}
+    })
+    .await;
+    drained
+}
+
+/// Close every stdio MCP server connected this session (#1099). Since #1098
+/// they run in their own process group, so the terminal's Ctrl+C/SIGHUP no
+/// longer reaches them and `LIVE_MCP_SERVERS` keeps their clients alive past
+/// any Drop: without this, a server that ignores stdin EOF outlives yoyo.
+/// Every exit door reachable after `connect_external_servers` runs this.
+/// Close errors mean the server is already gone, which is the goal.
+pub(crate) async fn close_live_mcp_servers(bound: std::time::Duration) -> usize {
+    close_live_servers_with(
+        &LIVE_MCP_SERVERS,
+        bound,
+        |client: McpClientHandle| async move {
+            let client = client.lock().await;
+            let _ = client.close().await;
+        },
+    )
+    .await
+}
+
 /// Pure: join two optional notes with a blank line; `None` only if both are.
 pub(crate) fn join_notes(a: Option<String>, b: Option<String>) -> Option<String> {
     match (a, b) {
@@ -831,5 +896,63 @@ done
             None,
             "once only"
         );
+    }
+
+    /// #1099: every registered server is handed to `close`, and draining
+    /// makes a second exit door's call a no-op (nothing closed twice).
+    #[tokio::test]
+    async fn close_drains_every_server_once() {
+        let store = std::sync::Mutex::new(Vec::new());
+        register_live_server(&store, "a", &names(&["x"]), 1u32);
+        register_live_server(&store, "b", &names(&["y"]), 2u32);
+        let closed = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let rec = Arc::clone(&closed);
+        let close = move |c: u32| {
+            let rec = Arc::clone(&rec);
+            async move { rec.lock().unwrap().push(c) }
+        };
+        let bound = std::time::Duration::from_secs(2);
+        assert_eq!(
+            close_live_servers_with(&store, bound, close.clone()).await,
+            2
+        );
+        let mut got = closed.lock().unwrap().clone();
+        got.sort();
+        assert_eq!(got, vec![1, 2]);
+        assert_eq!(close_live_servers_with(&store, bound, close).await, 0);
+        assert_eq!(closed.lock().unwrap().len(), 2, "second call closed again");
+    }
+
+    /// #1099: a server whose close never returns costs at most the bound,
+    /// and does not stop a healthy sibling from being closed.
+    #[tokio::test]
+    async fn a_hung_close_is_bounded_and_does_not_block_siblings() {
+        let store = std::sync::Mutex::new(Vec::new());
+        register_live_server(&store, "hung", &names(&["x"]), true);
+        register_live_server(&store, "ok", &names(&["y"]), false);
+        let healthy_closed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = Arc::clone(&healthy_closed);
+        let close = move |hung: bool| {
+            let flag = Arc::clone(&flag);
+            async move {
+                if hung {
+                    std::future::pending::<()>().await;
+                }
+                flag.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        };
+        let start = std::time::Instant::now();
+        let n = close_live_servers_with(&store, std::time::Duration::from_millis(200), close).await;
+        let took = start.elapsed();
+        assert_eq!(n, 2);
+        assert!(
+            took < std::time::Duration::from_secs(2),
+            "bound ignored: {took:?}"
+        );
+        assert!(
+            took >= std::time::Duration::from_millis(150),
+            "did not wait: {took:?}"
+        );
+        assert!(healthy_closed.load(std::sync::atomic::Ordering::SeqCst));
     }
 }

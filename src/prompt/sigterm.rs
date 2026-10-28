@@ -144,6 +144,9 @@ fn arm(kind: tokio::signal::unix::SignalKind, exit_code: i32) {
             let _ = std::io::stderr().write_all(note.as_bytes());
         }
         let _ = std::io::stdout().flush();
+        // #1099: MCP servers sit in their own process group, so this
+        // signal never reached them; close them (bounded) on the way out.
+        crate::mcp_prefix::close_live_mcp_servers(crate::mcp_prefix::MCP_CLOSE_BOUND).await;
         std::process::exit(terminated_exit_code().unwrap_or(exit_code));
     });
 }

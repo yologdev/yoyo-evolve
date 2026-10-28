@@ -428,9 +428,19 @@ fn wants_json_envelope(legacy_json_flag: bool, output_format: cli::OutputFormat)
     legacy_json_flag || output_format == cli::OutputFormat::Json
 }
 
+/// Every exit door reachable after `connect_external_servers` leaves through
+/// here (#1099): stdio MCP servers run in their own process group (#1098),
+/// so nothing else stops one that ignores stdin EOF. Bounded by
+/// [`mcp_prefix::MCP_CLOSE_BOUND`]. Exits before the connect keep their
+/// plain `std::process::exit`: no server can be live there.
+async fn exit_after_shutdown(code: i32) -> ! {
+    mcp_prefix::close_live_mcp_servers(mcp_prefix::MCP_CLOSE_BOUND).await;
+    std::process::exit(code)
+}
+
 /// Handle `--prompt / -p` single-shot mode: run one prompt (optionally with an
 /// image), print the result (or write to `--output`), and return. Calls
-/// `std::process::exit` on fatal errors (bad image, API failure with no
+/// `exit_after_shutdown` on fatal errors (bad image, API failure with no
 /// fallback).
 #[allow(clippy::too_many_arguments)]
 async fn run_single_prompt(
@@ -473,7 +483,7 @@ async fn run_single_prompt(
                 }
                 Err(e) => {
                     eprintln!("{RED}  error: {e}{RESET}");
-                    std::process::exit(1);
+                    exit_after_shutdown(1).await;
                 }
             }
         } else {
@@ -489,7 +499,7 @@ async fn run_single_prompt(
         let code = i32::from(response.last_api_error.is_some());
         let code = save_session_after_turn(agent, save_session, code).await;
         if code != 0 {
-            std::process::exit(code);
+            exit_after_shutdown(code).await;
         }
         return;
     }
@@ -568,13 +578,14 @@ async fn run_single_prompt(
                         prompt_start.elapsed(),
                         count_assistant_turns(agent),
                     );
-                    std::process::exit(save_session_after_turn(agent, save_session, 1).await);
+                    exit_after_shutdown(save_session_after_turn(agent, save_session, 1).await)
+                        .await;
                 }
                 final_response
             }
             Err(e) => {
                 eprintln!("{RED}  error: {e}{RESET}");
-                std::process::exit(1);
+                exit_after_shutdown(1).await;
             }
         }
     } else {
@@ -611,7 +622,7 @@ async fn run_single_prompt(
                 prompt_start.elapsed(),
                 count_assistant_turns(agent),
             );
-            std::process::exit(save_session_after_turn(agent, save_session, 1).await);
+            exit_after_shutdown(save_session_after_turn(agent, save_session, 1).await).await;
         }
         final_response
     };
@@ -662,12 +673,12 @@ async fn run_single_prompt(
     let code = prompt::interrupted_exit_code().unwrap_or(code);
     let code = save_session_after_turn(agent, save_session, code).await;
     if code != 0 {
-        std::process::exit(code);
+        exit_after_shutdown(code).await;
     }
 }
 
 /// Handle piped mode: read all of stdin, run a single prompt, print/write the
-/// result, and return. Calls `std::process::exit` on empty input or fatal API
+/// result, and return. Calls `exit_after_shutdown` on empty input or fatal API
 /// errors.
 /// Returns true if `input` looks like a slash command (its first non-whitespace
 /// character is `/`). Slash commands belong to the REPL; piped mode can't
@@ -768,12 +779,12 @@ async fn run_piped_mode(
     let mut input = String::new();
     if let Err(e) = io::stdin().read_to_string(&mut input) {
         eprintln!("Error reading stdin: {e}");
-        std::process::exit(1);
+        exit_after_shutdown(1).await;
     }
     let input = input.trim();
     if input.is_empty() {
         eprintln!("No input on stdin.");
-        std::process::exit(1);
+        exit_after_shutdown(1).await;
     }
 
     // Piped mode can't dispatch slash commands (they need REPL state). If the
@@ -783,7 +794,7 @@ async fn run_piped_mode(
     // `-p` door cannot drift apart.
     if let Some(msg) = slash_command_refusal(input, PromptDoor::Piped) {
         eprint!("{msg}");
-        std::process::exit(2);
+        exit_after_shutdown(2).await;
     }
 
     // #786: the one tracker for this whole function. Constructed above the
@@ -806,7 +817,7 @@ async fn run_piped_mode(
         let code = i32::from(response.last_api_error.is_some());
         let code = save_session_after_turn(agent, save_session, code).await;
         if code != 0 {
-            std::process::exit(code);
+            exit_after_shutdown(code).await;
         }
         return;
     }
@@ -992,7 +1003,7 @@ async fn run_piped_mode(
     let code = prompt::interrupted_exit_code().unwrap_or(code);
     let code = save_session_after_turn(agent, save_session, code).await;
     if code != 0 {
-        std::process::exit(code);
+        exit_after_shutdown(code).await;
     }
 }
 
@@ -1196,7 +1207,7 @@ fn continue_strict_refusal(path: &str, err: &RestoreError) -> String {
 /// Restore a previously-saved session into the agent. Lenient: a failure
 /// is a stderr note and the run continues (byte-identical to pre-#979).
 /// Under `strict`, any failure exits 1 before a model call is made.
-fn restore_session(agent: &mut Agent, strict: bool) {
+async fn restore_session(agent: &mut Agent, strict: bool) {
     let session_path = commands_session::continue_session_path();
     match restore_session_result(agent, std::path::Path::new(session_path)) {
         Ok(n) => {
@@ -1213,7 +1224,7 @@ fn restore_session(agent: &mut Agent, strict: bool) {
         }
         Err(e) if strict => {
             eprintln!("{}", continue_strict_refusal(session_path, &e));
-            std::process::exit(1);
+            exit_after_shutdown(1).await;
         }
         Err(RestoreError::Unparsable(e)) | Err(RestoreError::NotRegular(e)) => {
             let e = cli::sanitize_for_display(&e);
@@ -1439,7 +1450,7 @@ async fn main() {
     };
 
     if continue_session {
-        restore_session(&mut agent, config.continue_strict);
+        restore_session(&mut agent, config.continue_strict).await;
     }
 
     // --prompt / -p: single-shot mode
@@ -1464,7 +1475,7 @@ async fn main() {
         // sees one contract across both non-interactive prompt doors.
         if let Some(msg) = slash_command_refusal(&prompt_text, PromptDoor::SinglePrompt) {
             eprint!("{msg}");
-            std::process::exit(2);
+            exit_after_shutdown(2).await;
         }
         run_single_prompt(
             &mut agent_config,
@@ -1478,6 +1489,7 @@ async fn main() {
             &config.save_session,
         )
         .await;
+        mcp_prefix::close_live_mcp_servers(mcp_prefix::MCP_CLOSE_BOUND).await;
         return;
     }
 
@@ -1504,6 +1516,7 @@ async fn main() {
             &config.save_session,
         )
         .await;
+        mcp_prefix::close_live_mcp_servers(mcp_prefix::MCP_CLOSE_BOUND).await;
         return;
     }
 
@@ -1532,4 +1545,6 @@ async fn main() {
         },
     )
     .await;
+    // #1099: `/quit`, `/exit` and EOF all return here.
+    mcp_prefix::close_live_mcp_servers(mcp_prefix::MCP_CLOSE_BOUND).await;
 }

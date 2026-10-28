@@ -186,7 +186,7 @@ You used `/diff` or `/undo` outside a git repo.
 
 If a tool execution is hanging, Ctrl+C will abort it.
 
-On Linux and macOS, stdio MCP servers run in their own process group, so the first Ctrl+C (cancel this response) does not reach them and their tools stay available afterwards. When yoyo exits, a server sees its stdin close; a server that ignores a closed stdin can keep running after yoyo is gone.
+On Linux and macOS, stdio MCP servers run in their own process group, so the first Ctrl+C (cancel this response) does not reach them and their tools stay available afterwards. When yoyo exits (`/quit`, end of input, the end of a `-p` or piped run, an error exit, or SIGTERM/SIGHUP/SIGQUIT), it closes every connected server by killing its process group, so a server that ignores a closed stdin is stopped too. Exit waits at most 2 seconds for this; a server still busy with a call that never returned is left running past that. A crash (a panic) or a SIGKILL of yoyo itself skips the close, and then a server that ignores a closed stdin can keep running after yoyo is gone.
 
 ## Background jobs started by the bash tool
 
