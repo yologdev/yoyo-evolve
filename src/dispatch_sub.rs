@@ -368,7 +368,7 @@ pub(crate) fn try_dispatch_subcommand_in(
                 // do NOT run the full parse_args pipeline because `yoyo doctor`
                 // should work even when the API key / model setup is incomplete
                 // (that's exactly the failure mode the diagnostic exists to detect).
-                let (file_config, _) = load_config_file();
+                let (file_config, raw_config) = load_config_file();
                 let provider = flag_value(args, &["--provider"])
                     .or_else(|| file_config.get("provider").cloned())
                     .unwrap_or_else(|| "anthropic".into())
@@ -380,10 +380,11 @@ pub(crate) fn try_dispatch_subcommand_in(
                     "doctor [--provider P] [--model M]",
                     positional_after_verb(&args[2..]).first().copied(),
                 );
-                // No session, so no startup fence is built here (#1043 residue).
-                let no_fence = crate::config::DirectoryRestrictions::default();
+                // #1045: the startup fence a session would build, so a
+                // refused instruction file is reported as refused.
+                let fence = crate::cli::startup_dir_restrictions(args, &raw_config);
                 let shell = crate::commands_dev::DoctorSurface::Shell;
-                crate::commands_dev::handle_doctor(&provider, &model, &no_fence, shell);
+                crate::commands_dev::handle_doctor(&provider, &model, &fence, shell);
                 return Some(None);
             }
             "health" => {

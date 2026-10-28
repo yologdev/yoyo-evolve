@@ -4009,6 +4009,40 @@ fn shell_doctor_rows_advise_commands_the_shell_can_run() {
 }
 
 #[test]
+fn shell_doctor_names_an_instruction_file_the_config_fence_refuses() {
+    // #1045: shell `yoyo doctor` built no fence, so a `[directories] deny`
+    // the session enforces was ignored and a refused CLAUDE.md was listed as
+    // loaded. A deny entry only narrows, so no trust setup is needed.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path().canonicalize().expect("canonicalize");
+    std::fs::write(root.join("CLAUDE.md"), "be nice\n").unwrap();
+    let toml = format!("[directories]\ndeny = [\"{}\"]\n", root.display());
+    std::fs::write(root.join(".yoyo.toml"), toml).unwrap();
+    let (code, stdout, stderr) = yoyo_plain_in(&root, &["doctor"]);
+    assert_eq!(code, Some(0), "stdout={stdout} stderr={stderr}");
+    assert!(
+        stdout.contains("CLAUDE.md (refused by the directory fence:"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("CLAUDE.md (1 lines)"), "{stdout}");
+    assert!(!stdout.contains("create YOYO.md"), "{stdout}");
+
+    // Near-miss: same project without the fence lists the file as loaded.
+    std::fs::remove_file(root.join(".yoyo.toml")).unwrap();
+    // The `--deny-dir` flag builds the same fence as the config.
+    let flag = root.display().to_string();
+    let (code, stdout, _) = yoyo_plain_in(&root, &["doctor", "--deny-dir", &flag]);
+    assert_eq!(code, Some(0), "{stdout}");
+    assert!(
+        stdout.contains("CLAUDE.md (refused by the directory fence:"),
+        "{stdout}"
+    );
+    let (_, stdout, _) = yoyo_plain_in(&root, &["doctor"]);
+    assert!(stdout.contains("CLAUDE.md (1 lines)"), "{stdout}");
+    assert!(!stdout.contains("refused"), "{stdout}");
+}
+
+#[test]
 fn unknown_skill_goal_todo_and_bare_ast_exit_two_through_the_binary() {
     // #982: these printed a usage/unknown-subcommand message and exited 0.
     // The status helpers are unit-tested in commands_skill.rs and

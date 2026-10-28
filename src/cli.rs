@@ -1738,6 +1738,26 @@ Project-local .yoyo.toml MCP servers, permissions.allow and shell hooks are live
     )
 }
 
+/// The startup directory fence: `--allow-dir`/`--deny-dir` (repeatable)
+/// override the config's `[directories]`. Shared with shell `yoyo doctor`
+/// (#1045) so it reports the fence a session would build. Not trust-gated:
+/// both lists only narrow. `--restricted` is applied later, by the session.
+pub(crate) fn startup_dir_restrictions(
+    args: &[String],
+    raw_config_content: &str,
+) -> DirectoryRestrictions {
+    let cli_allow_dirs = collect_repeatable_flag(args, "--allow-dir");
+    let cli_deny_dirs = collect_repeatable_flag(args, "--deny-dir");
+    if cli_allow_dirs.is_empty() && cli_deny_dirs.is_empty() {
+        parse_directories_from_config(raw_config_content)
+    } else {
+        DirectoryRestrictions {
+            allow: cli_allow_dirs,
+            deny: cli_deny_dirs,
+        }
+    }
+}
+
 /// Parse permission and directory restriction config from CLI args and config file content.
 fn parse_permission_and_dir_config(
     args: &[String],
@@ -1780,21 +1800,7 @@ fn parse_permission_and_dir_config(
     let permissions = gated.permissions;
     crate::cd_allow::record_at_startup(from_cli_flags, &permissions.allow); // #869: for /cd
 
-    // --allow-dir <dir> flags: collect all allowed directories (repeatable)
-    let cli_allow_dirs = collect_repeatable_flag(args, "--allow-dir");
-
-    // --deny-dir <dir> flags: collect all denied directories (repeatable)
-    let cli_deny_dirs = collect_repeatable_flag(args, "--deny-dir");
-
-    // Build directory restrictions: CLI flags override config file
-    let dir_restrictions = if cli_allow_dirs.is_empty() && cli_deny_dirs.is_empty() {
-        parse_directories_from_config(raw_config_content)
-    } else {
-        DirectoryRestrictions {
-            allow: cli_allow_dirs,
-            deny: cli_deny_dirs,
-        }
-    };
+    let dir_restrictions = startup_dir_restrictions(args, raw_config_content);
 
     // #823: `[directories]` entries are matched by prefix, never globbed, so a
     // `src/*` can never match anything — an allow list that fails safe but

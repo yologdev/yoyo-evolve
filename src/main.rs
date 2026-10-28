@@ -59,6 +59,8 @@ mod commands_config_get;
 mod commands_config_get_tests;
 mod commands_config_mcp;
 mod commands_dev;
+#[cfg(test)]
+mod commands_dev_tests;
 mod commands_file;
 mod commands_file_fence;
 #[cfg(test)]

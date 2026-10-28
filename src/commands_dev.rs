@@ -170,24 +170,8 @@ pub fn run_doctor_checks(
     }
 
     // 8. Project context
-    let (context_files, _) = cli::list_project_context_files(restrictions);
-    if context_files.is_empty() {
-        checks.push(DoctorCheck {
-            name: "Project context".to_string(),
-            status: DoctorStatus::Warn,
-            detail: no_context_file_detail(surface).to_string(),
-        });
-    } else {
-        let descriptions: Vec<String> = context_files
-            .iter()
-            .map(|(name, lines)| format!("{name} ({lines} lines)"))
-            .collect();
-        checks.push(DoctorCheck {
-            name: "Project context".to_string(),
-            status: DoctorStatus::Pass,
-            detail: descriptions.join(", "),
-        });
-    }
+    let listing = cli::list_project_context_files(restrictions);
+    checks.push(project_context_check(&listing, surface));
 
     // 9. Curl
     let curl_found = matches!(
@@ -262,6 +246,35 @@ pub fn run_doctor_checks(
     });
 
     checks
+}
+
+/// The project-context row (#1045): a file the directory fence refuses is
+/// named as refused (the `/context` formatter, #1043), never dropped, and the
+/// "create YOYO.md" advice is kept for when no file exists at all.
+pub(crate) fn project_context_check(
+    listing: &crate::context::ContextFileListing,
+    surface: DoctorSurface,
+) -> DoctorCheck {
+    let (files, refused) = listing;
+    let mut rows: Vec<String> = files
+        .iter()
+        .map(|(name, lines)| format!("{name} ({lines} lines)"))
+        .collect();
+    rows.extend(
+        refused
+            .iter()
+            .map(|(name, reason)| crate::commands_project::refused_context_file_line(name, reason)),
+    );
+    let (status, detail) = match (files.is_empty(), refused.is_empty()) {
+        (true, true) => (DoctorStatus::Warn, no_context_file_detail(surface).into()),
+        (true, false) => (DoctorStatus::Warn, rows.join(", ")),
+        _ => (DoctorStatus::Pass, rows.join(", ")),
+    };
+    DoctorCheck {
+        name: "Project context".to_string(),
+        status,
+        detail,
+    }
 }
 
 /// Project-context row text when no context file exists (#1075): each surface
