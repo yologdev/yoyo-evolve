@@ -1675,47 +1675,50 @@ fn test_estimate_cost_glm5() {
 /// #1012 (Day 239): the gemini 3.x flash ids the `contains("gemini-3")` estimate arm
 /// billed at a made-up $0.15 / $0.60. Each row is Google's own pricing page
 /// (ai.google.dev/gemini-api/docs/pricing, read 2026-10-25) and agrees with models.dev,
-/// except `gemini-3.6-flash`: Google bills an introductory $0.75 / $3.75 / $0.075 through
-/// 2026-12-31 (models.dev lists that), and yoyo bills the regular $1.50 / $7.50 / $0.15,
-/// the upper-bound rule yoagent uses for `gemini-3.8-flash`. All are typed-only ids (none
-/// is in yoyo's google picker), read through `price_of`, the `/cost` resolver.
+/// except `gemini-3.6-flash`, whose row is Google's regular $1.50 / $7.50 / $0.15: until
+/// 2026-12-31 Google bills an introductory $0.75 / $3.75 / $0.075 (models.dev lists that),
+/// which `promo.rs` applies by date (Day 242), so this test prices after the promo. All are
+/// typed-only ids (none is in yoyo's google picker), read through `price_of`, the `/cost` resolver.
 #[test]
 fn reconciled_gemini_3x_flash_rows_bill_googles_price() {
-    let rows: [(&str, Rates); 9] = [
-        ("gemini-3-flash-preview", (0.5, 0.0, 0.05, 3.0)),
-        ("gemini-3.1-flash-lite", (0.25, 0.0, 0.025, 1.5)),
-        ("gemini-3.5-flash-lite", (0.3, 0.0, 0.03, 2.5)),
-        ("gemini-3.1-flash-image", (0.5, 0.0, 0.0, 60.0)),
-        ("gemini-3.1-flash-lite-image", (0.25, 0.0, 0.0, 30.0)),
-        ("gemini-3.1-flash-live-preview", (0.75, 0.0, 0.0, 4.5)),
-        ("gemini-3.1-flash-tts-preview", (1.0, 0.0, 0.0, 20.0)),
-        ("gemini-3.5-live-translate-preview", (3.5, 0.0, 0.0, 21.0)),
-        ("gemini-3.6-flash", (1.5, 0.0, 0.15, 7.5)),
-    ];
-    for (id, expected) in rows {
-        let got = price_of(id).unwrap_or_else(|| panic!("{id} must be priced by /cost"));
-        assert!(
+    // Regular rates: priced after every Google promo has ended (`promo.rs`).
+    super::promo::with_now(super::promo::AFTER_ALL_PROMOS_UNIX, || {
+        let rows: [(&str, Rates); 9] = [
+            ("gemini-3-flash-preview", (0.5, 0.0, 0.05, 3.0)),
+            ("gemini-3.1-flash-lite", (0.25, 0.0, 0.025, 1.5)),
+            ("gemini-3.5-flash-lite", (0.3, 0.0, 0.03, 2.5)),
+            ("gemini-3.1-flash-image", (0.5, 0.0, 0.0, 60.0)),
+            ("gemini-3.1-flash-lite-image", (0.25, 0.0, 0.0, 30.0)),
+            ("gemini-3.1-flash-live-preview", (0.75, 0.0, 0.0, 4.5)),
+            ("gemini-3.1-flash-tts-preview", (1.0, 0.0, 0.0, 20.0)),
+            ("gemini-3.5-live-translate-preview", (3.5, 0.0, 0.0, 21.0)),
+            ("gemini-3.6-flash", (1.5, 0.0, 0.15, 7.5)),
+        ];
+        for (id, expected) in rows {
+            let got = price_of(id).unwrap_or_else(|| panic!("{id} must be priced by /cost"));
+            assert!(
             cells_within(got, expected, 1e-9),
             "{id}: /cost resolves {got:?}, Google's pricing page (2026-10-25) says {expected:?}"
         );
-    }
-    // Near-misses: ids no Google page documents keep the estimate arm, and the arms
-    // are exact, so an undocumented `-preview` does not inherit its base id's price.
-    // (`gemini-3.5-flash`, `gemini-3.7-flash` and `gemini-3.1-flash-lite-preview`
-    // stood here until Day 242; Google's deprecations page now says where each goes,
-    // pinned in `retired_gemini_ids_bill_what_googles_deprecations_page_names`.)
-    for id in [
-        "gemini-3.9-flash",
-        "gemini-3.6-flash-preview",
-        "gemini-3.1-flash-lite-preview-02",
-    ] {
-        assert_eq!(price_of(id), Some((0.15, 0.0, 0.0, 0.60)), "{id}");
-    }
-    // The pro sub-arm of the same block is untouched by this slice.
-    assert_eq!(
-        price_of("gemini-3-pro-preview"),
-        Some((1.25, 0.0, 0.0, 10.00))
-    );
+        }
+        // Near-misses: ids no Google page documents keep the estimate arm, and the arms
+        // are exact, so an undocumented `-preview` does not inherit its base id's price.
+        // (`gemini-3.5-flash`, `gemini-3.7-flash` and `gemini-3.1-flash-lite-preview`
+        // stood here until Day 242; Google's deprecations page now says where each goes,
+        // pinned in `retired_gemini_ids_bill_what_googles_deprecations_page_names`.)
+        for id in [
+            "gemini-3.9-flash",
+            "gemini-3.6-flash-preview",
+            "gemini-3.1-flash-lite-preview-02",
+        ] {
+            assert_eq!(price_of(id), Some((0.15, 0.0, 0.0, 0.60)), "{id}");
+        }
+        // The pro sub-arm of the same block is untouched by this slice.
+        assert_eq!(
+            price_of("gemini-3-pro-preview"),
+            Some((1.25, 0.0, 0.0, 10.00))
+        );
+    });
 }
 
 /// #1012, Day 239: the gemini pro rows Google's pricing page lists
@@ -1758,8 +1761,8 @@ fn reconciled_gemini_3x_pro_rows_bill_googles_price() {
 /// Google's deprecations page (ai.google.dev/gemini-api/docs/deprecations, read
 /// 2026-10-28) says what happens to each, and that is what selects the price:
 /// - `gemini-3.7-flash`: "the endpoint is not shutting down and automatically routes
-///   API requests to `gemini-3.8-flash`", so it bills 3.8's regular rate (models.dev
-///   lists the 3.8 introductory rate).
+///   API requests to `gemini-3.8-flash`", so it bills whatever 3.8 bills (introductory
+///   until 2026-12-31, then regular).
 /// - `gemini-3.5-flash`: routes to `gemini-3.6-flash` the same way, but neither page
 ///   says whether a routed call bills at 3.6's price or 3.5's own ($1.50 / $9.00, which
 ///   models.dev keeps). Nothing yoyo sends selects between them, so cost-tracking.md's
@@ -1770,48 +1773,51 @@ fn reconciled_gemini_3x_pro_rows_bill_googles_price() {
 ///   also models.dev's figure.
 ///
 /// Also pinned: the two picker ids `gemini-3.8-flash` and `gemini-4-argon` bill
-/// Google's REGULAR rate (yoagent's preset), not the introductory one models.dev
-/// lists (Google: $0.75/$3.75/$0.075 to 2026-12-31 and $2/$10/$0.10 to 2026-11-30),
-/// per cost-tracking.md's error direction. They stay in the drift list on purpose.
+/// Google's REGULAR rate (yoagent's preset) once their promos end. Until then
+/// (2026-12-31 and 2026-11-30) `promo.rs` bills the introductory rate models.dev lists
+/// (Day 242: the selector is the date, and yoyo has a clock), so this test prices after.
 #[test]
 fn retired_gemini_ids_bill_what_googles_deprecations_page_names() {
-    let rows: [(&str, Rates); 7] = [
-        ("gemini-3.5-flash", (1.5, 0.0, 0.15, 9.0)),
-        ("gemini-3.7-flash", (1.5, 0.0, 0.15, 7.5)),
-        ("gemini-3.1-flash-lite-preview", (0.25, 0.0, 0.025, 1.5)),
-        ("gemini-3.1-flash-image-preview", (0.5, 0.0, 0.0, 60.0)),
-        ("gemini-3-pro-image-preview", (2.0, 0.0, 0.0, 120.0)),
-        ("gemini-3.8-flash", (1.5, 0.0, 0.15, 7.5)),
-        ("gemini-4-argon", (4.0, 0.0, 0.2, 20.0)),
-    ];
-    for (id, expected) in rows {
-        let got = price_of(id).unwrap_or_else(|| panic!("{id} must be priced by /cost"));
-        assert!(
+    // Regular rates: priced after every Google promo has ended (`promo.rs`).
+    super::promo::with_now(super::promo::AFTER_ALL_PROMOS_UNIX, || {
+        let rows: [(&str, Rates); 7] = [
+            ("gemini-3.5-flash", (1.5, 0.0, 0.15, 9.0)),
+            ("gemini-3.7-flash", (1.5, 0.0, 0.15, 7.5)),
+            ("gemini-3.1-flash-lite-preview", (0.25, 0.0, 0.025, 1.5)),
+            ("gemini-3.1-flash-image-preview", (0.5, 0.0, 0.0, 60.0)),
+            ("gemini-3-pro-image-preview", (2.0, 0.0, 0.0, 120.0)),
+            ("gemini-3.8-flash", (1.5, 0.0, 0.15, 7.5)),
+            ("gemini-4-argon", (4.0, 0.0, 0.2, 20.0)),
+        ];
+        for (id, expected) in rows {
+            let got = price_of(id).unwrap_or_else(|| panic!("{id} must be priced by /cost"));
+            assert!(
             cells_within(got, expected, 1e-9),
             "{id}: /cost resolves {got:?}, Google's pricing/deprecations pages (2026-10-28) say {expected:?}"
         );
-    }
-    // Each retired id bills exactly what its successor bills, so a later re-price of
-    // the successor cannot leave the alias behind. 3.5 is the exception above: never
-    // below its routed successor on any cell.
-    let (r, s) = (price_of("gemini-3.5-flash"), price_of("gemini-3.6-flash"));
-    let (r, s) = (r.unwrap(), s.unwrap());
-    assert!(
-        r.0 >= s.0 && r.2 >= s.2 && r.3 > s.3,
-        "3.5 {r:?} vs 3.6 {s:?}"
-    );
-    for (retired, successor) in [
-        ("gemini-3.7-flash", "gemini-3.8-flash"),
-        ("gemini-3.1-flash-lite-preview", "gemini-3.1-flash-lite"),
-        ("gemini-3.1-flash-image-preview", "gemini-3.1-flash-image"),
-        ("gemini-3-pro-image-preview", "gemini-3-pro-image"),
-    ] {
-        assert_eq!(
-            price_of(retired),
-            price_of(successor),
-            "{retired} vs {successor}"
+        }
+        // Each retired id bills exactly what its successor bills, so a later re-price of
+        // the successor cannot leave the alias behind. 3.5 is the exception above: never
+        // below its routed successor on any cell.
+        let (r, s) = (price_of("gemini-3.5-flash"), price_of("gemini-3.6-flash"));
+        let (r, s) = (r.unwrap(), s.unwrap());
+        assert!(
+            r.0 >= s.0 && r.2 >= s.2 && r.3 > s.3,
+            "3.5 {r:?} vs 3.6 {s:?}"
         );
-    }
+        for (retired, successor) in [
+            ("gemini-3.7-flash", "gemini-3.8-flash"),
+            ("gemini-3.1-flash-lite-preview", "gemini-3.1-flash-lite"),
+            ("gemini-3.1-flash-image-preview", "gemini-3.1-flash-image"),
+            ("gemini-3-pro-image-preview", "gemini-3-pro-image"),
+        ] {
+            assert_eq!(
+                price_of(retired),
+                price_of(successor),
+                "{retired} vs {successor}"
+            );
+        }
+    });
 }
 
 /// #1012, Day 241: the xai rows docs.x.ai/docs/models lists (fetched 2026-10-27; the

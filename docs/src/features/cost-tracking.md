@@ -73,8 +73,12 @@ Use `/tokens` to see a full breakdown including cache usage:
 Costs are estimated based on published pricing for all major providers.
 
 **Error direction.** Where a vendor's price varies (a promotion, a context tier,
-a time-of-day rate), the table either models the variation or uses the higher
-rate, so an estimate is meant to read high, not low. Two places do not meet
+a time-of-day rate, a regional endpoint), what decides the rate is the variation's
+*selector*: the date, the endpoint, the prompt size, the account tier. When the
+selector reaches yoyo (yoyo has a clock, knows the endpoint it calls, and sees each
+prompt's size), the table models the variation. Only when the selector never reaches
+yoyo does it use the higher rate instead, so an estimate is meant to read high, not
+low. Date-keyed rows are listed under Google below. Two places do not meet
 that yet, and both read low: DeepSeek is priced at its off-peak rate (see below);
 and the session cost line for a tiered model (Haiku 5.5, Gemini 3.1 Pro, Grok 4.x)
 uses the base rate, where only the per-turn breakdown applies the tier. (Until
@@ -156,9 +160,18 @@ tier applies. Gemini 3.1 Pro (see Google below) is tiered the same way.
 | Gemini 4 Argon (`gemini-4-argon`) | $4/MTok | $20/MTok |
 | Gemini 3.5 Flash (`gemini-3.5-flash`, retired) | $1.50/MTok | $9/MTok |
 
-Gemini 3.6 Flash, 3.8 Flash and 4 Argon are billed at Google's regular rate. Google charges an
-introductory $0.75 / $3.75 (3.6 and 3.8, through 2026-12-31) and $2 / $10 (4 Argon, through
-2026-11-30), so until those dates `/cost` reads about twice the bill. Google's deprecations page
+The rates in the table for Gemini 3.6 Flash, 3.8 Flash (and `gemini-3.7-flash`) and 4 Argon are
+Google's regular rates. Until each introductory window ends, yoyo bills the introductory rate
+instead, keyed on the date (since Day 242; before that `/cost` read about twice the bill):
+
+| Model | Introductory input / cache read / output | Through | Regular from |
+|-------|------------------------------------------|---------|--------------|
+| `gemini-4-argon` | $2 / $0.10 / $10 | 2026-11-30 | 2026-12-01 00:00 UTC |
+| `gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.6-flash` | $0.75 / $0.075 / $3.75 | 2026-12-31 | 2027-01-01 00:00 UTC |
+
+Google names no time zone, so the switch is at the earliest reading (midnight UTC); if Google
+means a later zone, those hours read high. A cost is priced when it is shown, so a session from
+before the switch summed after it also reads high. Google's deprecations page
 says `gemini-3.7-flash` requests go to 3.8 Flash, so it bills 3.8's rate.
 `gemini-3.5-flash` requests go to 3.6 Flash, but Google doesn't say at which model's price, so it
 keeps its own $9 output, the higher of the two. The shut-down previews `gemini-3.1-flash-lite-preview`,

@@ -150,7 +150,13 @@ fn cost_table_reads_the_preset_price() {
             c.cache_read_per_million,
             c.output_per_million,
         ));
-        assert_eq!(model_pricing_with(&none, id), want, "{id}");
+        // After Google's introductory windows end (#1012, Day 242): before then the
+        // two google ids bill the promo rate, pinned in `format/cost/promo_tests.rs`.
+        let got =
+            crate::format::promo::with_now(crate::format::promo::AFTER_ALL_PROMOS_UNIX, || {
+                model_pricing_with(&none, id)
+            });
+        assert_eq!(got, want, "{id}");
     }
     // Near-miss keeps the hand-kept estimate it had before.
     assert_eq!(

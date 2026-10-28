@@ -2,7 +2,8 @@
 
 use crate::config::ModelPricingOverrides;
 
-// #1012: xAI's US-endpoint premium, decided by the endpoint yoyo calls.
+// #1012: Google's promos (by the date) and xAI's US-endpoint premium (by the endpoint).
+pub(crate) mod promo;
 mod xai_region;
 pub use xai_region::{is_xai_us_endpoint, set_xai_us_region};
 
@@ -56,7 +57,9 @@ pub fn model_pricing_with(
     if let Some(price) = overrides.lookup(model) {
         return Some((price.input_per_million, 0.0, 0.0, price.output_per_million));
     }
-    builtin_model_pricing(model).map(|row| xai_region::region_row(model, row))
+    promo::promo_pricing_at(strip_router_prefix(model), promo::now_unix_secs())
+        .or_else(|| builtin_model_pricing(model))
+        .map(|row| xai_region::region_row(model, row))
 }
 
 /// The local price table, consulted only when neither a user override nor a
@@ -189,13 +192,10 @@ fn builtin_model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
     }
 
     // ── Google Gemini ─────────────────────────────────────────────────
-    // https://ai.google.dev/pricing
-    // Gemini 3.x: exact ids from Google's page, agreeing with models.dev (2026-10-25, #1012).
-    // Image/tts/live rows bill the image/audio/text output rate models.dev lists.
-    // gemini-3.6-flash: regular rate; Google bills $0.75/$3.75/$0.075 through 2026-12-31
-    // (an upper bound, the rule yoagent uses for gemini-3.8-flash). Retired ids bill their
-    // successor per Google's deprecations page (2026-10-28), except 3.5 (routes to 3.6;
-    // the page never says at whose price, so it keeps its own higher 9.00 output).
+    // Gemini 3.x: exact ids from https://ai.google.dev/pricing = models.dev (2026-10-25, #1012).
+    // Image/tts/live: models.dev's output rate. 3.6/3.7/3.8 flash: regular; `promo` goes first.
+    // Retired ids bill their successor per Google's deprecations page (2026-10-28), except
+    // 3.5 (routes to 3.6, at a price Google never names, so it keeps its higher 9.00 output).
     if model.contains("gemini-3") {
         match model {
             "gemini-3-flash-preview" => return Some((0.50, 0.0, 0.05, 3.00)),
