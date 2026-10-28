@@ -35,7 +35,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use yoagent::agent::Agent;
-use yoagent::mcp::{McpClient, McpError, McpToolSource};
+use yoagent::mcp::{McpClient, McpError, McpToolSource, StdioOptions};
 use yoagent::ToolSource;
 
 use crate::agent_builder::{detect_mcp_collisions, record_failed_server};
@@ -146,6 +146,21 @@ pub(crate) fn prefix_applied_message(
     )
 }
 
+/// How every stdio MCP server yoyo spawns is started — the pre-flight listing
+/// (`agent_builder::fetch_mcp_tool_names`) and the real connect below both
+/// call this, so the two spawns cannot drift (#1098).
+///
+/// `own_process_group(true)`: the server runs in a process group of its own,
+/// so the REPL's "interrupt this turn" Ctrl+C (SIGINT to the terminal's
+/// foreground group) no longer reaches it and kills it silently. The bash tool
+/// and `/bg` already do the same with `process_group(0)`. yoagent ignores the
+/// option off Unix. The cost yoagent names: a host exit that skips `close`
+/// leaves group members that ignore a closed stdin running, since the
+/// terminal's hangup no longer reaches them.
+pub(crate) fn mcp_stdio_options() -> StdioOptions {
+    StdioOptions::new().own_process_group(true)
+}
+
 /// Spawn a client for one stdio server and wrap it in yoagent's
 /// [`McpToolSource`], named `<prefix>__<tool>` when `prefix` is `Some` and
 /// by the server's own names when `None`. Returns the source and the names
@@ -169,7 +184,7 @@ pub(crate) async fn mcp_tool_source(
     env: Option<HashMap<String, String>>,
     prefix: Option<&str>,
 ) -> Result<(Arc<dyn ToolSource>, Vec<String>, McpClientHandle), McpError> {
-    let client = McpClient::connect_stdio(command, args, env).await?;
+    let client = McpClient::connect_stdio_with(command, args, env, mcp_stdio_options()).await?;
     let names: Vec<String> = client
         .list_tools()
         .await?

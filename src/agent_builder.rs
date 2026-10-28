@@ -149,9 +149,14 @@ async fn fetch_mcp_tool_names(
     args: &[&str],
     env: Option<std::collections::HashMap<String, String>>,
 ) -> Result<Vec<String>, String> {
-    let client = yoagent::mcp::McpClient::connect_stdio(command, args, env)
-        .await
-        .map_err(|e| format!("{e}"))?;
+    let client = yoagent::mcp::McpClient::connect_stdio_with(
+        command,
+        args,
+        env,
+        crate::mcp_prefix::mcp_stdio_options(),
+    )
+    .await
+    .map_err(|e| format!("{e}"))?;
     let tools = client.list_tools().await.map_err(|e| format!("{e}"))?;
     // Best-effort close; ignore errors since we're about to drop the client.
     let _ = client.close().await;
