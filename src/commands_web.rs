@@ -632,9 +632,7 @@ fn copy_to_clipboard(text: &str) -> Result<(), String> {
         .map_err(|e| format!("Failed to run {cmd}: {e}"))?;
 
     if let Some(ref mut stdin) = child.stdin {
-        use std::io::Write;
-        stdin
-            .write_all(text.as_bytes())
+        crate::sigpipe_safe_write::write_all_no_sigpipe(stdin, text.as_bytes())
             .map_err(|e| format!("Failed to write to {cmd}: {e}"))?;
     }
 

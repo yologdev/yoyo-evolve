@@ -192,6 +192,7 @@ mod rtk;
 mod safety;
 mod session;
 mod setup;
+mod sigpipe_safe_write;
 mod skill_fence;
 mod smart_edit;
 mod stream_leading_blank;

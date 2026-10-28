@@ -795,11 +795,9 @@ pub fn post_pr_review(pr_number: u32, comments: &[ReviewComment]) -> Result<Stri
         .map_err(|e| format!("`gh` CLI not found or failed to start: {e}"))?;
 
     // Write JSON payload to stdin
-    use std::io::Write;
     let mut child = output;
     if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(payload.as_bytes())
+        crate::sigpipe_safe_write::write_all_no_sigpipe(&mut stdin, payload.as_bytes())
             .map_err(|e| format!("Failed to write to gh stdin: {e}"))?;
     }
 
