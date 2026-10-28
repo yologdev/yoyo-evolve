@@ -7,6 +7,7 @@
 use crate::format::*;
 use crate::prompt::run_prompt;
 use crate::prompt_utils::summarize_message;
+use crate::spawn_worktree::hold_worktree_lock;
 pub use crate::spawn_worktree::{cleanup_spawn_worktree, cleanup_stale_worktrees, WorktreeCleanup};
 use crate::spawn_worktree::{repo_root, run_git_in};
 use crate::sync_util::lock_or_recover;
@@ -861,6 +862,8 @@ pub async fn handle_spawn(
             None
         }
     };
+    // Held until return: no yoyo process's stale sweep takes it meanwhile (#1097).
+    let _wt_lock = worktree.as_ref().and_then(|w| hold_worktree_lock(&w.path));
 
     // Load project context for the subagent, honouring the parent's --safe-mode
     // (#902 slice): a confined parent must not dispatch an unconfined worker.
@@ -1026,6 +1029,8 @@ fn handle_spawn_bg(
             None
         }
     };
+    // Moved into the worker; held for its lifetime, by any process's sweep (#1097).
+    let wt_lock = worktree.as_ref().and_then(|w| hold_worktree_lock(&w.path));
 
     // Prepare everything the background task needs (clone before moving).
     // Honours the parent's --safe-mode (#902 slice), same as the foreground path.
@@ -1067,6 +1072,7 @@ fn handle_spawn_bg(
     let tracker_clone = tracker.clone();
 
     let handle = tokio::spawn(async move {
+        let _wt_lock = wt_lock;
         let mut sub_agent = sub_config.build_agent();
         let mut bg_usage = Usage::default();
 

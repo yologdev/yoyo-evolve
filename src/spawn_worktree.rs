@@ -29,6 +29,15 @@
 //! handoff's `git add -A` does not carry them either, so they were never part
 //! of what a worker hands back.
 //!
+//! **Live workers are never swept (#1057, #1097).** A worker holds an
+//! exclusive OS advisory lock on a SIBLING file of its worktree
+//! (`.yoyo/worktrees/spawn-3-17.lock`, never inside the tree, where it would
+//! show in the worktree's own `git status`) for as long as it runs. The stale
+//! sweep adds every candidate whose lock another open handle holds — in this
+//! yoyo process or any other — to the same `live` skip list its own tracker
+//! feeds. The OS drops the lock when the holder dies, so a crashed session
+//! leaves an unheld file and its worktree is swept as before.
+//!
 //! **Branches:** nothing here deletes a branch (no `git branch -d/-D`); the
 //! handoff branch `spawn/<id>-<sha>` survives every removal by design.
 
@@ -186,14 +195,15 @@ fn remove_spawn_worktree_dir(root: &Path, path: &Path, start: Option<&str>) -> W
 
     let wt_str = path.to_string_lossy().to_string();
     // Clean: force-remove first, then plain remove, then manual cleanup.
-    if run_git_in(root, &["worktree", "remove", "--force", &wt_str]).is_ok() {
-        return WorktreeCleanup::Removed;
+    if run_git_in(root, &["worktree", "remove", "--force", &wt_str]).is_err()
+        && run_git_in(root, &["worktree", "remove", &wt_str]).is_err()
+    {
+        let _ = std::fs::remove_dir_all(path);
+        let _ = run_git_in(root, &["worktree", "prune"]);
     }
-    if run_git_in(root, &["worktree", "remove", &wt_str]).is_ok() {
-        return WorktreeCleanup::Removed;
-    }
-    let _ = std::fs::remove_dir_all(path);
-    let _ = run_git_in(root, &["worktree", "prune"]);
+    // The lock sibling goes with its directory (#1097); an owner still holding
+    // it keeps a handle to the unlinked file until it drops the guard.
+    let _ = std::fs::remove_file(worktree_lock_path(path));
     WorktreeCleanup::Removed
 }
 
@@ -210,6 +220,7 @@ pub fn cleanup_spawn_worktree(
 
     // If the worktree directory doesn't exist any more, just prune stale metadata.
     if !info.path.exists() {
+        let _ = std::fs::remove_file(worktree_lock_path(&info.path));
         let _ = run_git_in(&root, &["worktree", "prune"]);
         return Ok(WorktreeCleanup::Removed);
     }
@@ -278,15 +289,68 @@ impl crate::commands_spawn::SpawnTracker {
     }
 }
 
+/// The lock file of a spawn worktree: a SIBLING of the directory
+/// (`spawn-3-17` -> `spawn-3-17.lock`), not inside it. A file inside would
+/// show in the worktree's `git status`, turning every live worktree "dirty"
+/// for the held-work guard and the /spawn write tap.
+pub(crate) fn worktree_lock_path(worktree: &Path) -> PathBuf {
+    let mut name = worktree
+        .file_name()
+        .map(|n| n.to_os_string())
+        .unwrap_or_default();
+    name.push(".lock");
+    worktree.with_file_name(name)
+}
+
+/// A held worktree lock (#1097). Dropping it — including the OS closing the
+/// handle when the process dies, however it dies — releases the lock.
+#[derive(Debug)]
+pub(crate) struct WorktreeLock {
+    _file: std::fs::File,
+}
+
+/// Take the exclusive advisory lock for a worker's worktree, creating the lock
+/// file if needed. Uses std's `File::try_lock` (flock on Unix, LockFileEx on
+/// Windows), never blocking. `None` if the file cannot be opened or locked —
+/// including on a platform where std's file locking is unsupported — and the
+/// worker then runs unlocked, which is the behaviour before #1097: only this
+/// process's tracker protects it.
+pub(crate) fn hold_worktree_lock(worktree: &Path) -> Option<WorktreeLock> {
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(worktree_lock_path(worktree))
+        .ok()?;
+    file.try_lock().ok()?;
+    Some(WorktreeLock { _file: file })
+}
+
+/// Is the worktree's lock held by an open handle other than the one this call
+/// opens — another yoyo process's worker, or a worker of this process (flock
+/// and LockFileEx conflict per handle)? `try_lock` refused with WouldBlock:
+/// held, so live. Taken: release it at once (drop) and not live. No lock file
+/// (a worktree from before #1097, or a crashed create) is not live. Any other
+/// error, including "unsupported on this platform", is NOT live: the sweep then
+/// behaves exactly as before #1097, and the held-work guard still keeps a dirty
+/// worktree.
+pub(crate) fn held_by_another(worktree: &Path) -> bool {
+    let Ok(file) = std::fs::File::open(worktree_lock_path(worktree)) else {
+        return false;
+    };
+    matches!(file.try_lock(), Err(std::fs::TryLockError::WouldBlock))
+}
+
 /// Clean up spawn worktrees older than `max_age`.
 ///
 /// Scans `<repo>/.yoyo/worktrees/spawn-*` and removes any whose root
 /// directory modified-time is older than `max_age` ago, except the worktrees
-/// in `live` (still-running `--bg` workers of this process, #1057) — through
+/// in `live` (still-running `--bg` workers of this process, #1057) or whose
+/// lock another handle holds (a worker of ANY yoyo process, #1097, via
+/// [`held_by_another`], added to the same `live` list) — through
 /// the same held-work guard as [`cleanup_spawn_worktree`], so a stale
 /// worktree that still holds uncommitted work is kept and named, never
-/// silently removed. A worker owned by ANOTHER yoyo process is not in
-/// `live`; that case is #1097's.
+/// silently removed.
 pub fn cleanup_stale_worktrees(repo_dir: &Path, max_age: std::time::Duration, live: &[PathBuf]) {
     let root = repo_root(repo_dir);
     let wt_dir = root.join(".yoyo").join("worktrees");
@@ -308,7 +372,16 @@ pub fn cleanup_stale_worktrees(repo_dir: &Path, max_age: std::time::Duration, li
                 (e.path(), age)
             })
             .collect();
-        for path in worktrees_to_sweep(&candidates, max_age, live) {
+        // A worker of any yoyo process holds its worktree's lock (#1097).
+        let mut live = live.to_vec();
+        live.extend(
+            candidates
+                .iter()
+                .map(|(p, _)| p)
+                .filter(|p| held_by_another(p))
+                .cloned(),
+        );
+        for path in worktrees_to_sweep(&candidates, max_age, &live) {
             let _ = remove_spawn_worktree_dir(&root, &path, None);
         }
         // Prune any dangling worktree metadata.
@@ -640,5 +713,159 @@ mod tests {
             assert!(n.is_ascii(), "plain note carries a glyph: {n}");
             assert!(n.contains("warning: kept spawn worktree /r/w - "), "{n}");
         }
+    }
+
+    // -- cross-process live lock (#1097) ----------------------------------
+
+    /// Poll `cond` for up to 3s. A released lock can read as held for a moment:
+    /// a sibling test thread forking a child (git, python3) copies this
+    /// process's open handles until that child's exec closes them (O_CLOEXEC),
+    /// and flock follows the open file, not the process. Measured on Day 242:
+    /// a single immediate check failed 3 of 12 runs. Only the "not live (any
+    /// more)" side gets this slack; every "is live" assertion stays immediate.
+    fn eventually(mut cond: impl FnMut() -> bool) -> bool {
+        for _ in 0..300 {
+            if cond() {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        false
+    }
+
+    fn swept(repo: &Path, wt: &Path) -> bool {
+        eventually(|| {
+            cleanup_stale_worktrees(repo, std::time::Duration::ZERO, &[]);
+            !wt.exists()
+        })
+    }
+
+    /// Spawn a child process that takes flock(2) on `lock` and sleeps, and
+    /// wait until it says it holds it. python3's fcntl.flock first, the
+    /// util-linux `flock` tool second; `None` (test prints SKIPPED) if neither.
+    fn child_holding(lock: &Path) -> Option<std::process::Child> {
+        use std::io::BufRead;
+        let l = lock.to_string_lossy().to_string();
+        let py = "import fcntl,sys,time\nf=open(sys.argv[1],'a')\n\
+                  fcntl.flock(f,fcntl.LOCK_EX)\nprint('locked',flush=True)\ntime.sleep(30)";
+        let tries: [(&str, Vec<&str>); 2] = [
+            ("python3", vec!["-c", py, &l]),
+            ("flock", vec![&l, "sh", "-c", "echo locked; exec sleep 30"]),
+        ];
+        for (prog, args) in tries {
+            let Ok(mut child) = Command::new(prog)
+                .args(&args)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+            else {
+                continue;
+            };
+            let mut line = String::new();
+            let out = child.stdout.take().expect("piped stdout");
+            let _ = std::io::BufReader::new(out).read_line(&mut line);
+            if line.trim() == "locked" {
+                return Some(child);
+            }
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        None
+    }
+
+    /// The property option 2 was chosen for: another PROCESS holding the lock
+    /// makes the worktree live, and that process dying releases it — no pid,
+    /// no stale marker.
+    #[test]
+    fn a_lock_held_by_another_process_is_live_until_that_process_dies() {
+        let tmp = scratch_repo();
+        let wt = create_spawn_worktree(tmp.path(), 8).expect("create");
+        let lock = worktree_lock_path(&wt.path);
+        std::fs::write(&lock, "").unwrap();
+        let Some(mut child) = child_holding(&lock) else {
+            eprintln!("SKIPPED: neither python3 nor flock available to hold a lock");
+            return;
+        };
+        assert!(held_by_another(&wt.path), "child's lock not seen as live");
+
+        // The sweep keeps it with an EMPTY in-process live list.
+        cleanup_stale_worktrees(tmp.path(), std::time::Duration::ZERO, &[]);
+        assert!(
+            wt.path.exists(),
+            "another process's live worktree was swept"
+        );
+
+        child.kill().expect("kill");
+        child.wait().expect("wait");
+        assert!(
+            eventually(|| !held_by_another(&wt.path)),
+            "a dead process still holds it"
+        );
+        assert!(
+            swept(tmp.path(), &wt.path),
+            "dead owner's clean worktree should go"
+        );
+        assert!(!lock.exists(), "the lock sibling outlived its worktree");
+    }
+
+    /// In-process: the guard this module hands workers is what makes them
+    /// live, and dropping it ends that.
+    #[test]
+    fn hold_worktree_lock_makes_live_until_dropped() {
+        let tmp = scratch_repo();
+        let wt = create_spawn_worktree(tmp.path(), 9).expect("create");
+        let guard = hold_worktree_lock(&wt.path).expect("lock");
+        let lock = worktree_lock_path(&wt.path);
+        assert_eq!(lock.parent(), wt.path.parent(), "lock is a sibling");
+        assert!(held_by_another(&wt.path));
+        // Not inside the tree, so the held-work guard still reads it clean.
+        assert_eq!(worktree_holding(&wt.path, None), Holding::Clean);
+        cleanup_stale_worktrees(tmp.path(), std::time::Duration::ZERO, &[]);
+        assert!(wt.path.exists(), "a locked worktree was swept");
+        drop(guard);
+        assert!(
+            eventually(|| !held_by_another(&wt.path)),
+            "dropped, still held"
+        );
+        assert!(swept(tmp.path(), &wt.path), "unlocked worktree should go");
+        assert!(!lock.exists(), "the lock sibling outlived its worktree");
+    }
+
+    /// Near-misses: no lock file, and an unheld file a crashed owner left.
+    #[test]
+    fn missing_or_unheld_lock_is_not_live_and_is_swept_with_its_sibling() {
+        let tmp = scratch_repo();
+        let none = create_spawn_worktree(tmp.path(), 11).expect("create");
+        let crashed = create_spawn_worktree(tmp.path(), 12).expect("create");
+        let crashed_lock = worktree_lock_path(&crashed.path);
+        std::fs::write(&crashed_lock, "").unwrap();
+        assert!(!worktree_lock_path(&none.path).exists());
+        assert!(!held_by_another(&none.path), "no lock file read as live");
+        assert!(
+            eventually(|| !held_by_another(&crashed.path)),
+            "unheld lock read as live"
+        );
+
+        assert!(
+            swept(tmp.path(), &none.path),
+            "lock-less stale worktree should go"
+        );
+        assert!(
+            swept(tmp.path(), &crashed.path),
+            "crashed owner's worktree should go"
+        );
+        assert!(
+            !crashed_lock.exists(),
+            "crashed owner's lock file left behind"
+        );
+    }
+
+    #[test]
+    fn lock_path_is_the_directory_name_plus_lock() {
+        let p = Path::new("/r/.yoyo/worktrees/spawn-3-17");
+        assert_eq!(
+            worktree_lock_path(p),
+            PathBuf::from("/r/.yoyo/worktrees/spawn-3-17.lock")
+        );
     }
 }
