@@ -193,23 +193,35 @@ fn builtin_model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
     // Gemini 3.x: exact ids from Google's page, agreeing with models.dev (2026-10-25, #1012).
     // Image/tts/live rows bill the image/audio/text output rate models.dev lists.
     // gemini-3.6-flash: regular rate; Google bills $0.75/$3.75/$0.075 through 2026-12-31
-    // (an upper bound, the rule yoagent uses for gemini-3.8-flash).
+    // (an upper bound, the rule yoagent uses for gemini-3.8-flash). Retired ids bill their
+    // successor per Google's deprecations page (2026-10-28), except 3.5 (routes to 3.6;
+    // the page never says at whose price, so it keeps its own higher 9.00 output).
     if model.contains("gemini-3") {
         match model {
             "gemini-3-flash-preview" => return Some((0.50, 0.0, 0.05, 3.00)),
-            "gemini-3.1-flash-lite" => return Some((0.25, 0.0, 0.025, 1.50)),
+            "gemini-3.1-flash-lite" | "gemini-3.1-flash-lite-preview" => {
+                return Some((0.25, 0.0, 0.025, 1.50));
+            }
             "gemini-3.5-flash-lite" => return Some((0.30, 0.0, 0.03, 2.50)),
-            "gemini-3.1-flash-image" => return Some((0.50, 0.0, 0.0, 60.00)),
+            "gemini-3.1-flash-image" | "gemini-3.1-flash-image-preview" => {
+                return Some((0.50, 0.0, 0.0, 60.00));
+            }
             "gemini-3.1-flash-lite-image" => return Some((0.25, 0.0, 0.0, 30.00)),
             "gemini-3.1-flash-live-preview" => return Some((0.75, 0.0, 0.0, 4.50)),
             "gemini-3.1-flash-tts-preview" => return Some((1.00, 0.0, 0.0, 20.00)),
             "gemini-3.5-live-translate-preview" => return Some((3.50, 0.0, 0.0, 21.00)),
-            "gemini-3.6-flash" => return Some((1.50, 0.0, 0.15, 7.50)),
+            "gemini-3.5-flash" => return Some((1.50, 0.0, 0.15, 9.00)),
+            "gemini-3.6-flash" | "gemini-3.7-flash" => {
+                return Some((1.50, 0.0, 0.15, 7.50));
+            }
             // #1012: base tier; >200K prompts bill 4/0.40/18 via `yoyo_side_tier_cost`.
             "gemini-3.1-pro-preview" | "gemini-3.1-pro-preview-customtools" => {
                 return Some((2.00, 0.0, 0.20, 12.00));
             }
-            "gemini-3-pro-image" => return Some((2.00, 0.0, 0.0, 120.00)), // image output; text 12
+            // image output; text 12
+            "gemini-3-pro-image" | "gemini-3-pro-image-preview" => {
+                return Some((2.00, 0.0, 0.0, 120.00));
+            }
             _ => {} // the rest stay estimated, based on 2.5 pricing tiers
         }
         if model.contains("pro") {

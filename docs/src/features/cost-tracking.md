@@ -152,13 +152,21 @@ tier applies. Gemini 3.1 Pro (see Google below) is tiered the same way.
 | Gemini 3.1 Flash-Lite (`gemini-3.1-flash-lite`) | $0.25/MTok | $1.50/MTok |
 | Gemini 3.5 Flash-Lite (`gemini-3.5-flash-lite`) | $0.30/MTok | $2.50/MTok |
 | Gemini 3.6 Flash (`gemini-3.6-flash`) | $1.50/MTok | $7.50/MTok |
+| Gemini 3.8 Flash (`gemini-3.8-flash`, also `gemini-3.7-flash`) | $1.50/MTok | $7.50/MTok |
+| Gemini 4 Argon (`gemini-4-argon`) | $4/MTok | $20/MTok |
+| Gemini 3.5 Flash (`gemini-3.5-flash`, retired) | $1.50/MTok | $9/MTok |
 
-Gemini 3.6 Flash is billed at Google's regular rate; Google charges an introductory $0.75 / $3.75
-through 2026-12-31, so until then `/cost` reads about twice the bill. The 3.1 image, TTS and live
+Gemini 3.6 Flash, 3.8 Flash and 4 Argon are billed at Google's regular rate. Google charges an
+introductory $0.75 / $3.75 (3.6 and 3.8, through 2026-12-31) and $2 / $10 (4 Argon, through
+2026-11-30), so until those dates `/cost` reads about twice the bill. Google's deprecations page
+says `gemini-3.7-flash` requests go to 3.8 Flash, so it bills 3.8's rate.
+`gemini-3.5-flash` requests go to 3.6 Flash, but Google doesn't say at which model's price, so it
+keeps its own $9 output, the higher of the two. The shut-down previews `gemini-3.1-flash-lite-preview`,
+`gemini-3.1-flash-image-preview` and `gemini-3-pro-image-preview` bill the replacement Google
+names for each. The 3.1 image, TTS and live
 ids and `gemini-3.5-live-translate-preview` have exact prices too (image or audio output rates).
-Other `gemini-3*` flash ids Google's pricing page does not list (for example `gemini-3.5-flash`)
-are still estimated at $0.15 / $0.60, and other `gemini-3*` pro ids (for example
-`gemini-3-pro-preview`, `gemini-3-pro-image-preview`) at $1.25 / $10. Gemini 3.1 Pro (both ids) is billed at
+Other `gemini-3*` flash ids no Google page documents are still estimated at $0.15 / $0.60, and
+other `gemini-3*` pro ids (for example `gemini-3-pro-preview`) at $1.25 / $10. Gemini 3.1 Pro (both ids) is billed at
 $2 / $0.20 cache read / $12; Google charges $4 / $0.40 / $18 for a prompt over 200K tokens, and
 since Day 239 the per-turn breakdown prices each such turn at those rates and marks it `*`, as for
 Haiku 5.5 above (a prompt of exactly 200K stays at the base rate). The session cost line still
