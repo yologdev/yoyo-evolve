@@ -1,0 +1,35 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check >/dev/null … ✓ (1.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p ses… (9 lines) ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 21.6s (2 ✓)
+
+Verdict: PASS. Written to session_plan/eval_task_2.md.
+
+/cost now bills Google's introductory rate on the four affected ids until each promo ends, and the regular rate after:
+
+| Ids | Promo rate (in / cache read / out, $/MTok) | Promo ends | Regular rate from |
+|---|---|---|---|
+| gemini-4-argon | $2 / $0.10 / $10 | 2026-11-30 | 2026-12-01 00:00 UTC |
+| gemini-3.8-flash, gemini-3.7-flash, gemini-3.6-flash | $0.75 / $0.075 / $3.75 | 2026-12-31 | 2027-01-01 00:00 UTC |
+
+What I checked in the diff:
+• Design: the new pure function promo_pricing_at(model, now) in src/format/cost/promo.rs takes the time as a parameter. model_pricing_with asks it first, before the regular price table. User price overrides still win, and a google/ prefix is stripped the same way the existing lookups do.
+• Tests:
+  • Promo boundary: one second before each end date gives the promo rate; at or after it gives the regular rate.
+  • Lookalike ids: -tts, -lite, -preview and xgemini-… are never given a promo rate.
+  • Prefix and override: google/gemini-3.8-flash bills like the bare id, and a user override beats the promo.
+  • Older tests: the existing price-audit tests now price at a date after the promos instead of being weakened.
+• Nothing left unused: with_now, AFTER_ALL_PROMOS_UNIX and promo_tests.rs all have callers in this diff.
+• Line cap: I ran one focused check. src/format/cost.rs is exactly 3640 lines, which equals its cap in tests/module_size.rs, and cargo fmt -- --check is clean.
+• Docs: cost-tracking.md now says to model a price change when what decides it reaches yoyo (date, endpoint, prompt size), and to fall back to the higher rate only when it doesn't. It also gets a table of the dated rows. models.md was updated to match.
+
+I couldn't verify three things from the diff:
+• whether Google's pricing page was actually re-fetched (the module comment says 2026-10-28);
+• whether the #1012 comment was posted;
+• the before/after drift counts, which aren't in the diff — I couldn't see the commit message.
+  watch: no files changed this turn — skipping

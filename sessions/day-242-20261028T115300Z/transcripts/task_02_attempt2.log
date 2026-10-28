@@ -1,0 +1,63 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+The task is already committed (3ac62098). I'll check what's left: whether it passes, and whether the #1012 comment was posted.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | head; git l… ✓ (88ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The code and docs are committed. What's left is to verify the checks and post the #1012 comment (the gh call just got a 401). I'll run the checks first.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (4m 7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "FAILE… ✓ (3m 31s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7m 44s (2 ✓)
+
+Everything passes: build, all tests, clippy and fmt. The only thing left is the #1012 comment, and GH_TOKEN in this shell is stale. I'll look for the refreshed token.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "refresh_gh_token()" -A2… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "refresh_gh_token" scrip… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -nE "ISSUE_RESPONSE|issue_r… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1905,1918p scripts/evolve… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test price_aud… ✓ (772ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 18.1s (5 ✓)
+
+The planner's "Next" line was missing a row. Live drift is 22, not 21: openai 16 + zai 5 + deepseek 1 (deepseek-v4-pro). Next I'll check which of those are pickable.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for m in deepseek-v4-pro glm-4.5… ✓ (35ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "deepseek-v4-pro\|deepse… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 290,300p src/format/cost.… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (24 lines) ✓ (22ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/provider = \\"deepseek… ✓ (8ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 27.9s (5 ✓)
+
+The code and docs part of this task is done and committed as 3ac62098, and every check passes on it. The #1012 comment is not posted yet, and its residue count turned out to be wrong in the plan.
+
+What 3ac62098 does:
+• /cost now bills gemini-4-argon at Google's introductory rate until 2026-11-30, and gemini-3.8-flash / gemini-3.6-flash (plus gemini-3.7-flash, which routes to 3.8) until 2026-12-31. After those dates it switches to the regular rate. Before this, users were billed about 2x the real price for the length of the promos.
+• The lookup is a pure function in the new src/format/cost/promo.rs, and its tests are in promo_tests.rs. src/format/cost.rs stays at its line cap.
+• The models.dev price audit went from 26 mismatched rows to 22. That count was re-run this session, and the Google mismatches are now 0.
+• The cost docs now say to bill the higher rate only when yoyo can't see what decides the price; when it can (here, the date), model it.
+
+Checks: cargo fmt --check, clippy with -D warnings and the full cargo test all pass.
+
+#1012 comment not posted: gh returned 401. The fresh token was exported only in the harness's own process, so this shell still had the expired one. A token did show up in my prompt text, but I didn't copy it out of a log line to use it. Instead I wrote the full comment into session_plan/issue_responses.md, where the planner had already left a #1012 line, and the harness's response phase (Phase C) posts from that file. It's gitignored, so there was nothing new to commit.
+
+The plan's residue count was wrong. It said "Next: openai 16, zai 5; pickable defects 0". The audit output shows 22 mismatched rows: openai 16, zai 5 and deepseek 1. The deepseek row, deepseek-v4-pro, is in the pickable list in src/providers.rs. It's a known leftover: a comment around cost.rs:294 says it needs its own issue because it's the default for provider = deepseek. Its models.dev price has also moved since that comment (now 0.66/1.98 against the table's 0.27/1.10). The comment I queued says this: 1 pickable row, held on purpose, and 21 that only apply when someone types the model id. It also asks Phase C to file the separate deepseek issue if one doesn't already exist.
+  watch: no files changed this turn — skipping

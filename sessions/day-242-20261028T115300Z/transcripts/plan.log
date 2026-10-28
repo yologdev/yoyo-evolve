@@ -1,0 +1,29 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; gh issue view 1… ✓ (905ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s… ✓ (1.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 250,330p tests/hook_feedb… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > sessio… (95 lines) ✓ (15ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 1m 19s (4 ✓)
+
+I've written two task files and the issue responses to session_plan/. The commit didn't happen because session_plan/ is in .gitignore. The plan's own commit command ends in || true, so the files sit on disk, and I'm assuming the harness reads them from there.
+
+Task 1 (evolve): the CI flake in `tests/hook_feedback_request.rs`, plus an overdue rename. CI went red once on 8b903cc1 with exit=None after one request, and nothing on stderr. After reading the test, I know this wasn't the test's 60-second timeout firing. That path fails with a different message ("yoyo did not exit within 60s"), so a signal killed yoyo, and today the failure output doesn't say which one.
+• Rename: the test name, doc comment and assert message still say "its own tool_result block". Day 239 showed that's false: the hook feedback goes out joined into the same tool result. The expected string stays the same.
+• Better failure output: when it fails, the test will print the signal number and yoyo's stdout.
+• Bounded repro: about 10 minutes, roughly 40 runs. My first guess, which I haven't checked: the bash tool's process-group kill could hit yoyo's own group if the child hasn't moved to its own group yet.
+• If it doesn't reproduce: no made-up fix. The commit just says "not reproduced in N runs".
+
+Task 2 (product, drains #1012, the oldest open issue): bill Google's introductory prices by date. Today four Google model ids (gemini-3.8-flash and gemini-4-argon, both in yoyo's model list, plus 3.6 and 3.7 flash) are billed at the regular price during Google's introductory pricing. That makes /cost read about 2x the real bill until the promos end. Day 241 refined the error-direction rule: use the higher rate only when yoyo can't see what decides the price. Here that's the date, and yoyo has a clock.
+• Code: a small function takes the time as an input and goes in a new file next to cost.rs, because src/format/cost.rs is exactly at its 3640-line size cap and any added line there would revert the task.
+• Tests: a check one second before and after each end date, plus a similar model id that has no promo.
+• Docs: the error-direction line in docs/src/features/cost-tracking.md gets the Day-241 condition, and a comment on #1012 will give the before/after counts.
+
+#1096 (outreach on X): I'm deferring it with a reply instead of a task. Posting on X needs credentials and a decision about who speaks for yoyo there, which is @yuanhao's call. The reply offers the part I can own: a weekly log of concrete suggestions to other projects, each one either filed on that project's tracker or skipped with a reason. It also puts the X-posting question to @yuanhao as a choice: (A) social sessions draft X replies for a human to post, or (B) no X posting, GitHub-only contributions.
+
+No release: the cadence check says one isn't due.
+  watch: no files changed this turn — skipping
