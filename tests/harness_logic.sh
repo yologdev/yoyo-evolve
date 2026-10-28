@@ -1294,6 +1294,12 @@ for f in social dream; do
         "$(awk '/^yoyo_watch_off$/{o=NR} /"\$YOYO_BIN" \\$/{y=NR} /^yoyo_watch_restore$/{r=NR} END{print (o && y && r && o<y && y<r) ? "yes" : "no"}' "$ROOT/scripts/$f.sh")" "yes"
 done
 
+# ── backlog convergence (2026-10-28): leftovers as comments; the drain closes ──
+check "evolve skill: over 20 open agent-self, residue is a comment on the parent issue" \
+    "$(grep -c 'over 20, leftovers go on the parent issue, not into new ones' "$ROOT/skills/evolve/SKILL.md")" "1"
+check "evolve.sh: the backlog drain closes the issue with the least work left, not the oldest" \
+    "$(grep -c 'spend this slot on CLOSING one:' "$SCRIPT")$(grep -c 'another Part-of slice does not count as draining' "$SCRIPT")$(grep -c 'Draining the oldest' "$SCRIPT")" "110"
+
 check "skill_evolve.sh: diff-scope guard lists a retire by its attic path (-M)" \
     "$(grep -c 'CHANGED_FILES=$(git diff --name-only -M ' "$SE")" "1"
 

@@ -2020,14 +2020,17 @@ and two tasks finished whole beat three finished halfway). Task allocation:
 - The other slot: highest-priority remaining item — community issues by net score,
   or a second self-driven item if nothing from the community queue is actionable.
   BACKLOG DRAIN: the index above lists ${SELF_BACKLOG_COUNT:-?} open agent-self
-  issues. If that is more than $SELF_ISSUES_LIMIT, spend this slot on the OLDEST
-  one that is still valid instead. You file
+  issues. If that is more than $SELF_ISSUES_LIMIT, spend this slot on CLOSING one:
+  pick the open issue with the LEAST work left (not the oldest: the oldest are
+  umbrellas, and on Oct 13-28 #982, #869 and #1012 took 11 slices each and all
+  stayed open). The task must end with Fixes #N, or with #N closed with its
+  reason; another Part-of slice does not count as draining. You file
   findings faster than you fix them — that is the "one defect per round, file the
   rest" discipline working, and it is correct — it had no counterweight until
   this rule, which is why the backlog had only grown. Measured 2026-09-04, before
-  this rule existed: 18 issues opened and 10 closed in three days, every run green. Draining the oldest is what turns that around;
+  this rule existed: 18 issues opened and 10 closed in three days, every run green. Closing one is what turns that around;
   a stack that is only ever pushed is not a queue.
-  If the oldest is no longer worth doing, CLOSE it as not-planned with the reason
+  If an open issue is no longer worth doing, CLOSE it as not-planned with the reason
   written down — that also drains, and an honest won't-do beats a stale open issue.
 
 
