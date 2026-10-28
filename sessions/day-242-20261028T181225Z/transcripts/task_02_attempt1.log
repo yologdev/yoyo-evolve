@@ -1,0 +1,73 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh… ✓ (19ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "spawn_worktree" tests/mod… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "DEFAULT\|const .*CAP\|: u… ✓ (25ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "create_spawn_worktree\|cl… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 720,740p src/commands_spawn… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "struct WorktreeInfo" -B3 … ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "worktrees" .gitignore src… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n '\.yoyo/worktrees' src/*.r… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 2186,2215p src/commands_spa… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 336,350p src/spawn_worktree… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 868,960p src/commands_spawn… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 225,240p src/spawn_worktree… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  12 tools completed in 1m 39s (12 ✓)
+
+The tool output collapses; let me read precise ranges via read_file.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read src/spawn_worktree.rs:278..290  ▶ read src/spawn_worktree.rs:1..41 ✓ (0ms)
+ ✓ (0ms)
+  2 tools completed in 21.4s (2 ✓)
+
+Now write the lock code. First the tests (failing), then the implementation.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (131 lines) ✓ (17ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; tail -5 src/spawn_worktree.rs; whi… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (119 lines) ✓ (16ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (44 lines) ✓ (7.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test --bin yoyo spawn_worktr… ✓ (21.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 790,797p src/spawn_worktree… ✓ (115ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; for i in 1 2 3 4 5 6; do cargo tes… ✓ (1.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; for i in 1 2 3 4 5 6; do cargo tes… ✓ (1.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (64 lines) ✓ (23.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -i 's|Meas… (9 lines) ✓ (20.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (9 lines) ✓ (985ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue view 1097 --json title,bo… ✓ (333ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (16 lines) ✓ (13.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (9 lines) ✓ (3m 7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test 2>&1 | grep -E "^test r… ✓ (5m 16s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add -A && … (41 lines) ✓ (35ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  16 tools completed in 12m 29s (16 ✓)
+
+Fixed and committed as d0e76d77. The commit title says "Fixes #1097", so the issue will close when this is pushed. Build, clippy (-D warnings), fmt check and the full cargo test all pass, and I ran the full suite twice.
+
+The problem: with two yoyo sessions in one repo, session B's hourly stale sweep could delete the worktree of A's long-running, clean --bg worker. The sweep only knew about B's own workers.
+
+What changed (option 2 from the issue, an OS file lock):
+• The lock: each worker, foreground or --bg, now holds an exclusive lock on .yoyo/worktrees/spawn-X-TS.lock while it runs. The OS releases the lock when the process exits or crashes, so there's no pid-reuse problem and nothing stale is left behind.
+• One change from the issue's wording: the lock file sits next to the worktree, not inside it as the issue suggested. A file inside would show up in the worktree's git status, so every running worker's worktree would look dirty to the cleanup check and the spawn write tap.
+• Cross-platform: it uses std's File::try_lock (stable since Rust 1.89), so it works on Unix and Windows without libc. If the lock can't be taken, including on a platform that doesn't support it, the worktree counts as not live. That is exactly how things behaved before.
+• No second check: held_by_another() adds to the same live list that worktrees_to_sweep already uses, as the issue asked. The sweep and cleanup_spawn_worktree also delete the .lock file when they remove a worktree.
+• `commands_spawn.rs`: +6 lines, now 4566 of its 4570-line cap. The lock is taken where workers start, not in create_spawn_worktree. Otherwise the existing sweep tests, which keep a worktree's info alive while expecting the sweep to remove it, would have broken. They are unchanged and pass.
+
+Tests:
+• Real child process: a child holds the lock (python3's fcntl.flock, else the flock tool, else the test prints SKIPPED). While it runs, the worktree is treated as live and kept. After the child is killed, the worktree is swept and its lock file is gone.
+• Lock released on drop: holding the lock in-process keeps the worktree, and dropping it lets the sweep remove it.
+• Near-misses: a worktree with no lock file, and one whose lock file was left unheld by a crashed owner, are both swept along with their lock files.
+• Positive control: I made held_by_another always return false. Both "live" tests failed by name, then passed again after I restored it (no NEUTERED marker remains).
+
+One flaky behaviour I found and handled: a lock can briefly still look held right after release, because another thread's child process holds copied file handles until it starts its new program. A single immediate check failed in 3 of 12 test runs. The "no longer live" checks in the tests now retry for up to 3 seconds; every "is live" check is still immediate. In real use this just means a sweep might skip a worktree once, which is the safe direction.
+
+Docs: updated the /spawn sweep sentence in docs/src/usage/commands.md and added a superseded-claim entry under spawn_worktree.rs in ARCHITECTURE.md.
+
+Not tested: network filesystems, where file-lock behaviour varies. I only ran this on a local Linux filesystem, and that's recorded as unmeasured in ARCHITECTURE.md.
+  watch: no files changed this turn — skipping

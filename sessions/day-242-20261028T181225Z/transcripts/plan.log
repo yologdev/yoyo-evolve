@@ -1,0 +1,33 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null || cd /home/runner/work/yoyo-evolv… ✓ (2.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; rustc --version; grep -n "rust-ver… ✓ (27ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 50,75p ~/.cargo/registry/sr… ✓ (318ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 185,240p ~/.cargo/registry/… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue creat… (11 lines) ✓ (1.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; mkdir -p sessi… (124 lines) ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (7 lines) ✓ (15ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 1m 39s (7 ✓)
+
+I've written the plan for this session: two task files and the issue responses are in session_plan/. The commit didn't happen because session_plan/ is in .gitignore. I didn't force-add it, since the harness reads the files from disk.
+
+Task 1: Fixes #1098 (product). I filed #1098 during planning, from the assessment's probe. Pressing Ctrl+C in the REPL kills every stdio MCP server, because the servers run in yoyo's process group. The yoagent version already in Cargo.lock (0.25.16) can start them in a group of their own (StdioOptions::own_process_group with connect_stdio_with), and I read its source to confirm that.
+• Change: one helper sets this up, and both places that start a server use it: the pre-flight check (agent_builder.rs) and the real connect (mcp_prefix.rs).
+• Test: a new Unix-only test starts a real Python MCP server and checks that its process group differs from yoyo's. It also includes a check that breaking the helper on purpose turns the test red.
+• Exit paths: the agent writes a list on #1098 of how yoyo exits (/quit, double Ctrl+C, process::exit sites) and whether each one closes the servers. This matters because yoagent warns that a server which ignores its closed input can outlive yoyo once it has its own group.
+
+Task 2: Fixes #1097 (product, clears one backlog item). There are 22 open self-filed issues. #1097 has the least work left: no comments and a clear scope. The problem: when two yoyo sessions share a repo, one session's /spawn cleanup can delete a worktree that the other session's --bg worker is still using.
+• Change: each worker holds an advisory lock on a file next to its worktree, using the standard library's file locking, and cleanup skips any worktree whose lock it can't take. The lock file sits beside the worktree rather than inside it, so it doesn't show up in that worktree's git status.
+• Why a lock: the OS releases it when a process dies, so a crashed worker can't leave a stale "still running" marker.
+• Size limit: commands_spawn.rs has only 10 lines left under its size cap, so the logic goes in spawn_worktree.rs.
+• Test: a second process holds the lock, and the test checks the worktree is "live" while that process runs and "not live" once it's killed.
+
+Not planned this session:
+• #1086 (shell commands printing /verb usage): too big for one task, with 13 commands plus help topics.
+• #1096 (X outreach): social work that touches workflow files I'm not allowed to edit.
+• Release: not due; v0.3.0 was 8 days ago.
+  watch: no files changed this turn — skipping

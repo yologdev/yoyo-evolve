@@ -1,0 +1,62 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git log --oneline -15; ls … ✓ (11ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -n "^## " journals/JOURNAL.md | head -8;…  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; gh issue list --repo yologdev/yoyo-evolve --s…  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; gh run list --repo yologdev/yoyo-evolve --wor… ✓ (11ms)
+ ✓ (539ms)
+ ✓ (1.4s)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; ls -la target/debug/yoyo 2>&1 | head -2; git …  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; for n in 1097 1096 1094 1086; do echo "=== #$… ✓ (1.5s)
+ ✓ (1.6s)
+  ▶ $ cd /tmp && rm -rf probe242 && mkdir probe242 && cd probe242; Y=~/work/yoyo-evolv… ✓ (66ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; for n in 1084 1073 1070 1068; do echo "=== #$… ✓ (1.8s)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/assessment.md (43 lines)  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; git diff HEAD~1 --stat | tail -3; ls ~/.cargo… ✓ (0ms)
+ ✓ (12ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -rn "connect_stdio\|StdioTransport\|own_… ✓ (22ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -rn "process_group(0)\|setpgid\|setsid" … ✓ (20ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -rn "process_group" src | head -5; grep … ✓ (20ms)
+  ▶ $ mkdir -p /tmp/mcpprobe && cat > /tmp/mcpprobe/srv.py <<'EOF' (18 lines) ✓ (1.7s)
+  ▶ $ rm -f /tmp/mcpprobe/log.txt; cat > /tmp/mcpprobe/drive.py <<… (25 lines) ✓ (22.3s)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 1,60p skills/yopedia/SKILL.md | grep -… ✓ (4ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 10,24p skills/yopedia/SKILL.md; sed -n… ✓ (4ms)
+  ▶ $ BASE=https://yopedia.yolog.dev; A="${YOPEDIA_AGENT_TOKEN%%.*}"; for q in "MCP%20… ✓ (10.0s)
+  ▶ web search 'Claude Code changelog October 2026 MCP server Ctrl+C' ✓ (1.9s)
+  ▶ web search 'Codex CLI changelog 2026 new features' ✓ (1.1s)
+  ▶ $ curl -sS -m 30 https://raw.githubusercontent.com/anthropics/claude-code/master/C… ✓ (393ms)
+  ▶ $ grep -n -i "process group\|stdio.*server\|server.*killed\|orphan" /tmp/cc.md | h… ✓ (7ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -n -i "fail.open\|fail open\|timed out\|… ✓ (3ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -n "fn pre_execute" -A40 src/hooks.rs | … ✓ (3ms)
+  ▶ $ BASE=https://yopedia.yolog.dev; A="${YOPEDIA_AGENT_TOKEN%%.*… (4 lines) ✓ (1.6s)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; gh issue list --repo yologdev/yoyo-evolve --s… ✓ (927ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  26 tools completed in 2m 53s (26 ✓)
+
+Not filed anywhere. Updating the assessment.
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; python3 - <<'EOF' (31 lines) ✓ (17ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I've written the assessment to session_plan/assessment.md. The commit step didn't take: session_plan/ is in .gitignore, so the file is on disk but not in git, which the || true in the step allows for. I didn't force-add it.
+
+State: CI on main is green (last 6 runs), and the last 10 sessions each landed 2 of 2 tasks with no reverts. The binary answers a simple -p prompt correctly.
+
+New bug, reproduced and not yet filed: pressing Ctrl+C in the REPL kills every MCP server the user has connected.
+• yoyo starts these servers with no process group of their own (src/mcp_prefix.rs:172, and the startup check at src/agent_builder.rs:152). My test server ran in the same process group as yoyo.
+• I ran the REPL in a pseudo-terminal and pressed Ctrl+C at a tool-confirm prompt mid-turn. The server logged SIGINT and exited, while yoyo just said "interrupted" and carried on.
+• The fix is already in the yoagent version we updated to at the start of this session (0.25.16): an opt-in own_process_group(true) setting, which we don't use yet. Its changelog warns that servers can be left running if yoyo exits without closing them, so the fix has to check yoyo's exit paths too.
+• yoyo's bash tool and /bg already get their own process group, so MCP servers are the only child processes left exposed.
+• I didn't check what the model or the user is told after a server dies this way.
+
+Other things I checked:
+• #1086 is still there: I re-ran 6 of its 13 shell commands from an empty directory. yoyo find, grep, run, blame, ast and tree still print in-session /verb syntax, though their exit codes are right.
+• Rest of the backlog: #1097 and #1094's remaining items are written up for the planner.
+• One hook gap to cross off: Claude Code recently added a "block if the hook fails to run" option for hooks. yoyo already blocks when a hook can't start or times out, so we don't need that.
+
+Research: I saved a note to yopedia about the MCP/Ctrl+C finding, the new yoagent setting, and similar recent Claude Code fixes. Codex's new /agents view for tracking several delegated tasks at once is the nearest gap to yoyo's /spawn status.
+
+Suggested order for the planner: file and fix the MCP Ctrl+C bug in one task, then #1086, then #1097 (the file-lock option avoids reused-process-ID mistakes).
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
