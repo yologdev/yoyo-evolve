@@ -189,8 +189,10 @@ count and the lines that were read, and gives the two ways forward: read
 the rest with `read_file` `offset`/`limit`, or change the file in place
 with `edit_file`. The check compares against the file as it is on disk at
 write time, so a file that grew after being read whole is refused too.
-New files, files the model wrote itself, and files read completely are
-written as before. Not covered yet (#1094): an existing file that was
+A page whose output yoyo truncated to save context (head and tail kept, the
+middle cut) does not count as read, since the model never saw its middle;
+the refusal says to re-read with a smaller `limit`. New files, files the
+model wrote itself, and files read completely are written as before. Not covered yet (#1094): an existing file that was
 never read at all is still overwritten without a read.
 
 ## Keeping provider keys out of subprocesses
