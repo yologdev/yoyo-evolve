@@ -203,6 +203,7 @@ mod tool_wrappers;
 mod tools;
 mod update;
 mod watch;
+mod watch_shell;
 mod watch_wait;
 
 use cli::*;

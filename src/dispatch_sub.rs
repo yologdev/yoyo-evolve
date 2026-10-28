@@ -700,7 +700,9 @@ pub(crate) fn try_dispatch_subcommand_in(
                     [one] => format!("/watch {one}"),
                     _ => quote_args_as_command(args),
                 };
-                exit_if_nonzero(crate::watch::handle_watch_status(&input));
+                // #1088: watch is a session setting that dies with this
+                // process, so only `status` runs; the rest refuse (exit 2).
+                exit_if_nonzero(crate::watch_shell::watch_shell_status(&input));
                 return Some(None);
             }
             "status" => {
@@ -1974,7 +1976,8 @@ mod tests {
 
     #[test]
     fn test_try_dispatch_subcommand_watch() {
-        // `yoyo watch status` should dispatch (shows current watch state).
+        // `yoyo watch status` should dispatch (reports that watch is a session
+        // setting and what auto_watch would arm; #1088).
         let args = vec!["yoyo".into(), "watch".into(), "status".into()];
         let result = try_dispatch_subcommand(&args);
         assert!(

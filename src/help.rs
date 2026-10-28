@@ -444,7 +444,7 @@ pub fn cli_help_text() -> String {
     );
     let _ = writeln!(
         s,
-        "  watch             Toggle watch mode (e.g. yoyo watch, yoyo watch lint)"
+        "  watch status      Report watch mode (a session setting: set it with /watch in a session)"
     );
     let _ = writeln!(
         s,

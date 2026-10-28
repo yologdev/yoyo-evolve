@@ -4274,36 +4274,83 @@ fn outline_takes_one_spaced_argv_element_as_one_query() {
 }
 
 #[test]
-fn watch_takes_one_spaced_argv_element_as_one_command_line() {
+fn shell_watch_refuses_and_echoes_one_spaced_argv_element_as_one_session_line() {
     // #1009: `yoyo watch "echo a b"` stored `"echo a b"` (one quoted word),
-    // so `sh -c` would look for a program named `echo a b`. Same rule as
-    // `run` (b3a2ed90): ONE argv element is a verbatim shell command line,
-    // as procps `watch "echo a b"` runs `sh -c "echo a b"`; two or more
-    // elements keep the quoting wrapper.
+    // because the dispatcher wrapped the element in quotes; ONE element is a
+    // verbatim shell line, two or more keep the quoting wrapper.
+    // #1088: the shell no longer stores anything: watch is a session setting
+    // that died with this process while it printed "Watch mode ON" and exit 0.
+    // Every setting form now refuses with exit 2 on stderr, nothing on stdout,
+    // and names the `/watch ...` line to use in a session, which still follows
+    // the #1009 rule.
     let dir = tempfile::tempdir().expect("tempdir");
-    let (code, stdout, stderr) = yoyo_plain_in(dir.path(), &["watch", "echo a b"]);
-    assert_eq!(code, Some(0), "stdout={stdout:?} stderr={stderr:?}");
-    assert_eq!(
-        stdout,
-        "  👀 Watch mode ON — will run `echo a b` after agent edits\n\n"
-    );
+    let session_line = |stderr: &str| -> String {
+        stderr
+            .lines()
+            .find(|l| l.contains("In a session"))
+            .unwrap_or_else(|| panic!("no session line in {stderr:?}"))
+            .to_string()
+    };
+    for (args, line) in [
+        (&["watch", "echo a b"][..], "/watch echo a b"),
+        (&["watch", "cargo", "test"][..], "/watch cargo test"),
+        (&["watch", "echo", "a  b"][..], "/watch echo \"a  b\""),
+        (&["watch", "off"][..], "/watch off"),
+        (&["watch"][..], "/watch"),
+        (&["watch", "all"][..], "/watch all"),
+        (&["watch", "lint"][..], "/watch lint"),
+    ] {
+        let (code, stdout, stderr) = yoyo_plain_in(dir.path(), args);
+        assert_eq!(
+            code,
+            Some(2),
+            "{args:?} stdout={stdout:?} stderr={stderr:?}"
+        );
+        assert_eq!(stdout, "", "{args:?}");
+        assert!(!stderr.contains("Watch mode ON"), "{args:?} {stderr:?}");
+        assert!(!stderr.contains("Watch mode OFF"), "{args:?} {stderr:?}");
+        assert!(
+            stderr.contains("watch is a session setting"),
+            "{args:?} {stderr:?}"
+        );
+        assert_eq!(
+            session_line(&stderr),
+            format!("  In a session: start yoyo and use: {line}"),
+            "{args:?}"
+        );
+    }
 
-    // Near misses, byte-identical to before: plain elements join as-is, and
-    // a spaced element among several keeps its quotes for `sh -c`.
-    let (code, stdout, _) = yoyo_plain_in(dir.path(), &["watch", "cargo", "test"]);
-    assert_eq!(code, Some(0));
-    assert_eq!(
-        stdout,
-        "  👀 Watch mode ON — will run `cargo test` after agent edits\n\n"
+    // Near miss: `status` can say something true, so it keeps exit 0.
+    let (code, stdout, stderr) = yoyo_plain_in(dir.path(), &["watch", "status"]);
+    assert_eq!(code, Some(0), "stdout={stdout:?} stderr={stderr:?}");
+    assert!(
+        stdout.starts_with(
+            "  Watch is a session setting: no session is running, so nothing is on in this process.\n"
+        ),
+        "{stdout:?}"
     );
-    let (code, stdout, _) = yoyo_plain_in(dir.path(), &["watch", "echo", "a  b"]);
-    assert_eq!(code, Some(0));
-    assert_eq!(
-        stdout,
-        "  👀 Watch mode ON — will run `echo \"a  b\"` after agent edits\n\n"
+}
+
+#[test]
+fn shell_watch_in_a_detected_project_refuses_rather_than_claiming_on() {
+    // #1088: in a project with a detected command, bare `yoyo watch` printed
+    // "Watch mode ON — 2 phases: ..." and exited 0, the same lie as an
+    // explicit command. It now refuses and names what auto_watch would arm.
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        dir.path().join("Cargo.toml"),
+        "[package]\nname = \"x\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    let (code, stdout, stderr) = yoyo_plain_in(dir.path(), &["watch"]);
+    assert_eq!(code, Some(2), "stdout={stdout:?} stderr={stderr:?}");
+    assert!(!stdout.contains("Watch mode ON"), "{stdout:?}");
+    assert!(!stderr.contains("Watch mode ON"), "{stderr:?}");
+    assert!(
+        stderr
+            .contains("set auto_watch = true in .yoyo.toml. It arms the detected command (`cargo"),
+        "{stderr:?}"
     );
-    let (_, stdout, _) = yoyo_plain_in(dir.path(), &["watch", "off"]);
-    assert_eq!(stdout, "  👀 Watch mode OFF\n\n");
 }
 
 #[test]
