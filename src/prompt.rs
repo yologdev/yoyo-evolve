@@ -21,6 +21,8 @@ mod retry_safe_pipe;
 mod sigterm;
 pub use interrupt::{interrupted_exit_code, mark_single_shot, stream_cut_short, was_interrupted};
 mod stream_external_servers;
+#[cfg(test)]
+mod stream_json_retry_tests;
 mod stream_session_restored;
 mod sub_agent_spend;
 pub(crate) use stream_session_restored::{escape_unsafe_json_chars, record_session_restored};
@@ -30,7 +32,9 @@ pub(crate) use sub_agent_spend::{
 };
 pub(crate) mod turn_prefix;
 mod write_preview;
-use retry_after_partial::{retry_blocked_by_streamed_partial, RETRY_SKIPPED_AFTER_PARTIAL_NOTE};
+use retry_after_partial::{
+    drop_dying_attempt, retry_blocked_by_streamed_partial, RETRY_SKIPPED_AFTER_PARTIAL_NOTE,
+};
 pub(crate) use turn_prefix::{
     apply_effort_hint, apply_external_failure_note_with, prepend_external_failure_block_with,
 };
@@ -1005,15 +1009,11 @@ impl PromptEventState {
             self.fatal_error = Some(error.to_string());
             return true;
         }
-        if self.collected_text.is_char_boundary(start) {
-            self.collected_text.truncate(start);
-        }
-        if !dying.is_empty() && self.text_since_last_tool.ends_with(&dying) {
-            let keep = self.text_since_last_tool.len() - dying.len();
-            if self.text_since_last_tool.is_char_boundary(keep) {
-                self.text_since_last_tool.truncate(keep);
-            }
-        }
+        drop_dying_attempt(
+            &mut self.collected_text,
+            &mut self.text_since_last_tool,
+            start,
+        );
         false
     }
 
@@ -1942,6 +1942,9 @@ async fn handle_stream_json_events(
     let mut collected_text = String::new();
     // Closing-text carrier — see PromptOutcome::text_since_last_tool (#808).
     let mut text_since_last_tool = String::new();
+    // #991 item 3: byte offset where the current message's text starts, so a
+    // yoagent in-loop retry drops the dying attempt's text (as #989 does on the text path).
+    let mut attempt_text_start = 0usize;
     let mut last_tool_error: Option<String> = None;
     let mut last_tool_name: Option<String> = None;
     let mut last_api_error: Option<String> = None;
@@ -2027,6 +2030,15 @@ async fn handle_stream_json_events(
                             last_tool_error = None;
                             last_tool_name = None;
                         }
+                    }
+                    AgentEvent::MessageStart { .. } => {
+                        attempt_text_start = collected_text.len();
+                    }
+                    // Both attempts already went out on the NDJSON wire with a
+                    // `providerRetry` event between them, which is the consumer's
+                    // cue; this only keeps the returned outcome to the retry's text.
+                    AgentEvent::ProviderRetry { .. } => {
+                        drop_dying_attempt(&mut collected_text, &mut text_since_last_tool, attempt_text_start);
                     }
                     AgentEvent::MessageUpdate {
                         delta: StreamDelta::Text { delta },

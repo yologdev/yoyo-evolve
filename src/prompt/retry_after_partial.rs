@@ -90,6 +90,32 @@ pub(super) const RETRY_SKIPPED_AFTER_PARTIAL_NOTE: &str = "(not retrying: part o
 already written to stdout, which is not a terminal, and a retry would print it again; rerun the \
 command)";
 
+/// #989/#991: after yoagent retries in-loop, drop the dying attempt's text
+/// (everything from `start`, the byte offset its `MessageStart` recorded) from
+/// both accumulators, so the outcome holds the retry's text, not both joined.
+/// Shared by the text loop and the stream-json loop: one cut, never two copies.
+/// Char-boundary safe (#250): `start` is a past `len()`, and a mismatch leaves
+/// the text alone rather than slicing inside a character.
+pub(super) fn drop_dying_attempt(collected: &mut String, since_tool: &mut String, start: usize) {
+    let Some(dying) = collected.get(start.min(collected.len())..) else {
+        return; // not a char boundary: leave the text alone
+    };
+    let dying_len = dying.len();
+    if dying_len == 0 {
+        return;
+    }
+    // `since_tool` was cleared at the last tool end, so it holds the dying
+    // text as a suffix only when no tool ran inside the dying attempt.
+    if since_tool.ends_with(dying) {
+        let keep = since_tool.len() - dying_len;
+        if since_tool.is_char_boundary(keep) {
+            since_tool.truncate(keep);
+        }
+    }
+    let keep = collected.len() - dying_len;
+    collected.truncate(keep);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
