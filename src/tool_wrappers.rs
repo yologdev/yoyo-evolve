@@ -1583,8 +1583,12 @@ fn annotate_if_partial(result: yoagent::types::ToolResult) -> yoagent::types::To
         return result;
     };
 
-    // Its own block at index 0, never a splice into an existing one:
+    // A new leading block at index 0, never a splice into an existing one:
     // `content` may carry non-text blocks and a `Vec` insert cannot mangle them.
+    // Before yoagent 0.25.9 providers sent only the FIRST text block, so the
+    // model saw only this notice and not the answer; on the Anthropic wire the
+    // text blocks are now joined with "\n" into one string (`tool_result_text`).
+    // yoagent-version-claim: 0.25
     let mut content = result.content;
     content.insert(0, yoagent::types::Content::Text { text: note });
     yoagent::types::ToolResult {
@@ -1687,9 +1691,13 @@ impl AgentTool for FallbackSubAgentTool {
 
         match self.secondary.execute(params, ctx).await {
             Ok(result) => {
-                // Prepend the note as its own block rather than splicing it
-                // into the first one: `content` may carry non-text blocks, and
-                // a `Vec` insert cannot mangle them.
+                // Prepend the note as a new leading block rather than splicing
+                // it into the first one: `content` may carry non-text blocks,
+                // and a `Vec` insert cannot mangle them. Before yoagent 0.25.9
+                // only the FIRST text block was sent, so the model saw only this
+                // note and not the answer; on the Anthropic wire the text blocks
+                // are now joined with "\n" into one string (`tool_result_text`).
+                // yoagent-version-claim: 0.25
                 let mut content = result.content;
                 content.insert(
                     0,

@@ -506,6 +506,10 @@ impl SmartEditTool {
                 "\nNote: {path} has elevated risk (score: {score:.2}, signals: {signal_desc}). \
                  Consider running tests to verify this change."
             );
+            // This extra trailing block reaches the model only since yoagent
+            // 0.25.9; before, providers sent only the first text block. On the
+            // Anthropic wire the text blocks are joined with "\n" into one string.
+            // yoagent-version-claim: 0.25
             result.content.push(yoagent::Content::Text { text: note });
         }
         result
@@ -562,6 +566,9 @@ impl SmartEditTool {
             Ok(mut result) => {
                 // Append auto-fix note to the result
                 let note = format!("\n⚡ Auto-fixed whitespace mismatch at line {}", m.line_num);
+                // Same as the risk note: this trailing block reaches the model
+                // only since yoagent 0.25.9 (joined with "\n" on the wire).
+                // yoagent-version-claim: 0.25
                 result.content.push(yoagent::Content::Text { text: note });
                 Some(Ok(result))
             }
