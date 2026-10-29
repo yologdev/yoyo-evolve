@@ -1,0 +1,218 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | head; wc -l… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,66p src/hard_deny.rs; s… ✓ (5ms)
+  ▶ read src/hard_deny.rs (70 lines) ✓ (0ms)
+  ▶ edit src/hard_deny.rs (2 → 37 lines)
+  +     /// #1068 defect 2: quote removal is per LINE, so a double-quoted
+  +     /// argument that spans lines is not one word. Its interior line is
+  +     /// tokenised as a command of its own, and prose reading `rm -rf /` there
+  +     /// is refused. This pins that the multi-line case fails CLOSED (refuses
+  +     /// too much); it does not claim the refusal is correct.
+  +     #[test]
+  +     fn multi_line_quoted_argument_fails_closed() {
+  +         let cmd = "python3 -c \"print(1)\nrm -rf /\nprint(2)\"";
+  +         // Anti-vacuous: the fixture really spans lines and really carries the
+  +         // pattern on an interior line of its own.
+  +         assert!(cmd.contains('\n'), "fixture must span lines: {cmd:?}");
+  +         assert_eq!(cmd.lines().nth(1), Some("rm -rf /"), "{cmd:?}");
+  +         assert_eq!(hard_deny_match(cmd), Some(RULE_RM_ROOT), "{cmd:?}");
+  +         // The same text through the real refusal door.
+  +         assert!(hard_deny_refusal(HARD_DENY_PATTERNS, cmd).is_some());
+  + 
+  +         // A commit body is the same shape: the interior line is refused.
+  +         let commit = "git commit -m \"subject\n\nrm -rf / is now guarded\"";
+  +         assert_eq!(hard_deny_match(commit), Some(RULE_RM_ROOT), "{commit:?}");
+  +     }
+  ... (17 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo hard_deny:… ✓ (1m 50s)
+  +     /// #1068 defect 2: quote removal is per LINE, so a double-quoted
+  +     /// argument that spans lines is not one word. Its interior line is
+  +     /// tokenised as a command of its own, and prose reading `rm -rf /` there
+  +     /// is refused. This pins that the multi-line case fails CLOSED (refuses
+  +     /// too much); it does not claim the refusal is correct.
+  +     #[test]
+  +     fn multi_line_quoted_argument_fails_closed() {
+  +         let cmd = "python3 -c \"print(1)\nrm -rf /\nprint(2)\"";
+  ... (13 more lines)
+ ✓ (1m 50s)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 2m 12s (5 ✓)
+
+Measurement disagreed with my near-miss: a quoted mention on an interior line is refused as well. Before I write the doc, let me find where that comes from.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 150,222p src/hard_deny.rs ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (44 lines) ✗ (0ms)
+    │ Command blocked by safety policy: contains 'rm -rf /'. This pattern is denied for safety.
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 16.4s (1 ✓, 1 ✗)
+
+My own bash tool refused that command. The heredoc body contained the pattern, which is the kind of over-refusal this task documents. I'll use edit_file instead.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/hard_deny.rs (2 → 14 lines)
+            assert_eq!(hard_deny_match(commit), Some(RULE_RM_ROOT), "{commit:?}");
+  + 
+  +         // Wider than the interior line: the opening line ends inside an open
+  +         // quote, which sends the WHOLE command through the quote-stripping
+  +         // second pass, so a mention quoted again inside the argument is
+  +         // refused too, on an interior line or on the opening line itself.
+  +         for cmd in [
+  +             "python3 -c \"print(1)\nprint('rm -rf /')\nprint(2)\"",
+  +             "python3 -c \"print('rm -rf /')\nprint(2)\"",
+  +         ] {
+  +             assert!(cmd.contains('\n') && cmd.contains("'rm -rf /'"), "{cmd:?}");
+  +             assert_eq!(hard_deny_match(cmd), Some(RULE_RM_ROOT), "{cmd:?}");
+  +         }
+        }
+  ▶ edit src/hard_deny.rs (3 → 3 lines)
+  -         // And a multi-line quoted argument with no pattern on its own line
+  -         // passes too: only the line that reads like the command is refused.
+  -         let benign = "python3 -c \"print(1)\nprint('rm -rf /')\nprint(2)\"";
+  +         // A multi-line quoted argument that never mentions the pattern
+  +         // passes: the fail-closed reach is the mention, not the shape.
+  +         let benign = "python3 -c \"print(1)\nprint(2)\"";
+ ✓ (3m 26s)
+            assert_eq!(hard_deny_match(commit), Some(RULE_RM_ROOT), "{commit:?}");
+  + 
+  +         // Wider than the interior line: the opening line ends inside an open
+  +         // quote, which sends the WHOLE command through the quote-stripping
+  +         // second pass, so a mention quoted again inside the argument is
+  +         // refused too, on an interior line or on the opening line itself.
+  +         for cmd in [
+  +             "python3 -c \"print(1)\nprint('rm -rf /')\nprint(2)\"",
+  ... (6 more lines)
+ ✓ (6m 14s)
+  -         // And a multi-line quoted argument with no pattern on its own line
+  -         // passes too: only the line that reads like the command is refused.
+  -         let benign = "python3 -c \"print(1)\nprint('rm -rf /')\nprint(2)\"";
+  +         // A multi-line quoted argument that never mentions the pattern
+  +         // passes: the fail-closed reach is the mention, not the shape.
+  +         let benign = "python3 -c \"print(1)\nprint(2)\"";
+  2 tools completed in 6m 20s (2 ✓)
+
+Now the doc:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/hard_deny.rs (2 → 4 lines)
+  - //! `)`. A quoted string is therefore one WORD: `echo "rm -rf /"` has an
+  - //! argument whose text is `rm -rf /`, and no word in it equals `rm`.
+  + //! `)`. On ONE line a quoted string is therefore one WORD: `echo "rm -rf /"`
+  + //! has an argument whose text is `rm -rf /`, and no word in it equals `rm`.
+  + //! Quote removal is per line, though, so a quoted string that spans lines
+  + //! is NOT one word (see the multi-line bullet under Known residue).
+  ▶ edit src/hard_deny.rs (2 → 13 lines)
+    //!   refused. That fails closed, which is the safe direction.
+  - //! - Command substitution
+  + //! - A quoted argument that spans lines (`python3 -c "…"`, a
+  + //!   `git commit -m "…"` with a body, `gh issue create --body "…"`) is not
+  + //!   one word (#1068). Each interior line is tokenized as a command of its
+  + //!   own, so prose reading `rm -rf /` on its own line is refused. It goes
+  + //!   further than that: the opening line ends inside an open quote, which
+  + //!   sends the WHOLE command through the quote-stripping second pass below,
+  + //!   so a mention quoted again inside the argument (`print('rm -rf /')`) is
+  + //!   refused too, on any of its lines. All of this fails closed: it refuses
+  + //!   too much, never too little. Parsing quotes across lines is a separate
+  + //!   decision, not made here. Remedy for the refused user or model: write
+  + //!   the text to a file with `write_file` and pass the path (`python3
+  + //!   script.py`, `git commit -F msg.txt`, `gh issue create --body-file f`).
+ ✓ (3m 23s)
+  - //! `)`. A quoted string is therefore one WORD: `echo "rm -rf /"` has an
+  - //! argument whose text is `rm -rf /`, and no word in it equals `rm`.
+  + //! `)`. On ONE line a quoted string is therefore one WORD: `echo "rm -rf /"`
+  + //! has an argument whose text is `rm -rf /`, and no word in it equals `rm`.
+  + //! Quote removal is per line, though, so a quoted string that spans lines
+  + //! is NOT one word (see the multi-line bullet under Known residue).
+ ✓ (6m 18s)
+    //!   refused. That fails closed, which is the safe direction.
+  - //! - Command substitution
+  + //! - A quoted argument that spans lines (`python3 -c "…"`, a
+  + //!   `git commit -m "…"` with a body, `gh issue create --body "…"`) is not
+  + //!   one word (#1068). Each interior line is tokenized as a command of its
+  + //!   own, so prose reading `rm -rf /` on its own line is refused. It goes
+  + //!   further than that: the opening line ends inside an open quote, which
+  + //!   sends the WHOLE command through the quote-stripping second pass below,
+  ... (6 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6m 22s (2 ✓)
+
+My second edit dropped the start of the next bullet. Fixing that:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/hard_deny.rs (2 → 2 lines)
+    //!   script.py`, `git commit -F msg.txt`, `gh issue create --body-file f`).
+  - //!   `$(…)`
+  + //! - Command substitution `$(…)`
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 50,80p src/hard_deny.rs; … ✗ (62ms)
+    │ old_text not found in src/hard_deny.rs.
+ ✓ (1.2s)
+  ▶ edit src/hard_deny.rs (1 → 2 lines)
+  - //!   script.py`, `git commit -F msg.txt`, `gh issue create --body-file f`). `$(…)` and backticks are not parsed. A command
+  + //!   script.py`, `git commit -F msg.txt`, `gh issue create --body-file f`).
+  + //! - Command substitution `$(…)` and backticks are not parsed. A command
+  ▶ read src/hard_deny.rs:20..100 ✓ (0ms)
+ ✓ (3m 32s)
+  - //!   script.py`, `git commit -F msg.txt`, `gh issue create --body-file f`). `$(…)` and backticks are not parsed. A command
+  + //!   script.py`, `git commit -F msg.txt`, `gh issue create --body-file f`).
+  + //! - Command substitution `$(…)` and backticks are not parsed. A command
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 3m 39s (3 ✓, 1 ✗)
+
+That read may be stale, since it ran in parallel with the edit. Checking the actual state:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 22,30p src/hard_deny.rs; … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "one WORD\|per line" src… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.4s (2 ✓)
+
+The "one WORD" qualification was lost; the parallel edit overwrote it. Redoing it:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/hard_deny.rs (2 → 4 lines)
+  - //! `)`. A quoted string is therefore one WORD: `echo "rm -rf /"` has an
+  - //! argument whose text is `rm -rf /`, and no word in it equals `rm`.
+  + //! `)`. On ONE line a quoted string is therefore one WORD: `echo "rm -rf /"`
+  + //! has an argument whose text is `rm -rf /`, and no word in it equals `rm`.
+  + //! Quote removal is per line, though, so a quoted string that spans lines
+  + //! is NOT one word (see the multi-line bullet under Known residue).
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "one WORD\|per line\|Com… ✓ (3m 23s)
+  - //! `)`. A quoted string is therefore one WORD: `echo "rm -rf /"` has an
+  - //! argument whose text is `rm -rf /`, and no word in it equals `rm`.
+  + //! `)`. On ONE line a quoted string is therefore one WORD: `echo "rm -rf /"`
+  + //! has an argument whose text is `rm -rf /`, and no word in it equals `rm`.
+  + //! Quote removal is per line, though, so a quoted string that spans lines
+  + //! is NOT one word (see the multi-line bullet under Known residue).
+ ✗ (3m 23s)
+    │ Command timed out after 120s. Output so far:
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3m 26s (1 ✓, 1 ✗)
+
+Every edit is in place now; that timeout was just the git pager. Next, the #1068 pointer grep and the full gate:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git --no-pager grep -n '#1068' s… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All five hits are historical labels in doc comments or tests. None is a user-facing "see #1068" pointing at an open tracker, so they stay true after the close.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo bu…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1.3s)
+ ✓ (2m 53s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -cE "FAIL…
+  (interrupted)
+

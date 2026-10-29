@@ -1,0 +1,325 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git log --oneli… ✓ (20ms)
+  ▶ $ sed -n 20,45p src/commands_dev.rs; sed -n 425,490p src/commands_run.rs; sed -n 5… ✓ (8ms)
+  ▶ $ wc -l src/commands_run.rs src/commands_dev.rs src/dispatch_sub.rs src/commands_d… ✓ (14ms)
+  ▶ $ ls tests/common; grep -n "fn \|env_remove" tests/common/*.rs | head -40; grep -n… ✓ (5ms)
+  ▶ $ sed -n 3220,3260p tests/integration.rs; sed -n 3650,3730p tests/integration.rs; … ✓ (6ms)
+  ▶ $ sed -n 1,40p tests/integration.rs; sed -n 2914,2930p tests/integration.rs; sed -…  ▶ $ sed -n 20,67p src/commands_dev_tests.rs; grep -n "commands_dev_tests" src/*.rs ✓ (5ms)
+ ✓ (8ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 20.8s (7 ✓)
+
+Now the edits. Helper first, with tests:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_dev.rs (2 → 12 lines)
+        Shell,
+  + }
+  + 
+  + /// How to type `verb` on `surface`: `/verb` in the REPL, `yoyo verb` on the
+  + /// shell. Shared by every usage line that both doors print (#1086), so a
+  + /// shell reader is never told to type a slash command.
+  + pub fn command_form(surface: DoctorSurface, verb: &str) -> String {
+  +     match surface {
+  +         DoctorSurface::Repl => format!("/{verb}"),
+  +         DoctorSurface::Shell => format!("yoyo {verb}"),
+  +     }
+    }
+  ▶ $ cd src && python3 - <<'EOF' (32 lines) ✓ (14.7s)
+        Shell,
+  + }
+  + 
+  + /// How to type `verb` on `surface`: `/verb` in the REPL, `yoyo verb` on the
+  + /// shell. Shared by every usage line that both doors print (#1086), so a
+  + /// shell reader is never told to type a slash command.
+  + pub fn command_form(surface: DoctorSurface, verb: &str) -> String {
+  +     match surface {
+  ... (4 more lines)
+ ✓ (14.7s)
+  2 tools completed in 22.4s (2 ✓)
+
+Expected red. Now wire run:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd src && python3 - <<'EOF' (46 lines) ✓ (18ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd src && sed -i 's/handle_run_with_status(&input, Shell)/handle_run_with_status… ✓ (1.3s)
+  ▶ $ git diff src/dispatch_sub.rs; sed -n 384,390p src/dispatch_sub.rs ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 13.3s (3 ✓)
+
+Now the real-binary test: the existing row pinned the old shell text, so update it to the new intent and add the absence checks.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 - <<'EOF' (24 lines) ✗ (2m 0s)
+    │ Command timed out after 120s. Output so far:
+  ▶ $ cargo test 2>&1 | grep -E "^test result|FAILED|panicked" | head -40 ✓ (2m 49s)
+  ▶ $ cargo test 2>&1 | grep -E "^test result" | grep -v " 0 failed"; cargo clippy --a… ✓ (2m 46s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 7m 42s (2 ✓, 1 ✗)
+
+All green. Positive control, atomic mutate→run→restore: make the shell arm pass Repl and check the binary tests go red.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cp src/dispatch_sub.rs /tmp/ds.bak && sed -i 's/handle_run_with_status(&input, D… ✓ (18.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The control turned both tests red by name, and they're green again after the restore. Now the #1086 probe:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ gh issue view 1086 --json body,comments -q '.body' | head -60 ✓ (449ms)
+  ▶ $ gh issue view 1086 --json body -q '.body' | sed -n '/^| verb/,/^$/p'; gh issue v… ✓ (668ms)
+  ▶ $ gh issue view 1086 --json body -q '.body' | sed -n '/^| verb/,/^$/p' | cat -A | … ✓ (306ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ gh issue view 1086 --json body -q '.body' | sed -n '/^| verb/,/^$/p' | awk -F'|'… ✓ (331ms)
+  ▶ $ B=$PWD/target/debug/yoyo; D=$(mktemp -d); cd $D; hits=0; for v in find grep blam… ✓ (154ms)
+  ▶ $ B=$PWD/target/debug/yoyo; D=$(mktemp -d); cd $D; for v in tree undo todo lint ri… ✓ (85ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 18.2s (6 ✓)
+
+run is clean now. 11 of the issue's 12 rows still hit; the plan expected 10. Before posting, a check that no doc states the old shell text:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "yoyo run" docs/src README.md | head; grep -rn '!<command>' docs/src RE… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+No doc sentence goes false: commands.md still says "prints its usage line and exits 2", and that's still true. Checking for an Unreleased CHANGELOG section:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n 1,15p CHANGELOG.md | cut -c1-200; grep -n "1083\|1075" CHANGELOG.md | hea… ✓ (4ms)
+  ▶ $ python3 - <<'EOF' (28 lines) ✓ (1.1s)
+  ▶ $ gh issue comment 1086 --body "Slice 1 landed in 9450f16a (Pa… (5 lines) ✓ (1.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ git status --short | head ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 24.0s (4 ✓)
+
+Bare yoyo run now prints usage: yoyo run <command> instead of the REPL-only usage: /run <command>  or  !<command>, and it still exits 2. That's one more of #1086's rows fixed; committed as 9450f16a ("Part of #1086"). Build, all tests, clippy with -D warnings and the fmt check pass.
+
+• Shared helper: commands_dev::command_form(surface, verb) gives /verb in the REPL and yoyo verb on the shell. It reuses the existing DoctorSurface enum and takes the surface as an argument, with no process-wide flag. It adds 10 lines, so commands_dev.rs is at 1975 of its 2000-line cap.
+• Wiring `run`: run_usage_line(surface) builds on the helper, and handle_run_with_status now takes a surface. The shell entry passes Shell. The REPL paths (handle_run, handle_run_usage) pass Repl and print exactly what they did before. dispatch_sub.rs grew 3 lines, to 2549, which is within its allowance.
+• Tests:
+  • A test covering both surfaces, plus one checking the REPL line still matches the old text exactly.
+  • A test that runs the real binary (using the existing helper that clears API keys and HOME) and checks there's no /run, no !<command>, and exit 2.
+  • An existing test still expected the old shell text. I changed its expected value to the new line rather than deleting it.
+• Checked the tests can fail: switching the shell entry back to Repl made both binary tests fail by name. Restoring it made them pass again.
+• Docs: added a CHANGELOG "Unreleased" line. The sentence in docs/src/usage/commands.md about bare yoyo run ("prints its usage line and exits 2") is still true, so I left it.
+• Probe re-run: I re-ran the issue's check on the new binary. run is clean, but 11 of the issue's 12 rows still print their slash form: find, grep, blame, goal, tree, undo, todo, lint, risk, skill and map/index. That's 12 if map and index count separately. The plan expected 10, so the plan's starting count was probably off by one. The yoyo help doctor topic is also still unfixed. I posted these numbers and the helper's name on #1086, so each remaining verb can be a one-file change.
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+  ▶ $ git log --oneline -3; for v in find grep blame goal tree undo todo lint risk ski… ✓ (118ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+I'll keep going one verb per commit, each through command_form. First, where each verb's message comes from and how the shell reaches it:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "usage: /find\|Examples: /find\|/tree requires\|usage: /tree\|usage: /u… ✓ (20ms)
+  ▶ $ sed -n 340,375p src/commands_search.rs; grep -n "handle_find" src/*.rs | grep -v… ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ wc -l src/commands_search.rs src/commands_tree.rs src/commands_git.rs src/comman… ✓ (5ms)
+  ▶ $ sed -n 230,260p tests/module_size.rs; grep -n "grace\|GRACE" tests/module_size.r… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 9.2s (4 ✓)
+
+Starting with find. Its callers:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "handle_find_status(" src tests | grep -v "fn handle_find_status"; grep… ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I'll write one table test in tests/integration.rs and add a row per fixed verb, red first:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cat >> tests/integration.rs <<'EOF' (31 lines) ✓ (9.3s)
+
+Red on find, as expected. Now the fix:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ python3 - <<'EOF' (30 lines) ✓ (10.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+dispatch_sub.rs is close to its line cap, and the full path makes rustfmt wrap each call. Importing the variant keeps every call on one line:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "\bShell\b" src/dispatch_sub.rs | grep -v "DoctorSur… (12 lines) ✓ (10.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Next, tree (bare in a non-git dir, and with a bad argument):
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n 1,40p src/commands_tree.rs; sed -n 100,130p src/commands_tree.rs; grep -r… ✓ (15ms)
+  ▶ $ grep -rn "build_project_tree(\|handle_tree_status(" src tests --include=*.rs | g… ✓ (14ms)
+  ▶ $ grep -rn "build_project_tree(\|handle_tree_status(" src tests --include=*.rs | g… ✓ (15ms)
+  ▶ $ grep -rn "build_project_tree(\|handle_tree_status(" src tests --include=*.rs | g… ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ python3 - <<'EOF' (33 lines) ✓ (10.3s)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 26.6s (5 ✓)
+
+Now undo:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n 1140,1175p src/commands_git.rs; grep -rn "handle_undo_status\|fn handle_u… ✓ (12ms)
+  ▶ $ sed -n 1090,1140p src/commands_git.rs; sed -n 722,740p src/dispatch_sub.rs; grep… ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 10.5s (2 ✓)
+
+handle_undo has many REPL-side callers, so I'll leave its signature alone. The shell-only handle_undo_status will print the usage itself, and both paths share one line builder:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "^use" src/commands_git.rs | head; python3 - <<'EOF' (62 lines) ✓ (26ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ grep -n "enum UndoArg" -A10 src/commands_git.rs; sed -i 's/h… (8 lines) ✓ (10.3s)
+  ▶ $ python3 - <<'EOF' (12 lines) ✓ (21ms)
+  ▶ $ sed -n 3415,3445p tests/integration.rs; sed -n 3760,3775p tests/integration.rs ✓ (4ms)
+  ▶ $ python3 - <<'EOF' (11 lines) ✓ (27ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 25.9s (5 ✓)
+
+Now the full gate:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo fmt && cargo clippy --all-targets -- -D warnings 2>&1 | grep -E "^(error|w… ✓ (1m 46s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cargo test 2>&1 | grep -E "^test result" | awk '{p+=$4; f+=$6} END {print "passe… ✓ (58.9s)
+  ▶ $ cargo test 2>&1 | grep -E "test result" | head -3; cargo test 2>&1 | grep -cE "t… ✓ (2m 56s)
+  ▶ $ cargo test 2>&1 | tail -30 ✓ (58.0s)
+  ▶ $ cargo test --bin yoyo 2>&1 | grep -E "FAILED|panicked|failures:|^    [a-z_:]+$|t… ✓ (57.7s)
+  ▶ $ cargo test --bin yoyo > /tmp/t.log 2>&1; echo exit=$?; grep -v " ok$" /tmp/t.log… ✓ (57.5s)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 8m 46s (6 ✓)
+
+The unit-test binary died before printing a summary. Finding the cause:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -nE "signal|SIGABRT|SIGSEGV|process didn't exit|overflow|error: test failed… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cargo test --bin yoyo > /tmp/t2.log 2>&1; echo exit=$?; grep -c " ok$" /tmp/t2.l… ✓ (58.1s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 7s (2 ✓)
+
+Same failure twice, so it's deterministic. I'll compare the tests that finished against the full list to find the ones still running when the process died:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo test --bin yoyo -- --list 2>/dev/null | grep ": test$" | sed 's/: test$//'… ✓ (148ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ comm -23 /tmp/all.txt /tmp/done.txt | head -12; grep -n "fn test_try_dispatch_su… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.5s (2 ✓)
+
+The suspect is test_try_dispatch_subcommand_lint. It runs yoyo lint in-process, which runs clippy on this repo and calls process::exit when clippy fails. So clippy itself is probably red:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo clippy --all-targets -- -D warnings 2>&1 | tail -15 ✓ (4.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ sed -i 's/use crate::commands_dev::DoctorSurface::{self, Shell};/use crate::comm… ✓ (16.7s)
+  ▶ $ cargo test > /tmp/t3.log 2>&1; echo exit=$?; grep "test result" /tmp/t3.log | aw… ✓ (3m 8s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 3m 42s (3 ✓)
+
+All green: 7038 passed across 28 test binaries. Positive control: switch the find, tree and undo shell calls back to Repl, run, then restore, all in one command:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ cp src/dispatch_sub.rs /tmp/ds2.bak && python3 -c " (6 lines) ✓ (24.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+With the shell calls switched to Repl, 4 tests failed by name; restored, all 140 pass. Next, check the docs and the CHANGELOG, then commit:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "/tree requires\|usage: /find\|usage: /undo\|usage:… (32 lines) ✓ (33ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Next, map and index, which share one message shape:
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n 470,530p src/commands_map.rs; sed -n 560,600p src/commands_search.rs ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ grep -rn "parse_map_argv(\|parse_map_args(\|parse_map_tokens(\|parse_index_args(… ✓ (14ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 15.6s (2 ✓)
+
+Only the shared token loop needs the surface: parse_map_args (REPL) passes Repl and parse_map_argv (shell) passes Shell, so neither public signature changes.
+  ╭─ Turn 39 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 - <<'EOF' (49 lines) ✓ (16.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ grep -rn "takes at most one path\|takes no flags\|usage: {f}\|did you mean --all… ✓ (23ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 21.8s (2 ✓)
+
+No unit test pins these strings, so I'll add one to commands_map's test module: the REPL text is byte-identical and the shell text changes.
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "^mod tests\|^#\[cfg(test)\]" src/commands_map.rs | head -3; grep -n "Ma… ✓ (4ms)
+  ▶ $ sed -n 645,655p src/commands_map.rs; grep -n "derive" src/commands_map.rs | head… ✓ (5ms)
+  ▶ $ python3 - <<'EOF' (29 lines) ✓ (33.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 43.8s (3 ✓)
+
+Now grep and blame:
+  ╭─ Turn 44 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "usage: /grep\|Usage: /blame\|/blame <file>" src --include=*.rs | grep … ✓ (17ms)
+  ▶ $ sed -n 2160,2195p src/commands_search.rs; sed -n 345,400p src/commands_git_revie… ✓ (25ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ sed -n 2174,2200p src/commands_search.rs; grep -n "fn handle_blame_status" -A20 … ✓ (5ms)
+  ▶ $ awk 'NR>=2178 && NR<=2200' src/commands_search.rs | cat -n | cut -c1-200 ✓ (4ms)
+  ▶ $ python3 - <<'EOF' (52 lines) ✓ (18ms)
+  ▶ $ python3 - <<'EOF' (23 lines) ✓ (15.9s)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 41.1s (6 ✓)
+
+Earlier a grep over clippy's output hid a real error, so this time I'm reading the tail directly:
+  ╭─ Turn 50 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo clippy --all-targets -- -D warnings 2>&1 | tail -3; git diff --stat src/di… ✓ (4.1s)
+  ▶ $ cargo clippy --all-targets -- -D warnings 2>&1 | grep -B3 -A8 "dead_code\|never … ✓ (4.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ python3 - <<'EOF' (22 lines) ✓ (25ms)
+  ▶ $ cargo fmt && cargo clippy --all-targets -- -D warnings 2>&1 | tail -3 ✓ (16.0s)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 36.7s (4 ✓)
+
+Clippy is clean. Now the old shell strings pinned in tests, then the full suite:
+  ╭─ Turn 54 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn 'Usage: /blame\|usage: /grep\|/map takes\|/index takes' tests/ src --in…
+  (interrupted)
+

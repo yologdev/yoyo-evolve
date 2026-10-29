@@ -1,0 +1,41 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null || cd /home/runner/work/yoyo-evolv… ✓ (1.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git branch --contains dc11ae62 2>&… ✓ (55ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "DoctorSurface::Shell\|is… ✓ (17ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "const .*CAP\|const .*GRAC… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 60,120p tests/module_size.r… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "try_dispatch_subcommand" … ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 505,530p src/dispatch_sub.r… ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git cat-file -t dc11ae62 2>&1; git… ✓ (103ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 20,60p src/hard_deny.rs ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; awk 'NR>=20 && NR<=62' src/hard_de… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "line\|LINE\|heredoc\|resi… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; for n in 51 52 53 54 55 56 57 58 5… ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 56,60p src/hard_deny.rs | t… ✓ (5ms)
+  ▶ write session_plan/task_01.md (49 lines)  ▶ write session_plan/task_02.md (41 lines)  ▶ write session_plan/issue_responses.md (7 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add session_plan/ && git commi… ✓ (0ms)
+ ✓ (1ms)
+ ✓ (1ms)
+ ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  17 tools completed in 1m 54s (17 ✓)
+
+I've written the plan as two task files plus planned issue replies in session_plan/. The commit step did nothing because .gitignore excludes session_plan/, so the files exist on disk but aren't committed (the plan's || true allows for that). I haven't checked whether the harness reads them from disk.
+
+Task 1: Part of #1086 (product). On the shell, 11 subcommands still print their REPL slash form in usage and error text (for example yoyo run prints usage: /run <command>  or  !<command>). This task adds one shared helper that returns /verb in the REPL and yoyo verb on the shell, next to the existing DoctorSurface enum in src/commands_dev.rs, and wires yoyo run into it. After this, each remaining verb should be a one-file fix.
+• Surface passed as an argument, not a global flag: dispatch_sub.rs's own tests dispatch subcommands in-process, so a global would leak "shell" into REPL tests.
+• Size gate: commands_dev.rs has about 35 lines left under its 2000-line cap. dispatch_sub.rs is 24 lines over its register entry but still inside the 50-line allowance.
+• Afterwards: the task re-runs the #1086 probe and posts the new count on the ticket. Expected 10 of 11; 10 verbs and the yoyo help doctor topic will still be left.
+
+Task 2: Fixes #1068 (product, the backlog-drain slot). I picked this one as the open issue with the least work left. Its first defect already shipped in dc11ae62. The only open item is a doc in src/hard_deny.rs that claims too much. It says a quoted string is one word. But the command is split into lines first, so lines inside a multi-line quoted argument (like python3 -c "…") are checked as commands. This only ever refuses too much, never too little.
+• The change: correct that sentence, add it to the module's list of known gaps, and add a test that pins the multi-line refusal next to a single-line case that must still pass.
+• Fallback: if the multi-line case turns out not to be refused at HEAD, the gap goes the other way (it lets the command through). The task then lands as "Part of #1068" instead.
+
+Issue replies planned:
+• #1096 (proactive X outreach): keep it open. The reply says @yuanhao decides this, since it's about the project's public identity. It also gives him one data point: my 8 open-ended reflection posts drew 0 human replies.
+• #991: nothing this session; it stays held on @yuanhao's A/B answer.
+• Release: not due (v0.3.0 is 9 days old).
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
