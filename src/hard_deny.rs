@@ -19,13 +19,16 @@
 //!
 //! # How it matches
 //!
-//! The command is split into lines (a `\`-newline continuation is joined
-//! first), each line into shell words with quote removal (`'…'`, `"…"`,
-//! backslash escapes), and the words into segments on `;`, `&`, `|`, `(`,
-//! `)`. On ONE line a quoted string is therefore one WORD: `echo "rm -rf /"`
-//! has an argument whose text is `rm -rf /`, and no word in it equals `rm`.
-//! Quote removal is per line, though, so a quoted string that spans lines
-//! is NOT one word (see the multi-line bullet under Known residue).
+//! The command is split into logical lines on UNQUOTED newlines only (a
+//! `\`-newline continuation is joined first; quote state is tracked across
+//! lines, #1101), each line into shell words with quote removal (`'…'`,
+//! `"…"`, `$'…'`, backslash escapes), and the words into segments on `;`,
+//! `&`, `|`, `(`, `)`. A quoted string is therefore one WORD whether or not
+//! it spans lines: `echo "rm -rf /"` has an argument whose text is
+//! `rm -rf /`, and no word in it equals `rm`; a `git commit -m "…"` whose
+//! body has that text on a line of its own is the same. A `#` comment and a
+//! heredoc body are not quote-tracked, so an apostrophe there cannot pair up
+//! with another across lines and hide the line between.
 //!
 //! - **rm-root** (`rm -rf /`, or `rm -rf /*` when the target is exactly
 //!   `/*`): a word whose basename is `rm`, anywhere in the segment (so
@@ -54,23 +57,26 @@
 //!
 //! - A heredoc BODY line that reads like a command (`rm -rf /` on its own
 //!   line in a markdown file being written) is tokenized as a command and
-//!   refused. That fails closed, which is the safe direction.
+//!   refused. That fails closed, which is the safe direction; its
+//!   incidence on mentions is counted on #1102. Remedy for
+//!   the refused user or model: write the text with `write_file` and pass
+//!   the path (`git commit -F msg.txt`, `gh issue create --body-file f`).
 //! - A quoted argument that spans lines (`python3 -c "…"`, a
-//!   `git commit -m "…"` with a body, `gh issue create --body "…"`) is not
-//!   one word (#1068). Each interior line is tokenized as a command of its
-//!   own, so prose reading `rm -rf /` on its own line is refused. It goes
-//!   further than that: the opening line ends inside an open quote, which
-//!   sends the WHOLE command through the quote-stripping second pass below,
-//!   so a mention quoted again inside the argument (`print('rm -rf /')`) is
-//!   refused too, on any of its lines. All of this fails closed: it refuses
-//!   too much, never too little. Parsing quotes across lines is a separate
-//!   decision, not made here. Remedy for the refused user or model: write
-//!   the text to a file with `write_file` and pass the path (`python3
-//!   script.py`, `git commit -F msg.txt`, `gh issue create --body-file f`).
+//!   `git commit -m "…"` with a body, `gh issue create --body "…"`) is one
+//!   word (#1101). The verdict for a multi-line command equals the verdict
+//!   for the same command with each QUOTED newline written as a space. The
+//!   cost, decided and stated: a multi-line `python3 -c "…"` whose inner
+//!   program runs the pattern passes, exactly as its one-line form always
+//!   has, because this guard reads direct commands, not inner programs
+//!   (nested `bash -c`/`sh -c`/`eval` ARE re-read, with their own newlines).
+//!   Superseded, recorded rather than erased: until #1101 quote removal was
+//!   per physical line, every interior line was tokenized as a command, and
+//!   this bullet said "Parsing quotes across lines is a separate decision,
+//!   not made here."
 //! - Command substitution `$(…)` and backticks are not parsed. A command
-//!   containing them, or a line with an unbalanced quote, is ALSO scanned a
-//!   second time with quote characters removed and `$(`, `)` and backticks
-//!   turned into separators — so `git commit -m "… $(x) rm -rf /"` is
+//!   containing them, or a quote that never closes, is ALSO scanned a
+//!   second time (per physical line and per logical line) with quote
+//!   characters removed and `$(`, `)` and backticks turned into separators — so `git commit -m "… $(x) rm -rf /"` is
 //!   refused. That too fails closed.
 //! - Other dangerous deletes (`rm -rf /usr`, `find / -delete`, `> /dev/sda`)
 //!   are not on this list and never were.
@@ -133,7 +139,8 @@ fn match_at_depth(command: &str, depth: usize) -> Option<&'static str> {
     }
     let joined = command.replace("\\\r\n", " ").replace("\\\n", " ");
     let mut needs_desugar = joined.contains("$(") || joined.contains('`');
-    for line in joined.lines() {
+    let logical = logical_lines(&joined);
+    for line in &logical {
         let (segments, balanced) = split_line(line);
         needs_desugar |= !balanced;
         for seg in &segments {
@@ -143,15 +150,26 @@ fn match_at_depth(command: &str, depth: usize) -> Option<&'static str> {
         }
     }
     if needs_desugar {
-        let desugared: String = joined
-            .chars()
-            .filter(|c| *c != '\'' && *c != '"')
-            .map(|c| if c == '`' { ';' } else { c })
-            .collect::<String>()
-            .replace("$(", ";")
-            .replace(')', ";");
-        for line in desugared.lines() {
-            for seg in &split_line(line).0 {
+        let desugar = |text: &str| -> String {
+            text.chars()
+                .filter(|c| *c != '\'' && *c != '"')
+                .map(|c| if c == '`' { ';' } else { c })
+                .collect::<String>()
+                .replace("$(", ";")
+                .replace(')', ";")
+        };
+        // Two scans, refuse if either does: every PHYSICAL line (a `$(`
+        // inside quotes runs its own newline-separated commands, and an
+        // unbalanced quote makes the quote state meaningless), and every
+        // LOGICAL line (a quoted newline is then plain whitespace, so the
+        // verdict is never looser than the one-line form's).
+        let physical = desugar(&joined);
+        let scans = physical
+            .lines()
+            .map(String::from)
+            .chain(logical.iter().map(|l| desugar(l)));
+        for line in scans {
+            for seg in &split_line(&line).0 {
                 if let Some(label) = match_segment(seg, depth) {
                     return Some(label);
                 }
@@ -159,6 +177,130 @@ fn match_at_depth(command: &str, depth: usize) -> Option<&'static str> {
         }
     }
     None
+}
+
+/// Splits `text` on UNQUOTED newlines only (#1101): a newline inside `'…'`,
+/// `"…"` or `$'…'` stays inside its word, so a multi-line quoted argument
+/// (a commit body, a `--body`) is one word, as it is on one line. Outside
+/// quotes a backslash escapes the next char. Two things are deliberately
+/// NOT quote-tracked, so an apostrophe in them cannot pair up across lines
+/// and hide the line between: a `#` comment (to the end of its line), and a
+/// heredoc body, each of whose lines is emitted as a logical line of its own
+/// (tokenized as a command, which fails closed). An unclosed quote runs to
+/// the end; `split_line` then reports it unbalanced and the caller falls
+/// back to the per-physical-line desugar scan.
+fn logical_lines(text: &str) -> Vec<String> {
+    let chars: Vec<char> = text.chars().collect();
+    let n = chars.len();
+    let mut lines = Vec::new();
+    let mut cur = String::new();
+    let mut heredocs: Vec<(String, bool)> = Vec::new();
+    let mut i = 0;
+    while i < n {
+        let c = chars[i];
+        let next = chars.get(i + 1).copied();
+        match c {
+            '\n' => {
+                lines.push(std::mem::take(&mut cur));
+                i += 1;
+                for (delim, strip_tabs) in heredocs.drain(..) {
+                    while i < n {
+                        let end = chars[i..]
+                            .iter()
+                            .position(|&c| c == '\n')
+                            .map_or(n, |p| i + p);
+                        let body: String = chars[i..end].iter().collect();
+                        i = (end + 1).min(n);
+                        let trimmed = body.trim_end_matches('\r');
+                        let trimmed = if strip_tabs {
+                            trimmed.trim_start_matches('\t')
+                        } else {
+                            trimmed
+                        };
+                        let done = trimmed == delim;
+                        lines.push(body);
+                        if done {
+                            break;
+                        }
+                    }
+                }
+            }
+            '\'' | '"' => {
+                // `$'…'` (ANSI-C) honours backslash escapes like `"…"` does.
+                let escapes = c == '"' || cur.ends_with('$');
+                cur.push(c);
+                i += 1;
+                while i < n {
+                    let q = chars[i];
+                    cur.push(q);
+                    i += 1;
+                    if q == '\\' && escapes {
+                        if let Some(&e) = chars.get(i) {
+                            cur.push(e);
+                            i += 1;
+                        }
+                    } else if q == c {
+                        break;
+                    }
+                }
+            }
+            '\\' => {
+                cur.push(c);
+                i += 1;
+                if let Some(e) = next {
+                    cur.push(e);
+                    i += 1;
+                }
+            }
+            '#' if cur
+                .chars()
+                .last()
+                .is_none_or(|p| p.is_whitespace() || ";&|()".contains(p)) =>
+            {
+                while i < n && chars[i] != '\n' {
+                    cur.push(chars[i]);
+                    i += 1;
+                }
+            }
+            '<' if next == Some('<') && chars.get(i + 2) == Some(&'<') => {
+                // A here-string (`<<<`), not a heredoc.
+                cur.push_str("<<<");
+                i += 3;
+            }
+            '<' if next == Some('<') => {
+                cur.push_str("<<");
+                i += 2;
+                let strip_tabs = chars.get(i) == Some(&'-');
+                if strip_tabs {
+                    cur.push('-');
+                    i += 1;
+                }
+                while i < n && (chars[i] == ' ' || chars[i] == '\t') {
+                    cur.push(chars[i]);
+                    i += 1;
+                }
+                let mut delim = String::new();
+                while i < n && !chars[i].is_whitespace() && !";&|()<>".contains(chars[i]) {
+                    cur.push(chars[i]);
+                    if !matches!(chars[i], '\'' | '"' | '\\') {
+                        delim.push(chars[i]);
+                    }
+                    i += 1;
+                }
+                if !delim.is_empty() {
+                    heredocs.push((delim, strip_tabs));
+                }
+            }
+            _ => {
+                cur.push(c);
+                i += 1;
+            }
+        }
+    }
+    if !cur.is_empty() {
+        lines.push(cur);
+    }
+    lines
 }
 
 /// Splits one line into segments of shell words (quote removal applied).
@@ -466,25 +608,29 @@ mod tests {
         assert!(hard_deny_refusal(&only_rm, "rm -rf /").is_some());
     }
 
-    /// #1068 defect 2: quote removal is per LINE, so a double-quoted
-    /// argument that spans lines is not one word. Its interior line is
-    /// tokenised as a command of its own, and prose reading `rm -rf /` there
-    /// is refused. This pins that the multi-line case fails CLOSED (refuses
-    /// too much); it does not claim the refusal is correct.
+    /// #1068 defect 2, decided by #1101: quote state is tracked across lines,
+    /// so a double-quoted argument that spans lines is ONE word, as it is on
+    /// one line. Superseded: until #1101 this test was
+    /// `multi_line_quoted_argument_fails_closed` and pinned that the interior
+    /// line was refused. The stated cost, pinned here: an inner program that
+    /// runs the pattern passes, exactly as its one-line form passes.
     #[test]
-    fn multi_line_quoted_argument_fails_closed() {
+    fn multi_line_quoted_argument_is_one_word() {
         let cmd = "python3 -c \"print(1)\nrm -rf /\nprint(2)\"";
         // Anti-vacuous: the fixture really spans lines and really carries the
         // pattern on an interior line of its own.
         assert!(cmd.contains('\n'), "fixture must span lines: {cmd:?}");
         assert_eq!(cmd.lines().nth(1), Some("rm -rf /"), "{cmd:?}");
-        assert_eq!(hard_deny_match(cmd), Some(RULE_RM_ROOT), "{cmd:?}");
+        assert_eq!(hard_deny_match(cmd), None, "{cmd:?}");
         // The same text through the real refusal door.
-        assert!(hard_deny_refusal(HARD_DENY_PATTERNS, cmd).is_some());
+        assert_eq!(hard_deny_refusal(HARD_DENY_PATTERNS, cmd), None);
+        // Its one-line form gets the same verdict.
+        let one_line = "python3 -c \"print(1); rm -rf /; print(2)\"";
+        assert_eq!(hard_deny_match(one_line), None, "{one_line:?}");
 
-        // A commit body is the same shape: the interior line is refused.
+        // A commit body is the same shape and now passes.
         let commit = "git commit -m \"subject\n\nrm -rf / is now guarded\"";
-        assert_eq!(hard_deny_match(commit), Some(RULE_RM_ROOT), "{commit:?}");
+        assert_eq!(hard_deny_match(commit), None, "{commit:?}");
     }
 
     /// Near miss for the above: on ONE line the quoted string is one word,
@@ -499,6 +645,154 @@ mod tests {
         // passes: the fail-closed reach is the mention, not the shape.
         let benign = "python3 -c \"print(1)\nprint(2)\"";
         assert_eq!(hard_deny_match(benign), None, "{benign:?}");
+    }
+
+    /// #1101: (multi-line command, the same command with each QUOTED newline
+    /// written as a space by hand, expected label). The invariant is that the
+    /// two forms get the same verdict; the explicit expected column stops the
+    /// table passing by agreeing with itself. The single-line column is typed,
+    /// not computed, so the quote tracker under test cannot produce it.
+    const QUOTED_NEWLINE_ROWS: &[(&str, &str, Option<&str>)] = &[
+        // --- must still refuse ---
+        // An unquoted newline separates commands.
+        ("echo hi\nrm -rf /", "echo hi\nrm -rf /", Some(RULE_RM_ROOT)),
+        // A quote that opens and closes across a newline, then the pattern.
+        (
+            "echo \"a\nb\"; rm -rf /",
+            "echo \"a b\"; rm -rf /",
+            Some(RULE_RM_ROOT),
+        ),
+        (
+            "echo \"a\nb\"\nrm -rf /",
+            "echo \"a b\"\nrm -rf /",
+            Some(RULE_RM_ROOT),
+        ),
+        // Backslash-newline continuation splitting the pattern (a normaliser
+        // the old line split merged, so it gets its own row).
+        ("rm -rf \\\n/", "rm -rf /", Some(RULE_RM_ROOT)),
+        ("rm -rf \\\r\n/", "rm -rf /", Some(RULE_RM_ROOT)),
+        // Heredoc fed to a shell: body lines are tokenized as commands.
+        (
+            "bash <<EOF\nrm -rf /\nEOF",
+            "bash <<EOF\nrm -rf /\nEOF",
+            Some(RULE_RM_ROOT),
+        ),
+        // A heredoc body is not quote-tracked: apostrophes in it must not
+        // pair up across lines and hide the line between them.
+        (
+            "bash <<EOF\necho it's\nrm -rf /\necho don't\nEOF",
+            "bash <<EOF\necho it's\nrm -rf /\necho don't\nEOF",
+            Some(RULE_RM_ROOT),
+        ),
+        // A comment's apostrophe is not a quote either (bash runs the rm).
+        (
+            "# don't\nrm -rf /\n# isn't",
+            "# don't\nrm -rf /\n# isn't",
+            Some(RULE_RM_ROOT),
+        ),
+        // ANSI-C quoting: `\'` inside `$'…'` is an escaped quote, not a close.
+        (
+            "echo $'\\''\nrm -rf /\necho '",
+            "echo $'\\''\nrm -rf /\necho '",
+            Some(RULE_RM_ROOT),
+        ),
+        // A quote that never closes: the fail-closed desugar path.
+        (
+            "echo \"oops\nrm -rf /",
+            "echo \"oops rm -rf /",
+            Some(RULE_RM_ROOT),
+        ),
+        // `$(` inside double quotes executes, across lines too.
+        (
+            "echo \"$(\nrm -rf /\n)\"",
+            "echo \"$( rm -rf / )\"",
+            Some(RULE_RM_ROOT),
+        ),
+        // A nested shell's script string is re-matched with ITS newlines.
+        (
+            "bash -c \"x\nrm -rf /\"",
+            "bash -c \"x rm -rf /\"",
+            Some(RULE_RM_ROOT),
+        ),
+        (
+            "sh -c 'x\nrm -rf /'",
+            "sh -c 'x rm -rf /'",
+            Some(RULE_RM_ROOT),
+        ),
+        // CRLF, refusing.
+        (
+            "echo hi\r\nrm -rf /",
+            "echo hi\r\nrm -rf /",
+            Some(RULE_RM_ROOT),
+        ),
+        // --- must now pass (the #1101 fix) ---
+        (
+            "git commit -m \"subject\n\nbody mentioning rm -rf /\"",
+            "git commit -m \"subject  body mentioning rm -rf /\"",
+            None,
+        ),
+        (
+            "gh issue comment 1 --body \"line\nrm -rf / is refused\"",
+            "gh issue comment 1 --body \"line rm -rf / is refused\"",
+            None,
+        ),
+        ("echo 'a\nrm -rf /'", "echo 'a rm -rf /'", None),
+        (
+            "git commit -m \"x\n\nmkfs.ext4 /dev/sda is refused\"",
+            "git commit -m \"x  mkfs.ext4 /dev/sda is refused\"",
+            None,
+        ),
+        // A mention quoted again inside the argument (Day 243's refusal).
+        (
+            "python3 -c \"print(1)\nprint('rm -rf /')\"",
+            "python3 -c \"print(1) print('rm -rf /')\"",
+            None,
+        ),
+        // The stated cost: an inner program passes, as its one-line form does.
+        (
+            "python3 -c \"print(1)\nrm -rf /\nprint(2)\"",
+            "python3 -c \"print(1) rm -rf / print(2)\"",
+            None,
+        ),
+        // CRLF, passing.
+        (
+            "git commit -m \"subject\r\n\r\nrm -rf / is guarded\"",
+            "git commit -m \"subject\r \r rm -rf / is guarded\"",
+            None,
+        ),
+    ];
+
+    #[test]
+    fn quoted_newline_verdict_equals_its_single_line_form() {
+        let mut wrong = Vec::new();
+        for (multi, single, expected) in QUOTED_NEWLINE_ROWS {
+            // Anti-vacuous: every multi-line row really spans lines.
+            assert!(multi.contains('\n'), "fixture must span lines: {multi:?}");
+            let (m, s) = (hard_deny_match(multi), hard_deny_match(single));
+            if m != *expected || s != *expected {
+                wrong.push(format!(
+                    "{multi:?}: multi={m:?} single={s:?} expected={expected:?}"
+                ));
+            }
+        }
+        assert!(wrong.is_empty(), "rows off:\n{}", wrong.join("\n"));
+    }
+
+    /// Inverse probe (d217): each passing row's pattern-EXECUTING twin, with
+    /// the quote closed before an unquoted newline, still refuses.
+    #[test]
+    fn passing_rows_executing_twins_refuse() {
+        let twins = [
+            "git commit -m \"subject\"\nrm -rf /",
+            "gh issue comment 1 --body \"line\"\nrm -rf /",
+            "echo 'a'\nrm -rf /",
+            "git commit -m \"x\"\nmkfs.ext4 /dev/sda",
+            "python3 -c \"print(1)\"\nrm -rf /",
+            "git commit -m \"subject\"\r\nrm -rf /",
+        ];
+        for cmd in twins {
+            assert!(hard_deny_match(cmd).is_some(), "should refuse: {cmd:?}");
+        }
     }
 
     #[test]

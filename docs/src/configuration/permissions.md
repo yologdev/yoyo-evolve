@@ -413,6 +413,8 @@ Beyond pattern matching, yoyo has a built-in safety analyzer that detects catego
 
 When a dangerous pattern is detected, yoyo shows a warning explaining **why** the command is flagged before asking for confirmation. A handful of truly catastrophic patterns (like `rm -rf /` or fork bombs) are hard-blocked and can never execute, even with `--yes`.
 
+The hard block reads commands, not text: a quoted mention passes, whether it fits on one line (`echo "rm -rf /"`) or spans several (a `git commit -m "…"` or `gh issue comment --body "…"` whose body has the pattern on a line of its own). A newline outside quotes still starts a new command, and a script handed to `bash -c`/`sh -c`/`eval` is read as commands too. Two places are still read as commands even when they only mention a pattern, because that is the safe direction: a heredoc body (`cat <<EOF … EOF`) and anything containing `$(…)` or backticks. If one of those refuses text you meant as prose, write it to a file and pass the path (`git commit -F msg.txt`, `--body-file`). The block does not look inside other programs, so `python3 -c "…"` passes on one line or many.
+
 When bash refuses a command (a hard block, your deny list, a sub-agent that would need your confirmation, a git redirection out of a pinned worktree, or you answering no), the model gets the refusal text exactly as written. yoyo does not add a "try a simpler version" recovery hint, and it does not re-run the whole prompt automatically, because running it again would hit the same refusal.
 
 Safe commands like `ls`, `cargo test`, `git status`, and `grep` pass through without triggering any warnings.
