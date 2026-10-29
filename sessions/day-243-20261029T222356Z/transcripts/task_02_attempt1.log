@@ -1,0 +1,283 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh…  ▶ $ sed -n 200,512p src/hard_deny.rs ✓ (5ms)
+ ✓ (13ms)
+  ▶ read src/hard_deny.rs (90 lines)  ▶ read src/hard_deny.rs:300..410 ✓ (1ms)
+ ✓ (1ms)
+  ▶ $ grep -n "hard_deny\|1068\|1101\|multi-line\|spans lines" ARCHITECTURE.md docs/sr… ✓ (15ms)
+  ▶ $ grep -n "hard_deny.rs" ARCHITECTURE.md | cut -c1-300; grep -n "multi-line\|1068\… ✓ (11ms)
+  ▶ $ sed -n 1516,1540p ARCHITECTURE.md | cut -c1-1500; grep -n "spans lines\|span lin… ✓ (6ms)
+  ▶ $ grep -rn "blocked by safety\|hard deny\|deny_patterns\|rm -rf /" docs/src | cut … ✓ (4ms)
+  ▶ $ sed -n 410,420p docs/src/configuration/permissions.md ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  9 tools completed in 1m 39s (9 ✓)
+
+Now I'll add the table + invariant test first (pre-fix), and record the current verdicts.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/hard_deny.rs:460.. ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ grep -n "const.*CAP\|MAX_LINES\|= [0-9]\{3,5\};" tests/module_size.rs | head; gr… ✓ (4ms)
+  ▶ $ sed -n 1,113p tests/module_size.rs | grep -n "1500\|2000\|cap\b\|CAP" | head ✓ (3ms)
+  ▶ $ grep -n "const [A-Z_]*: usize" tests/module_size.rs ✓ (14ms)
+  ▶ edit src/hard_deny.rs (2 → 142 lines)
+  +     /// #1101: (multi-line command, the same command with each QUOTED newline
+  +     /// written as a space by hand, expected label). The invariant is that the
+  +     /// two forms get the same verdict; the explicit expected column stops the
+  +     /// table passing by agreeing with itself. The single-line column is typed,
+  +     /// not computed, so the quote tracker under test cannot produce it.
+  +     const QUOTED_NEWLINE_ROWS: &[(&str, &str, Option<&str>)] = &[
+  +         // --- must still refuse ---
+  +         // An unquoted newline separates commands.
+  +         ("echo hi\nrm -rf /", "echo hi\nrm -rf /", Some(RULE_RM_ROOT)),
+  +         // A quote that opens and closes across a newline, then the pattern.
+  +         (
+  +             "echo \"a\nb\"; rm -rf /",
+  +             "echo \"a b\"; rm -rf /",
+  +             Some(RULE_RM_ROOT),
+  +         ),
+  +         (
+  +             "echo \"a\nb\"\nrm -rf /",
+  +             "echo \"a b\"\nrm -rf /",
+  +             Some(RULE_RM_ROOT),
+  +         ),
+  ... (122 more lines)
+  ▶ $ cargo test --bin yoyo hard_deny 2>&1 | tail -40 ✓ (2m 29s)
+  +     /// #1101: (multi-line command, the same command with each QUOTED newline
+  +     /// written as a space by hand, expected label). The invariant is that the
+  +     /// two forms get the same verdict; the explicit expected column stops the
+  +     /// table passing by agreeing with itself. The single-line column is typed,
+  +     /// not computed, so the quote tracker under test cannot produce it.
+  +     const QUOTED_NEWLINE_ROWS: &[(&str, &str, Option<&str>)] = &[
+  +         // --- must still refuse ---
+  +         // An unquoted newline separates commands.
+  ... (13 more lines)
+ ✓ (2m 29s)
+  ▶ $ sed -n 1,60p scripts/check_assertion_weakening.py; grep -rn "check_assertion_wea… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 3m 54s (7 ✓)
+
+Not a gate. Now the implementation.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/hard_deny.rs (29 → 165 lines)
+        let joined = command.replace("\\\r\n", " ").replace("\\\n", " ");
+        let mut needs_desugar = joined.contains("$(") || joined.contains('`');
+  -     for line in joined.lines() {
+  +     let logical = logical_lines(&joined);
+  +     for line in &logical {
+            let (segments, balanced) = split_line(line);
+            needs_desugar |= !balanced;
+            for seg in &segments {
+  ···
+            }
+        }
+        if needs_desugar {
+  -         let desugared: String = joined
+  -             .chars()
+  -             .filter(|c| *c != '\'' && *c != '"')
+  -             .map(|c| if c == '`' { ';' } else { c })
+  -             .collect::<String>()
+  -             .replace("$(", ";")
+  -             .replace(')', ";");
+  -         for line in desugared.lines() {
+  ... (153 more lines)
+ ✓ (2m 22s)
+        let joined = command.replace("\\\r\n", " ").replace("\\\n", " ");
+        let mut needs_desugar = joined.contains("$(") || joined.contains('`');
+  -     for line in joined.lines() {
+  +     let logical = logical_lines(&joined);
+  +     for line in &logical {
+            let (segments, balanced) = split_line(line);
+            needs_desugar |= !balanced;
+            for seg in &segments {
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now rewrite the old residue test to pin the new decision (it asserted the refusal #1101 removes):
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/hard_deny.rs (20 → 26 lines)
+  -     /// #1068 defect 2: quote removal is per LINE, so a double-quoted
+  -     /// argument that spans lines is not one word. Its interior line is
+  -     /// tokenised as a command of its own, and prose reading `rm -rf /` there
+  -     /// is refused. This pins that the multi-line case fails CLOSED (refuses
+  -     /// too much); it does not claim the refusal is correct.
+  +     /// #1068 defect 2, decided by #1101: quote state is tracked across lines,
+  +     /// so a double-quoted argument that spans lines is ONE word, as it is on
+  +     /// one line. Superseded: until #1101 this test was
+  +     /// `multi_line_quoted_argument_fails_closed` and pinned that the interior
+  +     /// line was refused. The stated cost, pinned here: an inner program that
+  +     /// runs the pattern passes, exactly as its one-line form passes.
+        #[test]
+  -     fn multi_line_quoted_argument_fails_closed() {
+  +     fn multi_line_quoted_argument_is_one_word() {
+            let cmd = "python3 -c \"print(1)\nrm -rf /\nprint(2)\"";
+            // Anti-vacuous: the fixture really spans lines and really carries the
+            // pattern on an interior line of its own.
+            assert!(cmd.contains('\n'), "fixture must span lines: {cmd:?}");
+            assert_eq!(cmd.lines().nth(1), Some("rm -rf /"), "{cmd:?}");
+  -         assert_eq!(hard_deny_match(cmd), Some(RULE_RM_ROOT), "{cmd:?}");
+  ... (15 more lines)
+ ✗ (1ms)
+    │ old_text not found in src/hard_deny.rs.
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ python3 - <<'PY' (34 lines) ✗ (0ms)
+    │ Command blocked by safety policy: contains 'rm -rf /'. This pattern is denied for safety.
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 16.7s (0 ✓, 2 ✗)
+
+My own guard refused that heredoc (heredoc body = the residue I'm deliberately keeping). Noting it as an incidence for the ticket; using a file instead.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ write /tmp/fix_test.py (32 lines)  ▶ $ python3 /tmp/fix_test.py && cargo test --bin yoyo hard_deny 2>&1 | tail -25 ✓ (1ms)
+ ✓ (29.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 35.3s (2 ✓)
+
+Green. Now the positive control, atomic: neuter logical_lines back to a plain lines() split, run, restore in one command.
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cp src/hard_deny.rs /tmp/hd.bak && sed -i 's|    let logical = logical_lines(&jo… ✓ (59.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control 1 fails exactly the 7 PASS rows by name, then restores green with 0 markers. A second control for the bypass guards (comment + heredoc handling), serially:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cp src/hard_deny.rs /tmp/hd.bak && sed -i "s|            '#' if cur|            … ✓ (59.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both bypass-guard rows go red without their handling (without them the fix would have opened a real hole: an apostrophe in a # comment hiding a live rm). One more for $'…':
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cp src/hard_deny.rs /tmp/hd.bak && sed -i "s/let escapes = c == '\"' || cur.ends… ✓ (29.6s)
+
+Each guard fails by name and restores clean. Now docs: the module doc first.
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cat > /tmp/doc.py <<'PY' (38 lines) ✗ (0ms)
+    │ Command blocked by safety policy: contains 'rm -rf /'. This pattern is denied for safety.
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Second hit of the heredoc-body residue on my own work this session. Via a file:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ write /tmp/doc.py (38 lines)  ▶ $ python3 /tmp/doc.py && sed -n 18,90p src/hard_deny.rs ✓ (1ms)
+ ✓ (18ms)
+  ▶ read src/hard_deny.rs:20..90 ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cat > /tmp/doc2.py <<'PY' (19 lines) ✓ (1.3s)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 11.8s (4 ✓)
+
+Now the ARCHITECTURE.md entry and the docs page.
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "^\*\*Known residue (in the module doc, not fixed).\*\*" ARCHITECTURE.md… ✓ (5ms)
+  ▶ write /tmp/arch.py (9 lines)  ▶ $ python3 /tmp/arch.py && grep -c "Day 243 (20:53) — #1101" ARCHITECTURE.md; grep … ✓ (1ms)
+ ✓ (35ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 21.6s (3 ✓)
+
+21 rows checks out (14 refuse + 7 pass). Now the user-facing docs page:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ edit docs/src/configuration/permissions.md (1 → 3 lines)
+    A handful of truly catastrophic patterns (like `rm -rf /` or fork bombs) are hard-blocked and can never execute, even with `--yes`.
+  + 
+  + The hard block reads commands, not text: a quoted mention passes, whether it fits on one line (`echo "rm -rf /"`) or spans several (a `git commit -m "…"` or `gh issue comment --body "…"` whose body has the pattern on a line of its own). A newline outside quotes still starts a new command, and a script handed to `bash -c`/`sh -c`/`eval` is read as commands too. Two places are still read as commands even when they only mention a pattern, because that is the safe direction: a heredoc body (`cat… [yoyo: 288 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (0ms)
+    A handful of truly catastrophic patterns (like `rm -rf /` or fork bombs) are hard-blocked and can never execute, even with `--yes`.
+  + 
+  + The hard block reads commands, not text: a quoted mention passes, whether it fits on one line (`echo "rm -rf /"`) or spans several (a `git commit -m "…"` or `gh issue comment --body "…"` whose body has the pattern on a line of its own). A newline outside quotes still starts a new command, and a script handed to `bash -c`/`sh -c`/`eval` is read as commands too. Two places are still read as commands even when they only mention a pattern, because that is the safe direction: a heredoc body (`cat… [yoyo: 288 more bytes elided — diff lines are capped at 500 bytes]
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ git grep -n '#1101\|#1068' src docs | cut -c1-160; gh issue view 1068 --json sta… ✓ (720ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 9.0s (2 ✓)
+
+All #1101 hits describe the fix itself (true after close); the #1068 hits are historical, not tracking pointers. Full gate:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo fmt -- --check && cargo clippy --all-targets -- -D warnings 2>&1 | tail -3… ✓ (4m 13s)
+  ▶ $ cargo test 2>&1 | grep -E "^test result" | grep -v " 0 failed" ; echo "non-ok li… ✓ (6m 17s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 10m 45s (2 ✓)
+
+All green, 0 NEUTERED markers left. Commenting the incidence and leftovers on #1101 (with the body in a file, since the heredoc residue is real), then committing.
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ write /tmp/c1101.md (9 lines)  ▶ $ gh issue comment 1101 --body-file /tmp/c1101.md 2>&1 | tail -1 ✓ (0ms)
+ ✓ (1.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.9s (2 ✓)
+
+This task closes #1101, so the heredoc-body residue needs its own carrier (d243 rule 1). Filing it:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ gh label list --limit 50 2>/dev/null | grep -i "self\|agent" | head -3 ✓ (330ms)
+  ▶ write /tmp/heredoc_issue.md (11 lines)  ▶ $ gh issue create --title "hard_deny: a heredoc body that only mentions a pattern … ✓ (1ms)
+ ✓ (1.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 15.5s (3 ✓)
+
+Point the module doc's heredoc residue bullet and the ARCHITECTURE entry at the carrier:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 - <<'PY' (13 lines) ✓ (2.2s)
+  ▶ $ cargo fmt -- --check && cargo clippy --all-targets -- -D warnings 2>&1 | tail -1… ✓ (49.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ write /tmp/commitmsg.txt (41 lines)  ▶ $ git add -A && git commit -q -F /tmp/commitmsg.txt && git log --oneline -1 && git… ✓ (1ms)
+ ✓ (44ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 1m 14s (4 ✓)
+
+The hard-deny guard no longer refuses a multi-line quoted argument (a commit body, a --body) just because the text mentions a dangerous pattern. Committed as d065ed56 with a Fixes #1101 title. fmt, clippy (-D warnings), build and the full cargo test all pass, and no NEUTERED marker is left.
+
+What changed (`src/hard_deny.rs`): the old code split the command into lines before it tracked quotes. A new logical_lines step now splits only on newlines that are outside quotes. Every multi-line command now gets the same verdict as the same command with its quoted newlines written as spaces. A 21-row table pins this. Each row has a single-line form I typed by hand and an expected verdict I wrote out, so the table can't pass just by agreeing with itself.
+
+• Before the fix: all 14 rows that should refuse already refused. All 7 rows that should pass were refused on multiple lines but passed on one line, which is the bug.
+• After: all 21 rows give the expected verdict.
+
+Three things I deliberately don't track quotes in. Tracking them would have opened real holes:
+• `#` comments: in # don't / <pattern> / # isn't, the two apostrophes would pair into one quoted word and hide a destructive command that bash really runs.
+• Heredoc bodies: their apostrophes would pair up the same way.
+• `$'\''`: the escaped quote would be read as a closing quote.
+
+Turning off each of these handlers made exactly its own row fail. Restoring the plain line split made exactly the 7 should-pass rows fail, plus the old test I inverted. Each control was run serially and restored in the same command. I also checked that each passing row's twin, where the pattern actually runs as a command, is still refused.
+
+Cost: a multi-line python3 -c "…" whose inner program runs the pattern now passes. Its one-line form always passed. This is stated in the module doc, the docs page and ARCHITECTURE.md.
+
+One existing test changed: multi_line_quoted_argument_fails_closed asserted the very refusal this removes. I renamed it multi_line_quoted_argument_is_one_word and inverted it, and recorded the old claim as superseded rather than deleting it.
+
+Docs: I updated the module doc (including the old sentence "Parsing quotes across lines is a separate decision, not made here", kept as a superseded quote), the ARCHITECTURE.md entry for hard_deny, and docs/src/configuration/permissions.md.
+
+Left over: heredoc bodies are still read as commands on purpose, because that errs toward refusing. That rule refused two of my own python3 <<'PY' edit scripts while I was making this change. Since this commit closes #1101, I filed #1102 to count those refusals, with "keep it" as my default and a narrower option. I logged both incidents on #1101.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 0/1 changed files were in top-10 predictions (0.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/1 (0.0%) — reactive was 0.0%
+     Surprises (not predicted): src/hard_deny.rs

@@ -1,0 +1,37 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md; gh issue view 1086 --comm… ✓ (1.5s)
+  ▶ $ grep -n "commands_search\|commands_map\|commands_todo\|commands_goal\|hard_deny"… ✓ (7ms)
+  ▶ $ grep -n "GRACE\|const MAX\|2000\|2500" tests/module_size.rs | head -8 ✓ (3ms)
+  ▶ $ grep -n "todo\|goal" src/dispatch_sub.rs | grep -v "^\s*//" | head -20; grep -n … ✓ (5ms)
+  ▶ write session_plan/task_01.md (48 lines)  ▶ write session_plan/task_02.md (62 lines)  ▶ write session_plan/issue_responses.md (10 lines)  ▶ $ git add session_plan/ && git commit -q -m "Day 243 (20:53): session plan" && git… ✓ (0ms)
+ ✓ (0ms)
+ ✓ (0ms)
+ ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 1m 16s (8 ✓)
+
+I wrote the plan for this session: two task files and an issue-responses file in session_plan/. The commit didn't happen because session_plan/ is in .gitignore, so git refused the add. I didn't force it with -f. The files are on disk and the harness should read them from there.
+
+Task 1 — Part of #1086 (product): stop yoyo goal and yoyo todo from printing REPL slash syntax on the shell. They account for 20 of the roughly 38 offending lines measured at HEAD (todo 11, goal 9).
+• The surface is passed through the existing command_form helper into commands_goal.rs, commands_todo.rs and the shell door in dispatch_sub.rs.
+• REPL output must stay byte-identical, pinned by a full-string test.
+• New rows go into the shell_usage_names_the_shell_form_not_the_slash_form table, with a positive control that breaks the change, watches those rows fail, and restores it.
+• Afterwards, re-run the check for every remaining verb and post the counts on #1086.
+• I picked goal and todo over grep, map and index because commands_search.rs (4593 lines) is already past its registered size of 4573, while the goal and todo files are under the 2000-line cap.
+• The task makes the /goal check refusal an explicit decision, so it isn't left as is without a reason.
+
+Task 2 — Fixes #1101 (product, the backlog-closing slot): ship my default A. The deny guard will track quotes across the whole command: a newline outside quotes still separates commands, and a newline inside quotes stays part of the argument. That stops refusals like the 5 recorded ones on my own text, which only mentioned a blocked pattern.
+• The rule to test: a multi-line command gets the same verdict as the same command with its quoted newlines replaced by spaces. Each row also carries an explicit expected verdict, so the test can't pass just by agreeing with itself.
+• Rows that must still refuse: an unquoted newline before the pattern, a quote that closes before the pattern, backslash line continuation, a heredoc fed to bash, a quote that never closes, "$(…)" spanning lines, and bash -c.
+• Rows that must now pass: commit messages and --body text that mention a pattern, a single-quoted mention, and CRLF line endings.
+• The task also requires checking that each passing row's version that actually runs the pattern is still refused, a positive control, and updating the module doc, the user docs and ARCHITECTURE.md.
+
+Not touched:
+• #991 item 3 stays on hold until @yuanhao answers.
+• No release; it isn't due.
+• The leftover day-242 patch for commands_dev.rs contains a NEUTERED POSITIVE CONTROL line, so it is left to expire.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
