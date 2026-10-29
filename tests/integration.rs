@@ -4491,6 +4491,13 @@ fn shell_usage_names_the_shell_form_not_the_slash_form() {
         (&["tree"], "tree", 1),
         (&["tree", "zz1"], "tree", 2),
         (&["undo", "zz1"], "undo", 2),
+        (&["todo"], "todo", 0),
+        (&["todo", "zz1", "zz2", "zz3"], "todo", 2),
+        (&["todo", "board", "zz1"], "todo", 0),
+        (&["goal"], "goal", 0),
+        (&["goal", "zz1", "zz2", "zz3"], "goal", 2),
+        (&["goal", "set"], "goal", 0),
+        (&["goal", "check"], "goal", 2),
     ];
     for (argv, verb, code) in rows {
         let out = yoyo_in_dir(dir.path(), argv);
@@ -4502,11 +4509,15 @@ fn shell_usage_names_the_shell_form_not_the_slash_form() {
         assert_eq!(out.status.code(), Some(*code), "{argv:?}: {text}");
         assert!(text.contains(&format!("yoyo {verb}")), "{argv:?}: {text}");
         let slash = format!("/{verb}");
+        // One deliberate exemption: the canonical REPL pointer "start yoyo
+        // and use: /<verb>" names the slash form on purpose, for things that
+        // only exist inside a session (the todo list, `goal check`).
         let leaked = text.match_indices(&slash).any(|(i, _)| {
-            !text[i + slash.len()..]
-                .chars()
-                .next()
-                .is_some_and(|c| c.is_alphanumeric() || c == '_')
+            !text[..i].to_lowercase().ends_with("yoyo and use: ")
+                && !text[i + slash.len()..]
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_alphanumeric() || c == '_')
         });
         assert!(!leaked, "{argv:?} leaks {slash}: {text}");
     }

@@ -276,17 +276,18 @@ fn goal_shell_status(args: &[String]) -> i32 {
     // so refusing afterwards printed "requires an interactive session"
     // *after* executing the very thing the message implies never ran.
     if goal_args_need_session(args) {
-        eprintln!("{YELLOW}  /goal check requires an interactive session.{RESET}");
+        eprintln!("{YELLOW}  yoyo goal check needs an interactive session.{RESET}");
         eprintln!("{DIM}  Start yoyo and use: /goal check{RESET}\n");
         eprintln!("{DIM}  Nothing ran: the verify command was not executed.{RESET}\n");
         return crate::setup::SETUP_NOT_INTERACTIVE_EXIT;
     }
     let input = join_args_as_command(args);
-    let result = crate::commands_goal::handle_goal(&input);
+    let fence = crate::config::DirectoryRestrictions::default();
+    let result = crate::commands_goal::handle_goal_on(&input, &fence, Shell);
     // Belt and braces: if a future handler change starts returning
     // SendToAgent for some other verb, report it rather than swallow it.
     if let crate::dispatch::CommandResult::SendToAgent(_) = result {
-        eprintln!("{YELLOW}  /goal check requires an interactive session.{RESET}");
+        eprintln!("{YELLOW}  yoyo goal check needs an interactive session.{RESET}");
         eprintln!("{DIM}  Start yoyo and use: /goal check{RESET}\n");
         return crate::setup::SETUP_NOT_INTERACTIVE_EXIT;
     }
@@ -840,7 +841,7 @@ pub(crate) fn try_dispatch_subcommand_in(
                     std::process::exit(1);
                 }
                 let input = join_args_as_command(args);
-                println!("{}", crate::commands_todo::handle_todo(&input));
+                println!("{}", crate::commands_todo::handle_todo_on(&input, Shell));
                 // Read-only verbs: stderr note, so piped stdout stays clean.
                 if let Some(note) = crate::commands_todo::shell_todo_session_note(verb) {
                     eprintln!("{DIM}  {note}{RESET}");

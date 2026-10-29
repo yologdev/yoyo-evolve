@@ -1,5 +1,6 @@
 //! Todo list command handler: /todo and its subcommands.
 
+use crate::commands_dev::{command_form, DoctorSurface};
 use crate::format::*;
 use crate::sync_util::{rw_read_or_recover, rw_write_or_recover};
 
@@ -49,8 +50,8 @@ pub(crate) fn shell_todo_session_note(verb: &str) -> Option<&'static str> {
         "board" => None,
         _ => Some(
             "note: the todo list is in-memory and per-process -- each `yoyo todo` \
-             shell call is a fresh process, so nothing persists between calls. Use \
-             /todo inside the interactive REPL for a session-scoped list.",
+             shell call is a fresh process, so nothing persists between calls. For a \
+             session-scoped list, start yoyo and use: /todo",
         ),
     }
 }
@@ -244,17 +245,40 @@ pub fn format_todo_list(items: &[TodoItem]) -> String {
 
 /// Handle the /todo command and its subcommands. Returns a string to print.
 pub fn handle_todo(input: &str) -> String {
+    handle_todo_on(input, DoctorSurface::Repl)
+}
+
+/// Rows of `(command, description)` as an aligned, two-space-indented table:
+/// every description starts `gap` columns past the longest command, so the
+/// shell's longer `yoyo todo` spelling re-aligns instead of overflowing (#1086).
+pub(crate) fn usage_table(rows: &[(String, String)], gap: usize) -> String {
+    let width = rows.iter().map(|(c, _)| c.len()).max().unwrap_or(0) + gap;
+    let lines: Vec<String> = rows
+        .iter()
+        .map(|(c, d)| format!("  {c:<width$}{d}"))
+        .collect();
+    lines.join("\n")
+}
+
+/// [`handle_todo`] with every usage line naming the command the way `surface`
+/// types it (#1086): `/todo` in the REPL, `yoyo todo` on the shell.
+pub(crate) fn handle_todo_on(input: &str, surface: DoctorSurface) -> String {
     let arg = input.strip_prefix("/todo").unwrap_or("").trim();
+    let todo = command_form(surface, "todo");
 
     // Route "board" subcommands to the board handler
     if arg == "board" || arg.starts_with("board ") {
-        return handle_todo_board(arg.strip_prefix("board").unwrap_or("").trim());
+        let rest = arg.strip_prefix("board").unwrap_or("").trim();
+        return handle_todo_board_in(rest, SESSION_PLAN_DIR, surface);
     }
 
     if arg.is_empty() || arg == "list" {
         // Show all tasks. `list` is an alias for bare `/todo` — tab-completion has
         // advertised it since before it existed (#702).
         let items = todo_list();
+        if items.is_empty() {
+            return format!("  No tasks. Use {todo} add <description> to add one.");
+        }
         return format_todo_list(&items);
     }
 
@@ -266,7 +290,7 @@ pub fn handle_todo(input: &str) -> String {
     if let Some(desc) = arg.strip_prefix("add ") {
         let desc = desc.trim();
         if desc.is_empty() {
-            return "  Usage: /todo add <description>".to_string();
+            return format!("  Usage: {todo} add <description>");
         }
         let id = todo_add(desc);
         return format!(
@@ -275,7 +299,7 @@ pub fn handle_todo(input: &str) -> String {
         );
     }
     if arg == "add" {
-        return "  Usage: /todo add <description>".to_string();
+        return format!("  Usage: {todo} add <description>");
     }
 
     if let Some(id_str) = arg.strip_prefix("done ") {
@@ -326,16 +350,23 @@ pub fn handle_todo(input: &str) -> String {
 
     // Unknown subcommand — show usage. The verb line is derived from TODO_VERBS
     // so it can never advertise a verb this function doesn't implement (#702).
+    let help = command_form(surface, "help");
+    let rows = [
+        (format!("{todo}, {todo} list"), "Show all tasks".to_string()),
+        (format!("{todo} add <description>"), "Add a new task".into()),
+        (format!("{todo} done <id>"), "Mark task as done".into()),
+        (format!("{todo} wip <id>"), "Mark as in-progress".into()),
+        (format!("{todo} remove <id>"), "Remove a task".into()),
+        (format!("{todo} clear"), "Clear all tasks".into()),
+        (
+            format!("{todo} board"),
+            format!("Kanban view of session_plan/*.md (see {help} todo)"),
+        ),
+    ];
     format!(
-        "  Usage: /todo <{}>\n\
-         \x20 /todo, /todo list        Show all tasks\n\
-         \x20 /todo add <description>  Add a new task\n\
-         \x20 /todo done <id>          Mark task as done\n\
-         \x20 /todo wip <id>           Mark as in-progress\n\
-         \x20 /todo remove <id>        Remove a task\n\
-         \x20 /todo clear              Clear all tasks\n\
-         \x20 /todo board              Kanban view of session_plan/*.md (see /help todo)",
-        TODO_VERBS.join(" | ")
+        "  Usage: {todo} <{}>\n{}",
+        TODO_VERBS.join(" | "),
+        usage_table(&rows, 2)
     )
 }
 
@@ -668,21 +699,24 @@ fn normalize_task_id(input: &str) -> String {
     input.to_string()
 }
 
-/// Handle `/todo board` subcommands.
-pub fn handle_todo_board(input: &str) -> String {
-    handle_todo_board_with_dir(input, SESSION_PLAN_DIR)
+/// The REPL board handler over a configurable base directory (tests only;
+/// production routes through [`handle_todo_on`], which passes the surface).
+#[cfg(test)]
+fn handle_todo_board_with_dir(input: &str, base_dir: &str) -> String {
+    handle_todo_board_in(input, base_dir, DoctorSurface::Repl)
 }
 
-/// Inner implementation that accepts a configurable base directory (for testing).
-fn handle_todo_board_with_dir(input: &str, base_dir: &str) -> String {
+/// The board handler, naming `/todo board` as `surface` types it (#1086).
+fn handle_todo_board_in(input: &str, base_dir: &str, surface: DoctorSurface) -> String {
     let arg = input.trim();
+    let board = command_form(surface, "todo board");
 
     // /todo board or /todo board show
     if arg.is_empty() || arg == "show" {
         let tasks = read_task_files(base_dir);
         if tasks.is_empty() {
             return format!(
-                "{YELLOW}  No task files in {base_dir}/. Use /todo board init to set up.{RESET}"
+                "{YELLOW}  No task files in {base_dir}/. Use {board} init to set up.{RESET}"
             );
         }
         let goal = read_board_goal(base_dir);
@@ -723,7 +757,7 @@ fn handle_todo_board_with_dir(input: &str, base_dir: &str) -> String {
     if let Some(title) = arg.strip_prefix("add ") {
         let title = title.trim();
         if title.is_empty() {
-            return "  Usage: /todo board add <title>".to_string();
+            return format!("  Usage: {board} add <title>");
         }
         match create_task_file(base_dir, title, "backlog") {
             Ok(id) => {
@@ -733,14 +767,14 @@ fn handle_todo_board_with_dir(input: &str, base_dir: &str) -> String {
         }
     }
     if arg == "add" {
-        return "  Usage: /todo board add <title>".to_string();
+        return format!("  Usage: {board} add <title>");
     }
 
     // /todo board goal <text>
     if let Some(goal_text) = arg.strip_prefix("goal ") {
         let goal_text = goal_text.trim();
         if goal_text.is_empty() {
-            return "  Usage: /todo board goal <text>".to_string();
+            return format!("  Usage: {board} goal <text>");
         }
         let dir = std::path::Path::new(base_dir);
         if let Err(e) = std::fs::create_dir_all(dir) {
@@ -753,14 +787,14 @@ fn handle_todo_board_with_dir(input: &str, base_dir: &str) -> String {
         }
     }
     if arg == "goal" {
-        return "  Usage: /todo board goal <text>".to_string();
+        return format!("  Usage: {board} goal <text>");
     }
 
     // /todo board evidence <text>
     if let Some(evidence_text) = arg.strip_prefix("evidence ") {
         let evidence_text = evidence_text.trim();
         if evidence_text.is_empty() {
-            return "  Usage: /todo board evidence <text>".to_string();
+            return format!("  Usage: {board} evidence <text>");
         }
         let dir = std::path::Path::new(base_dir);
         if let Err(e) = std::fs::create_dir_all(dir) {
@@ -779,14 +813,14 @@ fn handle_todo_board_with_dir(input: &str, base_dir: &str) -> String {
         }
     }
     if arg == "evidence" {
-        return "  Usage: /todo board evidence <text>".to_string();
+        return format!("  Usage: {board} evidence <text>");
     }
 
     // /todo board done <task_id>
     if let Some(task_id) = arg.strip_prefix("done ") {
         let task_id = normalize_task_id(task_id.trim());
         if task_id.is_empty() {
-            return "  Usage: /todo board done <task_id>".to_string();
+            return format!("  Usage: {board} done <task_id>");
         }
         match update_task_status(base_dir, &task_id, "done") {
             Ok(()) => return format!("{GREEN}  Marked {task_id} as done{RESET}"),
@@ -799,9 +833,10 @@ fn handle_todo_board_with_dir(input: &str, base_dir: &str) -> String {
         let rest = rest.trim();
         let parts: Vec<&str> = rest.splitn(2, ' ').collect();
         if parts.len() < 2 || parts[1].trim().is_empty() {
-            return "  Usage: /todo board move <task_id> <status>\n  \
-                    Statuses: backlog, active, done"
-                .to_string();
+            return format!(
+                "  Usage: {board} move <task_id> <status>\n  \
+                 Statuses: backlog, active, done"
+            );
         }
         let task_id = normalize_task_id(parts[0]);
         let status_input = parts[1].trim();
@@ -820,15 +855,20 @@ fn handle_todo_board_with_dir(input: &str, base_dir: &str) -> String {
     }
 
     // Unknown board subcommand
-    "  Usage:\n\
-     \x20 /todo board                      Show task board\n\
-     \x20 /todo board init [goal]          Initialize session_plan/\n\
-     \x20 /todo board add <title>          Add task (backlog)\n\
-     \x20 /todo board move <id> <status>   Move task (backlog/active/done)\n\
-     \x20 /todo board done <id>            Mark task done\n\
-     \x20 /todo board goal <text>          Set/update goal\n\
-     \x20 /todo board evidence <text>      Append evidence"
-        .to_string()
+    let rows = [
+        (board.clone(), "Show task board"),
+        (format!("{board} init [goal]"), "Initialize session_plan/"),
+        (format!("{board} add <title>"), "Add task (backlog)"),
+        (
+            format!("{board} move <id> <status>"),
+            "Move task (backlog/active/done)",
+        ),
+        (format!("{board} done <id>"), "Mark task done"),
+        (format!("{board} goal <text>"), "Set/update goal"),
+        (format!("{board} evidence <text>"), "Append evidence"),
+    ]
+    .map(|(c, d)| (c, d.to_string()));
+    format!("  Usage:\n{}", usage_table(&rows, 3))
 }
 
 #[cfg(test)]
@@ -880,6 +920,52 @@ mod tests {
             .filter(|v| !SESSION_MUTATING_TODO_VERBS.contains(v))
             .collect();
         assert_eq!(read_only, vec![&"list", &"board"]);
+    }
+
+    /// #1086 near-miss: the REPL usage is byte-identical to the literal it
+    /// replaced, and the shell spelling of the same table names `yoyo todo`.
+    #[test]
+    fn repl_todo_usage_is_byte_identical_and_shell_names_yoyo_todo() {
+        assert_eq!(
+            handle_todo("/todo zz"),
+            "  Usage: /todo <list | add | done | wip | remove | clear | board>\n\
+             \x20 /todo, /todo list        Show all tasks\n\
+             \x20 /todo add <description>  Add a new task\n\
+             \x20 /todo done <id>          Mark task as done\n\
+             \x20 /todo wip <id>           Mark as in-progress\n\
+             \x20 /todo remove <id>        Remove a task\n\
+             \x20 /todo clear              Clear all tasks\n\
+             \x20 /todo board              Kanban view of session_plan/*.md (see /help todo)"
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().to_str().unwrap();
+        assert_eq!(
+            handle_todo_board_with_dir("zz", base),
+            "  Usage:\n\
+             \x20 /todo board                      Show task board\n\
+             \x20 /todo board init [goal]          Initialize session_plan/\n\
+             \x20 /todo board add <title>          Add task (backlog)\n\
+             \x20 /todo board move <id> <status>   Move task (backlog/active/done)\n\
+             \x20 /todo board done <id>            Mark task done\n\
+             \x20 /todo board goal <text>          Set/update goal\n\
+             \x20 /todo board evidence <text>      Append evidence"
+        );
+        assert_eq!(
+            handle_todo_board_with_dir("add", base),
+            "  Usage: /todo board add <title>"
+        );
+        let shell = handle_todo_on("/todo zz", DoctorSurface::Shell);
+        assert!(
+            shell.contains("  yoyo todo add <description>  Add a new task"),
+            "{shell}"
+        );
+        assert!(!shell.contains("/todo"), "{shell}");
+        let board = handle_todo_board_in("zz", base, DoctorSurface::Shell);
+        assert!(
+            board.contains("  yoyo todo board move <id> <status>   Move"),
+            "{board}"
+        );
+        assert!(!board.contains("/todo"), "{board}");
     }
 
     #[test]

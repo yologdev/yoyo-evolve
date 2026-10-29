@@ -3,6 +3,7 @@
 //! Goals are stored as plain text in `.yoyo/goal.md`, making them
 //! human-readable and version-controllable.
 
+use crate::commands_dev::{command_form, DoctorSurface};
 use crate::dispatch::CommandResult;
 use crate::format::*;
 use std::fs;
@@ -526,10 +527,11 @@ fn format_goal(goal: &str) -> String {
 ///
 /// Returns `CommandResult` because `/goal check` needs to send a prompt to the agent.
 ///
-/// Unfenced entry point. Its only production caller is the shell dispatcher
-/// (`dispatch_sub.rs`), which refuses `check` before calling (#754), so the one
-/// arm that feeds a prompt never runs through here outside tests. The REPL
-/// calls [`handle_goal_fenced`] with the session's directory fence.
+/// Unfenced REPL-spelled entry point, now tests only (#1086): the shell
+/// dispatcher (`dispatch_sub.rs`) calls [`handle_goal_on`] with
+/// `DoctorSurface::Shell` after refusing `check` (#754), and the REPL calls
+/// [`handle_goal_fenced`] with the session's directory fence.
+#[cfg(test)]
 pub fn handle_goal(input: &str) -> CommandResult {
     handle_goal_fenced(input, &crate::config::DirectoryRestrictions::default())
 }
@@ -540,10 +542,21 @@ pub fn handle_goal_fenced(
     input: &str,
     restrictions: &crate::config::DirectoryRestrictions,
 ) -> CommandResult {
+    handle_goal_on(input, restrictions, DoctorSurface::Repl)
+}
+
+/// [`handle_goal_fenced`] naming the command as `surface` types it (#1086):
+/// `/goal` in the REPL, `yoyo goal` on the shell.
+pub(crate) fn handle_goal_on(
+    input: &str,
+    restrictions: &crate::config::DirectoryRestrictions,
+    surface: DoctorSurface,
+) -> CommandResult {
     let arg = input.strip_prefix("/goal").unwrap_or("").trim();
+    let goal_cmd = command_form(surface, "goal");
 
     if goal_subcommand_is_unknown(arg) {
-        print_goal_unknown_subcommand(arg);
+        println!("{}", goal_unknown_subcommand_text(arg, surface));
         return CommandResult::Continue;
     }
 
@@ -558,7 +571,7 @@ pub fn handle_goal_fenced(
                 CommandResult::Continue
             }
             None => {
-                println!("{DIM}No goal set. Use /goal set <description> to set one.{RESET}\n");
+                println!("{DIM}No goal set. Use {goal_cmd} set <description> to set one.{RESET}\n");
                 CommandResult::Continue
             }
         }
@@ -566,8 +579,8 @@ pub fn handle_goal_fenced(
         let description = description.trim();
         if description.is_empty() {
             println!(
-                "{YELLOW}Usage: /goal set <description>{RESET}\n\n\
-                 Example: /goal set Refactor the auth module to use JWT tokens\n"
+                "{YELLOW}Usage: {goal_cmd} set <description>{RESET}\n\n\
+                 Example: {goal_cmd} set Refactor the auth module to use JWT tokens\n"
             );
             CommandResult::Continue
         } else {
@@ -621,7 +634,7 @@ pub fn handle_goal_fenced(
                 None => {
                     println!(
                         "{DIM}No verify command set. \
-                         Use /goal verify <command> to set one.{RESET}\n"
+                         Use {goal_cmd} verify <command> to set one.{RESET}\n"
                     );
                 }
             }
@@ -648,10 +661,16 @@ pub fn handle_goal_fenced(
                     // The user typed this command themselves, so it runs without a
                     // trust gate for the rest of this session (see `gate_goal_verify`).
                     mark_verify_set_this_session();
+                    // `check` only runs inside a session, so the shell names
+                    // the REPL form behind the canonical "start yoyo" pointer.
+                    let check = match surface {
+                        DoctorSurface::Repl => "/goal check",
+                        DoctorSurface::Shell => "the goal check -- start yoyo and use: /goal check",
+                    };
                     println!(
                         "{GREEN}Verify command set:{RESET} {verify_arg}\n\n\
                          {DIM}Saved to {VERIFY_FILE}. \
-                         Will run automatically on /goal check.{RESET}\n"
+                         Will run automatically on {check}.{RESET}\n"
                     );
                 }
                 Err(e) => {
@@ -695,14 +714,14 @@ pub fn handle_goal_fenced(
                 CommandResult::SendToAgent(prompt)
             }
             None => {
-                println!("{DIM}No goal set. Use /goal set <description> first.{RESET}\n");
+                println!("{DIM}No goal set. Use {goal_cmd} set <description> first.{RESET}\n");
                 CommandResult::Continue
             }
         }
     } else {
         // Unreachable while goal_subcommand_is_unknown mirrors this chain
         // (pinned by its table test); kept so a drift still prints usage.
-        print_goal_unknown_subcommand(arg);
+        println!("{}", goal_unknown_subcommand_text(arg, surface));
         CommandResult::Continue
     }
 }
@@ -723,24 +742,66 @@ pub(crate) fn goal_subcommand_is_unknown(arg: &str) -> bool {
         || arg == "check")
 }
 
-fn print_goal_unknown_subcommand(arg: &str) {
-    println!(
-        "{YELLOW}Unknown subcommand: {arg}{RESET}\n\n\
-         Usage:\n\
-         \x20 /goal              Show current goal\n\
-         \x20 /goal set <desc>   Set a new goal\n\
-         \x20 /goal show         Show current goal\n\
-         \x20 /goal clear        Remove current goal\n\
-         \x20 /goal check        Ask AI to evaluate progress\n\
-         \x20 /goal verify <cmd> Set a verification command\n\
-         \x20 /goal verify       Show current verify command\n\
-         \x20 /goal verify clear Remove verify command\n"
-    );
+/// The unknown-subcommand usage, naming the command as `surface` types it
+/// (#1086). `check` only runs inside a session, so the shell row says so.
+fn goal_unknown_subcommand_text(arg: &str, surface: DoctorSurface) -> String {
+    let g = command_form(surface, "goal");
+    let check_note = match surface {
+        DoctorSurface::Repl => "",
+        DoctorSurface::Shell => " (interactive session only)",
+    };
+    let rows = [
+        (g.clone(), "Show current goal".to_string()),
+        (format!("{g} set <desc>"), "Set a new goal".into()),
+        (format!("{g} show"), "Show current goal".into()),
+        (format!("{g} clear"), "Remove current goal".into()),
+        (
+            format!("{g} check"),
+            format!("Ask AI to evaluate progress{check_note}"),
+        ),
+        (
+            format!("{g} verify <cmd>"),
+            "Set a verification command".into(),
+        ),
+        (format!("{g} verify"), "Show current verify command".into()),
+        (format!("{g} verify clear"), "Remove verify command".into()),
+    ];
+    let table = crate::commands_todo::usage_table(&rows, 1);
+    format!("{YELLOW}Unknown subcommand: {arg}{RESET}\n\nUsage:\n{table}\n")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #1086 near-miss: the REPL usage is byte-identical to the literal it
+    /// replaced; the shell table names `yoyo goal` and marks `check`.
+    #[test]
+    fn repl_goal_usage_is_byte_identical_and_shell_names_yoyo_goal() {
+        assert_eq!(
+            goal_unknown_subcommand_text("zz", DoctorSurface::Repl),
+            format!(
+                "{YELLOW}Unknown subcommand: zz{RESET}\n\n\
+                 Usage:\n\
+                 \x20 /goal              Show current goal\n\
+                 \x20 /goal set <desc>   Set a new goal\n\
+                 \x20 /goal show         Show current goal\n\
+                 \x20 /goal clear        Remove current goal\n\
+                 \x20 /goal check        Ask AI to evaluate progress\n\
+                 \x20 /goal verify <cmd> Set a verification command\n\
+                 \x20 /goal verify       Show current verify command\n\
+                 \x20 /goal verify clear Remove verify command\n"
+            )
+        );
+        let shell = goal_unknown_subcommand_text("zz", DoctorSurface::Shell);
+        assert!(
+            shell.contains(
+                "  yoyo goal check        Ask AI to evaluate progress (interactive session only)\n"
+            ),
+            "{shell}"
+        );
+        assert!(!shell.contains("/goal"), "{shell}");
+    }
 
     #[test]
     fn goal_subcommand_is_unknown_mirrors_the_handler_chain() {
