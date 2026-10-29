@@ -22,8 +22,10 @@
 //! The command is split into lines (a `\`-newline continuation is joined
 //! first), each line into shell words with quote removal (`'…'`, `"…"`,
 //! backslash escapes), and the words into segments on `;`, `&`, `|`, `(`,
-//! `)`. A quoted string is therefore one WORD: `echo "rm -rf /"` has an
-//! argument whose text is `rm -rf /`, and no word in it equals `rm`.
+//! `)`. On ONE line a quoted string is therefore one WORD: `echo "rm -rf /"`
+//! has an argument whose text is `rm -rf /`, and no word in it equals `rm`.
+//! Quote removal is per line, though, so a quoted string that spans lines
+//! is NOT one word (see the multi-line bullet under Known residue).
 //!
 //! - **rm-root** (`rm -rf /`, or `rm -rf /*` when the target is exactly
 //!   `/*`): a word whose basename is `rm`, anywhere in the segment (so
@@ -53,6 +55,18 @@
 //! - A heredoc BODY line that reads like a command (`rm -rf /` on its own
 //!   line in a markdown file being written) is tokenized as a command and
 //!   refused. That fails closed, which is the safe direction.
+//! - A quoted argument that spans lines (`python3 -c "…"`, a
+//!   `git commit -m "…"` with a body, `gh issue create --body "…"`) is not
+//!   one word (#1068). Each interior line is tokenized as a command of its
+//!   own, so prose reading `rm -rf /` on its own line is refused. It goes
+//!   further than that: the opening line ends inside an open quote, which
+//!   sends the WHOLE command through the quote-stripping second pass below,
+//!   so a mention quoted again inside the argument (`print('rm -rf /')`) is
+//!   refused too, on any of its lines. All of this fails closed: it refuses
+//!   too much, never too little. Parsing quotes across lines is a separate
+//!   decision, not made here. Remedy for the refused user or model: write
+//!   the text to a file with `write_file` and pass the path (`python3
+//!   script.py`, `git commit -F msg.txt`, `gh issue create --body-file f`).
 //! - Command substitution `$(…)` and backticks are not parsed. A command
 //!   containing them, or a line with an unbalanced quote, is ALSO scanned a
 //!   second time with quote characters removed and `$(`, `)` and backticks
@@ -450,6 +464,41 @@ mod tests {
         let only_rm = [RULE_RM_ROOT];
         assert_eq!(hard_deny_refusal(&only_rm, "mkfs /dev/sda"), None);
         assert!(hard_deny_refusal(&only_rm, "rm -rf /").is_some());
+    }
+
+    /// #1068 defect 2: quote removal is per LINE, so a double-quoted
+    /// argument that spans lines is not one word. Its interior line is
+    /// tokenised as a command of its own, and prose reading `rm -rf /` there
+    /// is refused. This pins that the multi-line case fails CLOSED (refuses
+    /// too much); it does not claim the refusal is correct.
+    #[test]
+    fn multi_line_quoted_argument_fails_closed() {
+        let cmd = "python3 -c \"print(1)\nrm -rf /\nprint(2)\"";
+        // Anti-vacuous: the fixture really spans lines and really carries the
+        // pattern on an interior line of its own.
+        assert!(cmd.contains('\n'), "fixture must span lines: {cmd:?}");
+        assert_eq!(cmd.lines().nth(1), Some("rm -rf /"), "{cmd:?}");
+        assert_eq!(hard_deny_match(cmd), Some(RULE_RM_ROOT), "{cmd:?}");
+        // The same text through the real refusal door.
+        assert!(hard_deny_refusal(HARD_DENY_PATTERNS, cmd).is_some());
+
+        // A commit body is the same shape: the interior line is refused.
+        let commit = "git commit -m \"subject\n\nrm -rf / is now guarded\"";
+        assert_eq!(hard_deny_match(commit), Some(RULE_RM_ROOT), "{commit:?}");
+    }
+
+    /// Near miss for the above: on ONE line the quoted string is one word,
+    /// which is the module doc's own example, so it passes.
+    #[test]
+    fn single_line_quoted_mention_still_passes() {
+        let cmd = "echo \"rm -rf /\"";
+        assert!(!cmd.contains('\n'));
+        assert_eq!(hard_deny_match(cmd), None, "{cmd:?}");
+        assert_eq!(hard_deny_refusal(HARD_DENY_PATTERNS, cmd), None);
+        // A multi-line quoted argument that never mentions the pattern
+        // passes: the fail-closed reach is the mention, not the shape.
+        let benign = "python3 -c \"print(1)\nprint(2)\"";
+        assert_eq!(hard_deny_match(benign), None, "{benign:?}");
     }
 
     #[test]
