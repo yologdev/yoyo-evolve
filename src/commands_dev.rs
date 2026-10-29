@@ -29,6 +29,16 @@ pub enum DoctorSurface {
     Shell,
 }
 
+/// How to type `verb` on `surface`: `/verb` in the REPL, `yoyo verb` on the
+/// shell. Shared by every usage line that both doors print (#1086), so a
+/// shell reader is never told to type a slash command.
+pub fn command_form(surface: DoctorSurface, verb: &str) -> String {
+    match surface {
+        DoctorSurface::Repl => format!("/{verb}"),
+        DoctorSurface::Shell => format!("yoyo {verb}"),
+    }
+}
+
 /// A single diagnostic check result from `/doctor`.
 #[derive(Debug, Clone)]
 pub struct DoctorCheck {

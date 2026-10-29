@@ -3676,7 +3676,8 @@ fn run_tree_and_undo_usage_errors_exit_two_with_text_unchanged() {
     // (def, outline, grep, map, index, blame, watch, docs) exits 2.
     let dir = tempfile::tempdir().expect("tempdir");
     let rows: [(&[&str], &str); 3] = [
-        (&["run"], "  usage: /run <command>  or  !<command>\n\n"),
+        // #1086: the shell names its own form, not `/run` or the REPL-only `!`.
+        (&["run"], "  usage: yoyo run <command>\n\n"),
         (
             &["tree", "zzz"],
             "  usage: /tree [depth]  (default depth: 3)\n\n",
@@ -4459,4 +4460,17 @@ fn docs_lint_skill_take_one_spaced_argv_element_whole() {
     let (code, stdout, _) = yoyo_plain_in(dir.path(), &["docs", ""]);
     assert_eq!(code, Some(2), "{stdout:?}");
     assert!(stdout.contains("usage: /docs"), "{stdout:?}");
+}
+
+#[test]
+fn bare_run_on_the_shell_names_no_repl_form() {
+    // #1086: bare `yoyo run` printed `usage: /run <command>  or  !<command>`;
+    // neither `/run` nor `!` is typeable at a shell prompt.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let out = yoyo_in_dir(dir.path(), &["run"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(2), "stdout={stdout}");
+    assert!(stdout.contains("yoyo run <command>"), "stdout={stdout}");
+    assert!(!stdout.contains("/run"), "stdout={stdout}");
+    assert!(!stdout.contains("!<command>"), "stdout={stdout}");
 }

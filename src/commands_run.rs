@@ -2,6 +2,7 @@
 
 use crate::agent_builder::AgentConfig;
 use crate::commands::auto_compact_if_needed;
+use crate::commands_dev::{command_form, DoctorSurface};
 use crate::format::*;
 use crate::prompt::run_prompt_auto_retry;
 use crate::session::SessionChanges;
@@ -441,13 +442,23 @@ pub fn run_outcome(result: &RunResult) -> ShellOutcome {
 }
 
 pub fn handle_run(input: &str) {
-    let _ = handle_run_with_status(input);
+    let _ = handle_run_with_status(input, DoctorSurface::Repl);
+}
+
+/// The `run` usage line for `surface` (#1086): the shell has no `!<command>`
+/// door and no `/run`, so it names only `yoyo run <command>`.
+pub fn run_usage_line(surface: DoctorSurface) -> String {
+    let form = command_form(surface, "run");
+    match surface {
+        DoctorSurface::Repl => format!("usage: {form} <command>  or  !<command>"),
+        DoctorSurface::Shell => format!("usage: {form} <command>"),
+    }
 }
 
 /// The body of [`handle_run`], returning the outcome for the shell arm
 /// (`yoyo run`), which turns it into the process exit code. `None` means no
-/// command was given and only the usage line was printed.
-pub fn handle_run_with_status(input: &str) -> Option<ShellOutcome> {
+/// command was given and only the usage line (for `surface`) was printed.
+pub fn handle_run_with_status(input: &str, surface: DoctorSurface) -> Option<ShellOutcome> {
     let cmd = if input.starts_with("/run ") {
         input.trim_start_matches("/run ").trim()
     } else if input.starts_with('!') && input.len() > 1 {
@@ -456,7 +467,7 @@ pub fn handle_run_with_status(input: &str) -> Option<ShellOutcome> {
         ""
     };
     if cmd.is_empty() {
-        println!("{DIM}  usage: /run <command>  or  !<command>{RESET}\n");
+        println!("{DIM}  {}{RESET}\n", run_usage_line(surface));
         None
     } else {
         let result = run_shell_command(cmd);
@@ -472,7 +483,7 @@ pub fn handle_run_with_status(input: &str) -> Option<ShellOutcome> {
 }
 
 pub fn handle_run_usage() {
-    println!("{DIM}  usage: /run <command>  or  !<command>");
+    println!("{DIM}  {}", run_usage_line(DoctorSurface::Repl));
     println!("  Runs a shell command directly (no AI, no tokens).{RESET}\n");
 }
 

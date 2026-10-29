@@ -1,7 +1,7 @@
 //! Tests for `commands_dev::project_context_check` (#1045), kept out of
 //! `commands_dev.rs`, which sits near the module size cap.
 
-use crate::commands_dev::{project_context_check, DoctorStatus, DoctorSurface};
+use crate::commands_dev::{command_form, project_context_check, DoctorStatus, DoctorSurface};
 
 const REASON: &str = "denied: /proj";
 
@@ -63,5 +63,29 @@ fn nothing_refused_is_byte_identical_to_before() {
     assert_eq!(
         shell.detail,
         "no context file (create YOYO.md or run yoyo init)"
+    );
+}
+
+#[test]
+fn command_form_names_the_verb_as_each_surface_types_it() {
+    // #1086: one surface-aware prefix for every shared usage line.
+    assert_eq!(command_form(DoctorSurface::Repl, "run"), "/run");
+    assert_eq!(command_form(DoctorSurface::Shell, "run"), "yoyo run");
+    assert_eq!(command_form(DoctorSurface::Shell, "tree"), "yoyo tree");
+    assert!(!command_form(DoctorSurface::Shell, "run").contains('/'));
+}
+
+#[test]
+fn run_usage_repl_is_byte_identical_and_shell_drops_the_bang_form() {
+    use crate::commands_run::run_usage_line;
+    // Near-miss: the REPL line is the pre-#1086 literal, byte for byte.
+    assert_eq!(
+        run_usage_line(DoctorSurface::Repl),
+        "usage: /run <command>  or  !<command>"
+    );
+    // `!<command>` is REPL-only syntax; the shell has no such door.
+    assert_eq!(
+        run_usage_line(DoctorSurface::Shell),
+        "usage: yoyo run <command>"
     );
 }
