@@ -3430,7 +3430,10 @@ fn changelog_evolution_tree_exit_one_outside_a_git_repository() {
     let cases: [(&str, &str); 3] = [
         ("changelog", "  (not in a git repository)\n\n"),
         ("evolution", "  (not in a git repository)\n\n"),
-        ("tree", "(not a git repository — /tree requires git)\n\n"),
+        (
+            "tree",
+            "(not a git repository — yoyo tree requires git)\n\n",
+        ), // #1086
     ];
     for (cmd, expected_stdout) in cases {
         let out = yoyo_in_dir(dir.path(), &[cmd]);
@@ -3670,7 +3673,7 @@ fn grep_with_a_match_still_exits_zero() {
 }
 
 #[test]
-fn run_tree_and_undo_usage_errors_exit_two_with_text_unchanged() {
+fn run_tree_and_undo_usage_errors_exit_two_with_shell_usage_text() {
     // #982's last body rows: bare `run` printed usage and exited 0, and
     // `tree <bad>` / `undo <bad>` exited 1 while every other usage error
     // (def, outline, grep, map, index, blame, watch, docs) exits 2.
@@ -3680,11 +3683,11 @@ fn run_tree_and_undo_usage_errors_exit_two_with_text_unchanged() {
         (&["run"], "  usage: yoyo run <command>\n\n"),
         (
             &["tree", "zzz"],
-            "  usage: /tree [depth]  (default depth: 3)\n\n",
+            "  usage: yoyo tree [depth]  (default depth: 3)\n\n",
         ),
         (
             &["undo", "zzz"],
-            "  usage: /undo [N] | --all | --last-commit\n\n",
+            "  usage: yoyo undo [N] | --all | --last-commit\n\n",
         ),
     ];
     for (argv, stdout) in rows {
@@ -3768,7 +3771,7 @@ fn find_refuses_extra_args_and_passes_one_spaced_arg_verbatim() {
 
     let bare = yoyo_in_dir(dir.path(), &["find"]);
     assert_eq!(bare.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&bare.stdout).contains("usage: /find <pattern>"));
+    assert!(String::from_utf8_lossy(&bare.stdout).contains("usage: yoyo find <pattern>"));
 
     // Near miss: one plain pattern is unchanged, and no match stays exit 0.
     let one = yoyo_in_dir(dir.path(), &["find", "main"]);
@@ -4473,4 +4476,38 @@ fn bare_run_on_the_shell_names_no_repl_form() {
     assert!(stdout.contains("yoyo run <command>"), "stdout={stdout}");
     assert!(!stdout.contains("/run"), "stdout={stdout}");
     assert!(!stdout.contains("!<command>"), "stdout={stdout}");
+}
+
+/// #1086: shell usage/error text names the verb as a shell user types it.
+/// Each row is (argv, verb, exit); stdout+stderr must name `yoyo <verb>` and
+/// never `/<verb>` (REPL syntax a shell prompt cannot run). Rows are added as
+/// each verb is wired through `commands_dev::command_form`.
+#[test]
+fn shell_usage_names_the_shell_form_not_the_slash_form() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let rows: &[(&[&str], &str, i32)] = &[
+        (&["run"], "run", 2),
+        (&["find"], "find", 2),
+        (&["tree"], "tree", 1),
+        (&["tree", "zz1"], "tree", 2),
+        (&["undo", "zz1"], "undo", 2),
+    ];
+    for (argv, verb, code) in rows {
+        let out = yoyo_in_dir(dir.path(), argv);
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(out.status.code(), Some(*code), "{argv:?}: {text}");
+        assert!(text.contains(&format!("yoyo {verb}")), "{argv:?}: {text}");
+        let slash = format!("/{verb}");
+        let leaked = text.match_indices(&slash).any(|(i, _)| {
+            !text[i + slash.len()..]
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_alphanumeric() || c == '_')
+        });
+        assert!(!leaked, "{argv:?} leaks {slash}: {text}");
+    }
 }

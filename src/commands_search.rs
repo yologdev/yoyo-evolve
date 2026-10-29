@@ -1,6 +1,7 @@
 //! Search & navigation command handlers: /find, /grep, /index, /outline.
 //! Ast-grep (/ast) lives in `commands_ast_grep.rs`.
 
+use crate::commands_dev::{command_form, DoctorSurface};
 #[cfg(test)]
 use crate::commands_map::Symbol;
 use crate::commands_map::{
@@ -339,7 +340,7 @@ pub fn highlight_match(path: &str, pattern: &str) -> String {
 pub fn handle_find(input: &str) {
     // REPL `/find`: the note is already on stderr and there is no process
     // exit to set, so the status has no further reader here (#982).
-    let _status = handle_find_status(input);
+    let _status = handle_find_status(input, DoctorSurface::Repl);
 }
 
 /// Most unreadable directories a `/find` note names; the rest are counted.
@@ -352,12 +353,13 @@ pub(crate) const FIND_UNREADABLE_PATH_MAX_BYTES: usize = 200;
 /// a note goes to stderr and the status is 1 even with matches: that is
 /// find(1)'s convention ("some files could not be visited"), whereas grep
 /// uses 2 for errors because grep's 1 already means "no match".
-pub(crate) fn handle_find_status(input: &str) -> i32 {
+pub(crate) fn handle_find_status(input: &str, surface: DoctorSurface) -> i32 {
     let arg = input.strip_prefix("/find").unwrap_or("").trim();
     if arg.is_empty() {
-        println!("{DIM}  usage: /find <pattern>");
+        let f = command_form(surface, "find"); // #1086
+        println!("{DIM}  usage: {f} <pattern>");
         println!("  Fuzzy-search project files by name.");
-        println!("  Examples: /find main, /find .toml, /find test{RESET}\n");
+        println!("  Examples: {f} main, {f} .toml, {f} test{RESET}\n");
         // #982: a usage error, as bare `grep`/`def`/`outline`; the REPL
         // (`handle_find`) discards the status.
         return SEARCH_USAGE_EXIT;

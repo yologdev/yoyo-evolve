@@ -10,7 +10,7 @@
 //! runs and returns `Some(None)` to signal "handled, exit cleanly".
 
 use crate::cli::{collect_repeatable_flag, load_config_file, print_help, Config, VERSION};
-use crate::commands_dev::DoctorSurface;
+use crate::commands_dev::DoctorSurface::Shell;
 // The bare-word near-miss guard moved to `dispatch_near_miss` (Day 170 pure move);
 // re-exported here so every existing call site stays byte-unchanged.
 pub use crate::dispatch_near_miss::{
@@ -493,7 +493,7 @@ pub(crate) fn try_dispatch_subcommand_in(
             }
             "tree" => {
                 let input = quote_args_as_command(args);
-                exit_if_nonzero(crate::commands_tree::handle_tree_status(&input));
+                exit_if_nonzero(crate::commands_tree::handle_tree_status(&input, Shell));
                 return Some(None);
             }
             "map" => {
@@ -518,7 +518,7 @@ pub(crate) fn try_dispatch_subcommand_in(
                     [one] => format!("/run {one}"),
                     _ => quote_args_as_command(args),
                 };
-                match crate::commands_run::handle_run_with_status(&input, DoctorSurface::Shell) {
+                match crate::commands_run::handle_run_with_status(&input, Shell) {
                     Some(outcome) => exit_if_failed(outcome),
                     // Bare `run`: usage line printed, nothing ran; 2 (usage error).
                     None => exit_if_nonzero(2),
@@ -585,7 +585,7 @@ pub(crate) fn try_dispatch_subcommand_in(
                     }
                 };
                 let input = format!("/find {pattern}");
-                exit_if_nonzero(crate::commands_search::handle_find_status(&input));
+                exit_if_nonzero(crate::commands_search::handle_find_status(&input, Shell));
                 return Some(None);
             }
             "index" => {
@@ -730,6 +730,7 @@ pub(crate) fn try_dispatch_subcommand_in(
                 exit_if_nonzero(crate::commands_git::handle_undo_status(
                     &input,
                     &mut history,
+                    Shell,
                 ));
                 return Some(None);
             }
@@ -1716,9 +1717,7 @@ mod tests {
         // (usage, nothing ran) — the branch the arm maps to 2.
         let args: Vec<String> = vec!["yoyo".into(), "run".into()];
         assert_eq!(quote_args_as_command(&args), "/run");
-        assert!(
-            crate::commands_run::handle_run_with_status("/run", DoctorSurface::Shell).is_none()
-        );
+        assert!(crate::commands_run::handle_run_with_status("/run", Shell).is_none());
     }
 
     #[test]

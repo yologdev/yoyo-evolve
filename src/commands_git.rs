@@ -1,6 +1,7 @@
 //! Git-related command handlers: /diff, /undo, /commit, /pr, /git.
 
 use crate::agent_builder::AgentConfig;
+use crate::commands_dev::DoctorSurface as Surface;
 use crate::commands_session::auto_compact_if_needed;
 use crate::format::*;
 use crate::git::*;
@@ -1096,20 +1097,26 @@ pub(crate) fn parse_undo_arg(input: &str) -> UndoArg {
 /// the `git clean -fd`, matching `yoyo commit` mirroring git's refusal), and 0
 /// otherwise. Printed text is unchanged; the REPL calls `handle_undo`, which
 /// has no status.
-pub(crate) fn handle_undo_status(input: &str, history: &mut TurnHistory) -> i32 {
+pub(crate) fn handle_undo_status(input: &str, history: &mut TurnHistory, surface: Surface) -> i32 {
     match parse_undo_arg(input) {
         UndoArg::All => undo_status_code(&handle_undo_all(history)),
         UndoArg::LastCommit => undo_status_code(&handle_undo_last_commit()),
-        arg => {
+        // Usage error: 2, the code every other subcommand's usage error uses.
+        UndoArg::Usage => {
+            println!("{DIM}  {}{RESET}\n", undo_usage_line(surface));
+            2
+        }
+        UndoArg::Count(_) => {
             let _ = handle_undo(input, history);
-            // Usage error: 2, the code every other subcommand's usage error uses.
-            if arg == UndoArg::Usage {
-                2
-            } else {
-                0
-            }
+            0
         }
     }
+}
+
+/// The `undo` usage line, named as `surface` types it (#1086).
+fn undo_usage_line(surface: Surface) -> String {
+    let f = crate::commands_dev::command_form(surface, "undo");
+    format!("usage: {f} [N] | --all | --last-commit")
 }
 
 /// What a git-running undo (`--last-commit` / `--all`) produced: the agent
@@ -1161,7 +1168,7 @@ pub fn handle_undo(input: &str, history: &mut TurnHistory) -> Option<String> {
         }
         UndoArg::Count(n) => n,
         UndoArg::Usage => {
-            println!("{DIM}  usage: /undo [N] | --all | --last-commit{RESET}\n");
+            println!("{DIM}  {}{RESET}\n", undo_usage_line(Surface::Repl));
             return None;
         }
     };
@@ -2980,9 +2987,15 @@ mod tests {
         // #982: `yoyo undo zz` printed usage and exited 0. Both rows return
         // before any git call (usage, and the count-0 no-op), so this is pure.
         let mut history = TurnHistory::new();
-        assert_eq!(handle_undo_status("/undo zz", &mut history), 2);
+        assert_eq!(
+            handle_undo_status("/undo zz", &mut history, Surface::Shell),
+            2
+        );
         // Near-miss: `undo 0` is a no-op, not a usage error — stays 0.
-        assert_eq!(handle_undo_status("/undo 0", &mut history), 0);
+        assert_eq!(
+            handle_undo_status("/undo 0", &mut history, Surface::Shell),
+            0
+        );
     }
 
     #[test]

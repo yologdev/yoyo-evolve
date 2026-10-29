@@ -1,5 +1,6 @@
 //! Project tree command handler: /tree.
 
+use crate::commands_dev::{command_form, DoctorSurface};
 use crate::format::*;
 
 /// Build a project tree from git-tracked files, up to `max_depth` levels deep.
@@ -8,7 +9,7 @@ use crate::format::*;
 /// not-a-git-repository message, so the shell door can exit nonzero without
 /// comparing strings. "(no tracked files)" is `Ok`: an empty repo is not a
 /// failure.
-pub fn build_project_tree(max_depth: usize) -> Result<String, String> {
+pub fn build_project_tree(max_depth: usize, surface: DoctorSurface) -> Result<String, String> {
     let files = match crate::git::run_git(&["ls-files"]) {
         Ok(text) => {
             let mut files: Vec<String> = text
@@ -19,7 +20,10 @@ pub fn build_project_tree(max_depth: usize) -> Result<String, String> {
             files.sort();
             files
         }
-        Err(_) => return Err("(not a git repository — /tree requires git)".to_string()),
+        Err(_) => {
+            let f = command_form(surface, "tree"); // #1086
+            return Err(format!("(not a git repository — {f} requires git)"));
+        }
     };
 
     if files.is_empty() {
@@ -105,24 +109,25 @@ pub fn parse_tree_arg(input: &str) -> TreeArg {
 }
 
 pub fn handle_tree(input: &str) {
-    let _ = handle_tree_status(input);
+    let _ = handle_tree_status(input, DoctorSurface::Repl);
 }
 
 /// `/tree` with an exit status for the shell door (`yoyo tree`, #982): 1 when
 /// the not-a-git-repository branch fires, 2 when the argument is not a depth
 /// (the usage branch), 0 otherwise. Printed text is identical either way; the
 /// REPL calls `handle_tree`, which discards the code.
-pub fn handle_tree_status(input: &str) -> i32 {
+pub fn handle_tree_status(input: &str, surface: DoctorSurface) -> i32 {
     let max_depth = match parse_tree_arg(input) {
         TreeArg::Depth(d) => d,
         TreeArg::Usage => {
-            println!("{DIM}  usage: /tree [depth]  (default depth: {DEFAULT_TREE_DEPTH}){RESET}\n");
+            let f = command_form(surface, "tree"); // #1086
+            println!("{DIM}  usage: {f} [depth]  (default depth: {DEFAULT_TREE_DEPTH}){RESET}\n");
             // #982: `yoyo tree zz` exited 0 after refusing; a refusal is a
             // usage error, so 2, like def/outline/grep/map/blame.
             return 2;
         }
     };
-    let (tree, code) = match build_project_tree(max_depth) {
+    let (tree, code) = match build_project_tree(max_depth, surface) {
         Ok(tree) => (tree, 0),
         Err(msg) => (msg, 1),
     };
@@ -149,7 +154,11 @@ mod tests {
             "/tree 2.5",
         ] {
             assert_eq!(parse_tree_arg(bad), TreeArg::Usage, "fixture {bad:?}");
-            assert_eq!(handle_tree_status(bad), 2, "status for {bad:?}");
+            assert_eq!(
+                handle_tree_status(bad, DoctorSurface::Repl),
+                2,
+                "status for {bad:?}"
+            );
         }
         assert_eq!(parse_tree_arg("/tree"), TreeArg::Depth(DEFAULT_TREE_DEPTH));
         assert_eq!(parse_tree_arg("/tree 2"), TreeArg::Depth(2));
@@ -291,7 +300,7 @@ mod tests {
     fn test_build_project_tree_runs() {
         // build_project_tree should return something non-empty — a tree in a
         // repo, the not-a-repo message outside one (mutants' temp copy).
-        let tree = build_project_tree(3).unwrap_or_else(|msg| msg);
+        let tree = build_project_tree(3, DoctorSurface::Repl).unwrap_or_else(|msg| msg);
         assert!(!tree.is_empty());
     }
 
