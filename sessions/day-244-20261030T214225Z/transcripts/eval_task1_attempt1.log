@@ -1,0 +1,23 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "primary_msg" src/memory.r… ✓ (22ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 380,450p src/watch.rs; git … ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git log -2 --format=%B | head -40;… ✓ (5ms)
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 25.0s (4 ✓)
+
+I gave this task a PASS and wrote the verdict to session_plan/eval_task_1.md. I judged it from the diff and a focused read of the code. I didn't run the binary or re-run the tests; the harness already reported the build and tests passing.
+
+• Keeps the newest notes: once 20 automatic notes are stored, a new one now replaces the oldest automatic note instead of being refused. Notes saved with /remember are never removed and don't count toward the 20. The old "memory full… use /forget" warning is gone; it now says "(replaced the oldest auto-saved memory)" instead.
+• Old stores un-freeze: notes saved before this change don't have the new "automatic" marker. They are still recognised by the exact text the two note builders write at the start, and those openings now come from one shared table so they can't drift. This repo's frozen store is in that shape. The known cost is that a /remember note typed to start with one of those openings would be treated as automatic.
+• No empty panic headers: a failing-test note that is only thread '…' panicked at file:line: is no longer saved. I checked that the watch parser really does attach the following assertion line when there is one. In that case the note leads with the assertion text, cut at 120 characters on a character boundary, then the test name and location.
+• Code completeness: the new auto field is set everywhere an entry is built. Every new helper and constant has a caller in this diff, and the new test file src/memory_evict_tests.rs is registered.
+• Tests: they cover every case the task listed. One existing test, test_auto_remember_refuses_when_full, was flipped and renamed to test_auto_remember_evicts_oldest_when_full. It used to pin the bug, so changing it is what the task asked for.
+• Docs and commit: docs/src/usage/commands.md and ARCHITECTURE.md were updated. The commit message explains how old notes are handled and why a separate cap on what reaches the prompt isn't needed.
+
+One cleanup note: an unrelated line in .yoyo/risk_validations.jsonl got swept into the diff.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
