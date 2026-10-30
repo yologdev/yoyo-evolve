@@ -1045,6 +1045,8 @@ Use `/memories <query>` to filter by keyword when you have many memories. The se
 
 Use `/remember` any time you find yourself repeating the same instruction to the agent. The memory will be there next time you start a session in this project directory.
 
+**Automatic memories from watch mode.** When `/watch` (or `auto_watch`) sees a failure the agent then fixes, yoyo may save a short note about it into the same file (`Watch fix: …`, `[build] …`, `[bug] Test expectation …`). It keeps at most the **20 newest** of these: when a 21st arrives, the oldest automatic note is dropped to make room. Notes you saved with `/remember` never count toward that limit and are never dropped automatically; only `/forget` removes them. A failing test is only remembered when its assertion text is available (the note then leads with that text, followed by the test name and location); a bare `thread '…' panicked at file:line:` header with nothing after it is not saved.
+
 ## Custom Slash Commands
 
 You can define your own slash commands by placing `.md` files in a commands directory. yoyo looks in two locations:

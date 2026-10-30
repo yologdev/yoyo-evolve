@@ -27,6 +27,13 @@ pub struct MemoryEntry {
     pub timestamp: String,
     #[serde(default = "default_category")]
     pub category: String,
+    /// `true` when the automatic watch-fix path ([`auto_remember_to`]) wrote this
+    /// entry, so it may be evicted to make room for a newer one. Absent in files
+    /// written before #1106 (and omitted when `false`, so `/remember` entries
+    /// serialize exactly as before); see [`is_auto_entry`] for how those legacy
+    /// auto entries are still recognised.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub auto: bool,
 }
 
 /// The in-memory store of project memories.
@@ -122,15 +129,108 @@ pub fn add_memory_with_category(memory: &mut ProjectMemory, note: &str, category
         note: note.to_string(),
         timestamp,
         category: cat,
+        auto: false,
     });
 }
 
 /// Build a concise note describing a successful watch-fix recovery.
 pub fn build_fix_memory_note(watch_cmd: &str, attempt: usize) -> String {
-    format!(
-        "Watch fix: '{}' failed, fixed on attempt {}",
-        watch_cmd, attempt
-    )
+    format!("{FIX_NOTE_PREFIX}{watch_cmd}' failed, fixed on attempt {attempt}")
+}
+
+/// Opening bytes of every note [`build_fix_memory_note`] writes.
+const FIX_NOTE_PREFIX: &str = "Watch fix: '";
+
+/// `(error category, note prefix)` for [`build_learn_memory_note`]. One table so
+/// the builder and [`is_auto_entry`]'s legacy recognition cannot drift apart.
+const LEARN_NOTE_PREFIXES: &[(&str, &str)] = &[
+    ("import", "[build] Missing import pattern"),
+    ("type", "[build] Type issue"),
+    ("borrow", "[build] Ownership pattern"),
+    ("lifetime", "[build] Lifetime pattern"),
+    ("unused", "[build] Lint: unused code"),
+    ("syntax", "[build] Syntax issue"),
+    ("test_assertion", "[bug] Test expectation"),
+];
+
+/// Was this entry written by the automatic path, and so evictable?
+///
+/// The `auto` field answers for entries written since #1106. Entries written
+/// before it load with `auto: false`, and a store that froze at the old cap is
+/// made entirely of those, so treating them all as user entries would keep it
+/// frozen forever (the bug). They are recognised by the exact openings the two
+/// note builders produce: `Watch fix: '` or a [`LEARN_NOTE_PREFIXES`] prefix
+/// followed by `` in ` ``. The known cost: a `/remember` note typed to begin
+/// with one of those exact openings would count as auto and could be evicted.
+pub fn is_auto_entry(entry: &MemoryEntry) -> bool {
+    if entry.auto {
+        return true;
+    }
+    let note = entry.note.as_str();
+    note.starts_with(FIX_NOTE_PREFIX)
+        || LEARN_NOTE_PREFIXES.iter().any(|(_, p)| {
+            note.strip_prefix(p)
+                .is_some_and(|rest| rest.starts_with(" in `"))
+        })
+}
+
+/// The useful part of a test-assertion message, or `None` if it has none.
+///
+/// A modern (Rust 1.65+) panic header, `thread 't' (123) panicked at src/a.rs:7:9:`,
+/// carries only a location; the watch parser appends the assertion line after it
+/// when there is one. A header with nothing after it is content-free (#1106): it
+/// says a test failed and not what it expected. With text after it, the text
+/// leads (so the length cap cannot cut it away) and the test name and location
+/// follow in parentheses. The legacy shape (`panicked at 'msg', file`) and any
+/// non-panic message carry their content inline and pass through unchanged.
+fn assertion_note_body(msg: &str) -> Option<String> {
+    let Some((head, tail)) = msg.split_once("panicked at ") else {
+        return Some(msg.to_string());
+    };
+    if tail.starts_with('\'') {
+        return Some(msg.to_string());
+    }
+    // The location ends at the first ':' that is followed by whitespace or the
+    // end of the text and is preceded by `file:line:col`.
+    let mut cut = None;
+    for (i, _) in tail.match_indices(':') {
+        let after = &tail[i + 1..];
+        if !(after.is_empty() || after.starts_with(char::is_whitespace)) {
+            continue;
+        }
+        let mut parts = tail[..i].rsplitn(3, ':');
+        let col_ok = parts.next().is_some_and(|c| c.parse::<u32>().is_ok());
+        let line_ok = parts.next().is_some_and(|l| l.parse::<u32>().is_ok());
+        let file_ok = parts.next().is_some_and(|f| !f.is_empty());
+        if col_ok && line_ok && file_ok {
+            cut = Some(i);
+            break;
+        }
+    }
+    let Some(cut) = cut else {
+        return Some(msg.to_string());
+    };
+    let location = &tail[..cut];
+    let detail = tail[cut + 1..].trim();
+    if detail.is_empty() {
+        return None;
+    }
+    let test = head
+        .split_once("thread '")
+        .and_then(|(_, r)| r.split_once('\''))
+        .map(|(name, _)| name);
+    let detail: String = {
+        let shown: String = detail.chars().take(120).collect();
+        if shown.len() < detail.len() {
+            format!("{shown}…")
+        } else {
+            shown
+        }
+    };
+    Some(match test {
+        Some(name) => format!("{detail} ({name} at {location})"),
+        None => format!("{detail} (at {location})"),
+    })
 }
 
 /// Build a learning note from a watch-mode fix, capturing the *project fact* discovered.
@@ -155,6 +255,15 @@ pub fn build_learn_memory_note(
         return None;
     }
 
+    // A test assertion's text leads; a bare panic header is not worth saving (#1106).
+    if error_category == "test_assertion" {
+        let body = assertion_note_body(primary_msg)?;
+        if body != primary_msg {
+            let prefix = learn_note_prefix(error_category)?;
+            return Some(format!("{prefix} in `{watch_cmd}`: {body}"));
+        }
+    }
+
     // Truncate long error messages to keep notes concise
     let msg_display: String = primary_msg.chars().take(120).collect();
     let msg_display = if msg_display.len() < primary_msg.len() {
@@ -164,18 +273,16 @@ pub fn build_learn_memory_note(
     };
 
     // Map category to a useful prefix that categorizes the memory
-    let prefix = match error_category {
-        "import" => "[build] Missing import pattern",
-        "type" => "[build] Type issue",
-        "borrow" => "[build] Ownership pattern",
-        "lifetime" => "[build] Lifetime pattern",
-        "unused" => "[build] Lint: unused code",
-        "syntax" => "[build] Syntax issue",
-        "test_assertion" => "[bug] Test expectation",
-        _ => return None,
-    };
+    let prefix = learn_note_prefix(error_category)?;
 
     Some(format!("{prefix} in `{watch_cmd}`: {msg_display}",))
+}
+
+fn learn_note_prefix(error_category: &str) -> Option<&'static str> {
+    LEARN_NOTE_PREFIXES
+        .iter()
+        .find(|(cat, _)| *cat == error_category)
+        .map(|(_, p)| *p)
 }
 
 /// Automatically remember a note if it's not a near-duplicate of an existing memory.
@@ -186,13 +293,15 @@ pub fn auto_remember(note: &str) -> bool {
     auto_remember_to(note, &memory_file_path())
 }
 
-/// Maximum number of entries the automatic (watch-fix) path will store.
+/// Maximum number of auto entries (see [`is_auto_entry`]) the watch-fix path keeps; at the
+/// cap the oldest auto entry is evicted, and `/remember` entries neither count nor go.
 ///
 /// A judgment number, not a measurement: every stored memory is injected into the prompt
 /// by [`format_memories_for_prompt`], so the auto path needs *some* ceiling. Dedup is exact
 /// (whole-note), so without a cap near-identical notes — compiler errors carry process ids
 /// and `file:line` positions — could accumulate without bound. 20 is roughly a screenful and
-/// well under any context budget; `/forget` is how a user makes room.
+/// well under any context budget. Because the newest 20 are kept, the store stays bounded
+/// without a separate cap on what reaches the prompt.
 pub const MAX_AUTO_MEMORIES: usize = 20;
 
 /// Testable variant of [`auto_remember`] that writes to a specific path.
@@ -208,17 +317,26 @@ pub fn auto_remember_to(note: &str, path: &Path) -> bool {
         return false;
     }
 
-    // Honest dedup means unbounded growth is possible, so the auto path is capped — and says
-    // so out loud. Silence when full is the same failure shape as the bug above: the user
-    // must be able to tell "already known" from "I stopped learning".
-    if memory.entries.len() >= MAX_AUTO_MEMORIES {
-        eprintln!(
-            "  ⚠ memory full ({MAX_AUTO_MEMORIES}) — not auto-saving; use /forget to make room"
-        );
-        return false;
+    // Honest dedup means unbounded growth is possible, so the auto path is capped. At the
+    // cap the OLDEST auto entry makes room (#1106): refusing the new one froze the store at
+    // its first 20 notes forever, and those went into every system prompt. Only auto
+    // entries count toward the cap and only auto entries are evicted: a `/remember` entry
+    // is something the user chose and is never dropped on their behalf.
+    let mut replaced = 0usize;
+    while memory.entries.iter().filter(|e| is_auto_entry(e)).count() >= MAX_AUTO_MEMORIES {
+        match memory.entries.iter().position(is_auto_entry) {
+            Some(oldest) => {
+                memory.entries.remove(oldest);
+                replaced += 1;
+            }
+            None => break,
+        }
     }
 
     add_memory(&mut memory, note);
+    if let Some(last) = memory.entries.last_mut() {
+        last.auto = true;
+    }
     if let Err(e) = save_memories_to(&memory, path) {
         eprintln!("  ⚠ auto-remember failed to save: {e}");
         return false;
@@ -231,7 +349,11 @@ pub fn auto_remember_to(note: &str, path: &Path) -> bool {
     } else {
         display
     };
-    eprintln!("  💾 Auto-remembered: {display}");
+    if replaced > 0 {
+        eprintln!("  💾 Auto-remembered: {display} (replaced the oldest auto-saved memory)");
+    } else {
+        eprintln!("  💾 Auto-remembered: {display}");
+    }
     true
 }
 
@@ -653,6 +775,10 @@ fn current_timestamp() -> String {
 }
 
 #[cfg(test)]
+#[path = "memory_evict_tests.rs"]
+mod memory_evict_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
@@ -679,6 +805,7 @@ mod tests {
             note: "uses sqlx for database access".to_string(),
             timestamp: "2026-03-15 08:32".to_string(),
             category: "general".to_string(),
+            auto: false,
         };
         let json = serde_json::to_string(&entry).unwrap();
         let parsed: MemoryEntry = serde_json::from_str(&json).unwrap();
@@ -693,11 +820,13 @@ mod tests {
                     note: "tests require docker running".to_string(),
                     timestamp: "2026-03-15 08:00".to_string(),
                     category: "general".to_string(),
+                    auto: false,
                 },
                 MemoryEntry {
                     note: "use pnpm not npm".to_string(),
                     timestamp: "2026-03-15 09:00".to_string(),
                     category: "general".to_string(),
+                    auto: false,
                 },
             ],
         };
@@ -731,16 +860,19 @@ mod tests {
                     note: "note 0".to_string(),
                     timestamp: "t0".to_string(),
                     category: "general".to_string(),
+                    auto: false,
                 },
                 MemoryEntry {
                     note: "note 1".to_string(),
                     timestamp: "t1".to_string(),
                     category: "general".to_string(),
+                    auto: false,
                 },
                 MemoryEntry {
                     note: "note 2".to_string(),
                     timestamp: "t2".to_string(),
                     category: "general".to_string(),
+                    auto: false,
                 },
             ],
         };
@@ -760,6 +892,7 @@ mod tests {
                 note: "only one".to_string(),
                 timestamp: "t0".to_string(),
                 category: "general".to_string(),
+                auto: false,
             }],
         };
 
@@ -784,11 +917,13 @@ mod tests {
                     note: "first note".to_string(),
                     timestamp: "2026-03-15 08:00".to_string(),
                     category: "general".to_string(),
+                    auto: false,
                 },
                 MemoryEntry {
                     note: "second note".to_string(),
                     timestamp: "2026-03-15 09:00".to_string(),
                     category: "general".to_string(),
+                    auto: false,
                 },
             ],
         };
@@ -837,6 +972,7 @@ mod tests {
                 note: "test".to_string(),
                 timestamp: "now".to_string(),
                 category: "general".to_string(),
+                auto: false,
             }],
         };
 
@@ -865,11 +1001,13 @@ mod tests {
                     note: "uses sqlx".to_string(),
                     timestamp: "2026-03-15 08:00".to_string(),
                     category: "general".to_string(),
+                    auto: false,
                 },
                 MemoryEntry {
                     note: "docker needed for tests".to_string(),
                     timestamp: "2026-03-15 09:00".to_string(),
                     category: "general".to_string(),
+                    auto: false,
                 },
             ],
         };
@@ -933,16 +1071,19 @@ mod tests {
                     note: "uses sqlx for database".to_string(),
                     timestamp: "t0".to_string(),
                     category: "general".to_string(),
+                    auto: false,
                 },
                 MemoryEntry {
                     note: "docker needed for tests".to_string(),
                     timestamp: "t1".to_string(),
                     category: "general".to_string(),
+                    auto: false,
                 },
                 MemoryEntry {
                     note: "always run cargo fmt".to_string(),
                     timestamp: "t2".to_string(),
                     category: "general".to_string(),
+                    auto: false,
                 },
             ],
         };
@@ -961,11 +1102,13 @@ mod tests {
                     note: "Uses SQLx for Database".to_string(),
                     timestamp: "t0".to_string(),
                     category: "general".to_string(),
+                    auto: false,
                 },
                 MemoryEntry {
                     note: "docker NEEDED".to_string(),
                     timestamp: "t1".to_string(),
                     category: "general".to_string(),
+                    auto: false,
                 },
             ],
         };
@@ -986,6 +1129,7 @@ mod tests {
                 note: "uses sqlx".to_string(),
                 timestamp: "t0".to_string(),
                 category: "general".to_string(),
+                auto: false,
             }],
         };
 
@@ -1001,11 +1145,13 @@ mod tests {
                     note: "first".to_string(),
                     timestamp: "t0".to_string(),
                     category: "general".to_string(),
+                    auto: false,
                 },
                 MemoryEntry {
                     note: "second".to_string(),
                     timestamp: "t1".to_string(),
                     category: "general".to_string(),
+                    auto: false,
                 },
             ],
         };
@@ -1022,16 +1168,19 @@ mod tests {
                     note: "cargo build first".to_string(),
                     timestamp: "t0".to_string(),
                     category: "general".to_string(),
+                    auto: false,
                 },
                 MemoryEntry {
                     note: "docker needed".to_string(),
                     timestamp: "t1".to_string(),
                     category: "general".to_string(),
+                    auto: false,
                 },
                 MemoryEntry {
                     note: "cargo fmt before commit".to_string(),
                     timestamp: "t2".to_string(),
                     category: "general".to_string(),
+                    auto: false,
                 },
             ],
         };
@@ -1240,16 +1389,19 @@ mod tests {
                     note: "this project has a complex database layer using sqlx".to_string(),
                     timestamp: "t0".to_string(),
                     category: "general".to_string(),
+                    auto: false,
                 },
                 MemoryEntry {
                     note: "docker needed for tests".to_string(),
                     timestamp: "t1".to_string(),
                     category: "general".to_string(),
+                    auto: false,
                 },
                 MemoryEntry {
                     note: "sqlx config in .env".to_string(),
                     timestamp: "t2".to_string(),
                     category: "general".to_string(),
+                    auto: false,
                 },
             ],
         };
@@ -1272,16 +1424,19 @@ mod tests {
                     note: "uses sqlx for database access".to_string(),
                     timestamp: "t0".to_string(),
                     category: "general".to_string(),
+                    auto: false,
                 },
                 MemoryEntry {
                     note: "docker needed for tests".to_string(),
                     timestamp: "t1".to_string(),
                     category: "general".to_string(),
+                    auto: false,
                 },
                 MemoryEntry {
                     note: "sqlx migrations in ./migrations".to_string(),
                     timestamp: "t2".to_string(),
                     category: "general".to_string(),
+                    auto: false,
                 },
             ],
         };
@@ -1304,11 +1459,13 @@ mod tests {
                     note: "uses sqlx for database".to_string(),
                     timestamp: "t0".to_string(),
                     category: "general".to_string(),
+                    auto: false,
                 },
                 MemoryEntry {
                     note: "docker needed".to_string(),
                     timestamp: "t1".to_string(),
                     category: "general".to_string(),
+                    auto: false,
                 },
             ],
         };
@@ -1327,11 +1484,13 @@ mod tests {
                     note: "uses sqlx for database".to_string(),
                     timestamp: "2020-01-01 00:00".to_string(),
                     category: "general".to_string(),
+                    auto: false,
                 },
                 MemoryEntry {
                     note: "uses sqlx for database".to_string(),
                     timestamp: "2026-05-24 12:00".to_string(),
                     category: "general".to_string(),
+                    auto: false,
                 },
             ],
         };
@@ -1590,7 +1749,7 @@ mod tests {
     }
 
     #[test]
-    fn test_auto_remember_refuses_when_full() {
+    fn test_auto_remember_evicts_oldest_when_full() {
         let path = temp_memory_path("auto_remember_cap");
         cleanup(&path);
 
@@ -1602,11 +1761,9 @@ mod tests {
         let before = load_memories_from(&path);
         assert_eq!(before.entries.len(), MAX_AUTO_MEMORIES);
 
+        // #1106: refusing here froze the store at its first 20 notes forever.
         let saved = auto_remember_to("a genuinely distinct fact that arrives too late", &path);
-        assert!(
-            !saved,
-            "auto-remember should refuse once the cap is reached"
-        );
+        assert!(saved, "at the cap the newest note must be kept");
 
         let after = load_memories_from(&path);
         assert_eq!(
@@ -1614,6 +1771,11 @@ mod tests {
             MAX_AUTO_MEMORIES,
             "the file must not grow past the cap"
         );
+        assert_eq!(
+            after.entries.last().unwrap().note,
+            "a genuinely distinct fact that arrives too late"
+        );
+        assert_eq!(after.entries[0].note, "fact number 1 about this project");
 
         cleanup(&path);
     }
@@ -1676,16 +1838,19 @@ mod tests {
                     note: "use cargo fmt".to_string(),
                     timestamp: "2026-01-01 00:00".to_string(),
                     category: "build".to_string(),
+                    auto: false,
                 },
                 MemoryEntry {
                     note: "snake_case only".to_string(),
                     timestamp: "2026-01-02 00:00".to_string(),
                     category: "convention".to_string(),
+                    auto: false,
                 },
                 MemoryEntry {
                     note: "tests need docker".to_string(),
                     timestamp: "2026-01-03 00:00".to_string(),
                     category: "build".to_string(),
+                    auto: false,
                 },
             ],
         };
@@ -1718,11 +1883,13 @@ mod tests {
                     note: "note one".to_string(),
                     timestamp: "t0".to_string(),
                     category: "build".to_string(),
+                    auto: false,
                 },
                 MemoryEntry {
                     note: "note two".to_string(),
                     timestamp: "t1".to_string(),
                     category: "convention".to_string(),
+                    auto: false,
                 },
             ],
         };
@@ -1765,6 +1932,7 @@ mod non_regular_memory_tests {
             note: note.to_string(),
             timestamp: "2026-10-18 08:32".to_string(),
             category: "convention".to_string(),
+            auto: false,
         }
     }
 

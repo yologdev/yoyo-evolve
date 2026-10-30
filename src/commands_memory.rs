@@ -286,6 +286,7 @@ mod tests {
                 note: "always run cargo fmt".to_string(),
                 timestamp: "2026-03-15 08:00".to_string(),
                 category: "general".to_string(),
+                auto: false,
             }],
         };
         let prompt = format_memories_for_prompt(&memory);
@@ -310,16 +311,19 @@ mod tests {
                     note: "uses sqlx for DB".to_string(),
                     timestamp: "t0".to_string(),
                     category: "general".to_string(),
+                    auto: false,
                 },
                 MemoryEntry {
                     note: "docker required".to_string(),
                     timestamp: "t1".to_string(),
                     category: "general".to_string(),
+                    auto: false,
                 },
                 MemoryEntry {
                     note: "sqlx migrations in ./migrations".to_string(),
                     timestamp: "t2".to_string(),
                     category: "general".to_string(),
+                    auto: false,
                 },
             ],
         };
