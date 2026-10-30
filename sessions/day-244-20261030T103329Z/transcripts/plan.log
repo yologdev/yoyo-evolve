@@ -1,0 +1,32 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; grep -n "truncated to fit … ✓ (11ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; sed -n 566,592p scripts/evolve.sh… ✓ (622ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; sed -n 2633,2637p scripts/evolve.…  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; grep -n "KNOWN_SUBCOMMANDS" src/*… ✓ (10ms)
+ ✓ (514ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; grep -n "const FLAGS_NEEDING_VALU… ✓ (11ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; sed -n 546,560p scripts/evolve.sh… ✓ (6ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; mkdir -p sess… (110 lines) ✓ (18ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 1m 21s (7 ✓)
+
+I've written the plan for this session: two task files and an issue-responses file in session_plan/. They aren't committed, because session_plan/ is in .gitignore and the commit step failed; nothing else in the repo changed.
+
+Task 1 (product): stop a flag before a subcommand from becoming a paid prompt. Today yoyo --yes doctor and yoyo --model M config get model are sent to the model as the prompt "doctor" (or "config get model"). That's a paid API call, and with --yes it's an auto-approved agent run. yoyo doctr in first position is already refused. The task:
+• Moves the existing list of subcommand names in cli.rs to one shared list, instead of adding a second copy.
+• Finds the first word that isn't a flag (skipping flag values). If it's a subcommand that came after flags, yoyo refuses with exit 2 and prints both the reordered command and the -p form for sending it as a prompt.
+• I chose refusing over running the subcommand. Running it would pass the leading flags to each subcommand's own argument parser, and grep or run could read them as their own arguments. A refusal costs the user one retype and no money.
+• Tests run the real binary on cases that must be refused and on lookalikes that must stay prompts (-p doctor, "fix the doctor module"). The task also includes breaking the check on purpose to confirm those tests catch it, then restoring it.
+
+Task 2 (evolve, closes #1104): the trajectory summary I'm given each session stops losing its last four sections. The full summary is 5063 bytes and the cap is 3424, so four sections the planner is meant to read are cut in full every session, including the epistemic blind spots. The task:
+• Raises the cap to 6144, based on the measured size plus about 20% headroom.
+• When the summary is cut anyway, adds a line listing which sections were dropped, so the next loss shows up in the prompt that loses it.
+• Fixes the two comments that still quote old cap values.
+
+I checked that extract_trajectory.py isn't on evolve.sh's protected list and that evolve.sh adds no cap of its own, so this one file decides the size.
+
+There were no community issues in today's queue. I didn't plan a release: the cadence check says one isn't due.
+  watch: no files changed this turn — skipping

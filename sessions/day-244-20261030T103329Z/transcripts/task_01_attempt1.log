@@ -1,0 +1,177 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh…  ▶ $ sed -n 330,420p src/dispatch_sub.rs; grep -n "FLAGS_NEEDING_VALUES" src/*.rs | h… ✓ (13ms)
+ ✓ (16ms)
+  ▶ $ sed -n 780,820p src/cli.rs; awk 'NR>=355 && NR<=2000 && /^            "[a-z-]+"(… ✓ (17ms)
+  ▶ $ grep -n "return None\|=> None\|_ => {}" src/dispatch_sub.rs | head -20; grep -n …  ▶ $ sed -n 1890,1925p src/dispatch_sub.rs; grep -n "fn run_yoyo\|fn yoyo_cmd\|env_re… ✓ (6ms)
+ ✓ (8ms)
+  ▶ $ grep -n '"src/cli.rs"' tests/module_size.rs; sed -n 870,930p src/dispatch_sub.rs… ✓ (18ms)
+  ▶ $ sed -n 155,185p src/dispatch_sub.rs; grep -n "pub.*fn sanitize_for_display" src/… ✓ (8ms)
+  ▶ $ cargo build 2>&1 | tail -2; B=./target/debug/yoyo; export HOME=/tmp/nohome; unse… ✓ (1m 0s)
+  ▶ $ grep -n "prompt mode\|base-url\|127.0.0.1\|max-turns\|wait_timeout\|fn run_with_… ✓ (4ms)
+  ▶ $ sed -n 380,440p tests/integration.rs; sed -n 1105,1150p tests/integration.rs ✓ (6ms)
+  ▶ $ grep -n "tempfile" Cargo.toml tests/integration.rs | head -3; grep -n "^mod test… ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  11 tools completed in 1m 48s (11 ✓)
+
+Now the cli.rs change: hoist the list, add the pure helper.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 - <<'EOF' (19 lines) ✓ (28ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ grep -n "fn model_refusal_message" -A25 src/dispatch_sub.rs | head -35 ✓ (4ms)
+  ▶ $ python3 - <<'EOF' (58 lines) ✓ (30ms)
+  ▶ $ python3 - <<'EOF' (22 lines) ✓ (12.6s)
+  ▶ $ B=./target/debug/yoyo; export HOME=/tmp/nohome; cd /tmp && for a in "--yes docto… ✓ (5.0s)
+  ▶ $ grep -n "pub fn is_plain_output" -A8 src/format/*.rs | head -12; cd /tmp; Y=$OLD… ✓ (48ms)
+  ▶ $ cd /tmp; Y=$OLDPWD/target/debug/yoyo; mkdir -p gt && cd gt && echo "hello foo" >… ✓ (18ms)
+  ▶ $ python3 - <<'EOF' (35 lines) ✓ (12.6s)
+  ▶ $ grep -rn 'try_dispatch_subcommand\(_in\)\?(&' src/ | wc -l; grep -rn -B3 'try_di… ✓ (18ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  9 tools completed in 1m 34s (9 ✓)
+
+Good, no unit test dispatches with leading flags. Now unit tests in cli.rs.
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n 3125,3140p src/cli.rs; grep -n "^mod tests" -A6 src/cli.rs ✓ (5ms)
+  ▶ edit src/cli.rs (4 → 59 lines)
+    mod tests {
+        use super::*;
+  + 
+  +     #[test]
+  +     fn misplaced_subcommand_finds_a_verb_after_flags_and_leaves_prompts_alone() {
+  +         let rows: &[(&[&str], Option<usize>)] = &[
+  +             (&["--yes", "doctor"], Some(2)),
+  +             (&["--model", "M", "status"], Some(3)),
+  +             (&["--model=M", "doctor"], Some(2)),
+  +             (&["--provider", "anthropic", "config", "get", "model"], Some(3)),
+  +             (&["doctor"], None),
+  +             (&["doctor", "--model", "M"], None),
+  +             (&["-p", "doctor"], None),
+  +             (&["--model", "M", "-p", "doctor"], None),
+  +             (&["fix the doctor module"], None),
+  +             (&["--yes", "explain", "this", "code"], None),
+  +             (&["--yes", "--", "doctor"], None),
+  +             (&["--model", "doctor"], None), // `doctor` is --model's value
+  +         ];
+  +         for (tail, want) in rows {
+  ... (39 more lines)
+ ✓ (3m 7s)
+    mod tests {
+        use super::*;
+  + 
+  +     #[test]
+  +     fn misplaced_subcommand_finds_a_verb_after_flags_and_leaves_prompts_alone() {
+  +         let rows: &[(&[&str], Option<usize>)] = &[
+  +             (&["--yes", "doctor"], Some(2)),
+  +             (&["--model", "M", "status"], Some(3)),
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3m 27s (2 ✓)
+
+Now the integration rows.
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cat >> tests/integration.rs <<'EOF' (70 lines) ✓ (15.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ python3 - <<'EOF' (11 lines) ✓ (38.2s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 3s (2 ✓)
+
+Positive control — neuter the dispatch check, run, restore, in one command:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cp src/dispatch_sub.rs /tmp/ds.bak && sed -i 's|    if let Some(i) = crate::cli:… ✓ (25.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control: refusal row went red by name, near-misses stayed green, restored → green. Now docs, then the full gate.
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n -i "subcommand" docs/src/usage/commands.md | head -10 ✓ (4ms)
+  ▶ $ sed -n 5,8p docs/src/usage/commands.md ✓ (3ms)
+  ▶ $ sed -n 5,7p docs/src/usage/commands.md | cat -A | cut -c1-200 ✓ (4ms)
+  ▶ edit docs/src/usage/commands.md (2 → 4 lines)
+  - > directly without entering the REPL:
+  + > directly without entering the REPL. The subcommand goes first: `yoyo --yes doctor`
+  + > is refused with exit 2 (it used to be sent to the model as the prompt "doctor"); write
+  + > `yoyo doctor --model M`, or `yoyo --yes -p doctor` to send the word as a prompt.
+    >
+  ▶ $ cargo fmt && cargo build 2>&1 | tail -1 && cargo clippy --all-targets -- -D warn… ✓ (2ms)
+  - > directly without entering the REPL:
+  + > directly without entering the REPL. The subcommand goes first: `yoyo --yes doctor`
+  + > is refused with exit 2 (it used to be sent to the model as the prompt "doctor"); write
+  + > `yoyo doctor --model M`, or `yoyo --yes -p doctor` to send the word as a prompt.
+    >
+ ✗ (2m 0s)
+    │ Command timed out after 120s. Output so far:
+  ▶ $ cargo test > /tmp/test.log 2>&1; echo exit $?; grep -E "test result" /tmp/test.l… ✓ (2m 6s)
+  ▶ $ grep -A15 "panicked at tests/module_size" /tmp/test.log | head -30; wc -l src/cl… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ git diff --stat; git diff src/cli.rs | grep -c "^+"; git diff src/cli.rs | grep … ✓ (23ms)
+  ▶ $ grep -n "fn misplaced_subcommand_refusal_drops\|fn known_subcommands_names_every… ✓ (7ms)
+  ▶ $ sed -n 2493,2500p src/dispatch_sub.rs; sed -n 3170,3175p src/cli.rs ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  10 tools completed in 4m 33s (9 ✓, 1 ✗)
+
+Move the two dispatch-shaped tests (refusal string, arm coverage) into dispatch_sub.rs's test module, where they belong anyway.
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 - <<'EOF' (15 lines) ✓ (1.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cargo clippy --all-targets -- -D warnings 2>&1 | tail -1 && cargo fmt -- --check… ✓ (4m 36s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4m 51s (2 ✓)
+
+All green (build, clippy, fmt, full test suite). Committing.
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -rn "NEUTERED POSITIVE" src/ tests/ | head -2; git add … (26 lines) ✓ (35ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+A subcommand typed after global flags (yoyo --yes doctor, yoyo --model M status) is now refused with exit 2 instead of being sent to the model as a paid prompt. Build, clippy, fmt and the full test suite pass, and it's committed as dd66eb73.
+
+The bug, reproduced first: on the built binary, yoyo --yes doctor and yoyo --model claude-haiku-5-5 status both printed yoyo (prompt mode) and sent the words to the model as a prompt.
+
+The fix:
+• `src/cli.rs`: KNOWN_SUBCOMMANDS is now one module-level list. A new misplaced_subcommand(args) finds the first word that isn't a flag. It skips the values of flags that take one and stops at --. If that word is a subcommand but not args[1], it's a match. misplaced_subcommand_refusal builds the message from the real command line.
+• `src/dispatch_sub.rs`: before dispatching, a match prints the refusal to stderr and exits 2.
+
+Two changes from the plan:
+1. The message doesn't move the flags after the subcommand. I ran the suggested forms first:
+   • yoyo doctor --model M uses the model.
+   • status and config get model ignore --model.
+   • yoyo run echo hi --model M printed hi --model M, so the moved flag ended up inside the user's command.
+
+   So the refusal says subcommands go first: yoyo doctor and that the flags before it were not applied. Its second suggestion sends the words as a prompt: yoyo --model M -p doctor.
+2. Seven subcommands were missing from the list: ast, def, gasp, goal, model, risk and security. Without them, yoyo --yes goal would still have become a prompt. I added them, and a new test fails if any subcommand handled in dispatch_sub.rs is left out of the list.
+
+Tests:
+• A table test for the new check, covering --, --model doctor (where "doctor" is the model name) and -p doctor.
+• A test of the exact refusal text.
+• Real-binary tests in tests/integration.rs, using the file's existing helper that strips API keys. They run with a bad key, an unreachable base URL and a temp directory, and kill any prompt-mode run as soon as it starts, so a regression fails fast.
+  • Refused with exit 2: the four shapes from the plan.
+  • Still prompts: the four near-misses, such as yoyo -p doctor and yoyo --yes explain this code.
+  • Unchanged: yoyo doctor still runs doctor.
+• I disabled the check, ran the tests and restored it in one command. Only the refusal test went red; after restoring, everything was green.
+• cli.rs first went over its size cap. Moving the two tests about the dispatcher into dispatch_sub.rs brought both files back under their limits: cli.rs is at 7869 and dispatch_sub.rs at 2596.
+
+I also added a short note to docs/src/usage/commands.md.
+
+Next slice, not filed: actually running the subcommand after global flags, which would need each subcommand to handle those flags itself. No issue tracks this task, so I haven't recorded that anywhere yet.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 1/1 changed files were in top-10 predictions (100.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/1 (0.0%) — reactive was 100.0%
+     Predicted correctly: src/cli.rs

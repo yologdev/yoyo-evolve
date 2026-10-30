@@ -1,0 +1,286 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 55,85p scripts/extract_traj…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 5240,5310p scripts/extract_… ✓ (8ms)
+ ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 62,80p scripts/extract_traj… ✓ (8ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 12.5s (4 ✓)
+
+The output display is collapsing lines; let me read the comment block raw.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ read scripts/extract_trajectory.py:69..83 ✓ (2ms)
+
+Now the edits: comment + cap.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/extract_trajectory.py (3 → 14 lines)
+    # section off the end. +96 pays for that one line, same rule as Day 236.
+  + # SUPERSEDED on Day 244 (2026-10-30, #1104), recorded rather than erased: the
+  + # "+N pays for exactly the new section" rule above kept whatever had ALREADY
+  + # been lost. Measured on #1104, the full block was 5063 bytes / 77 lines
+  + # against 3424, so Doc freshness, Productivity, Counterfactual pairing and
+  + # Epistemic blind spots (with its planner hint) were cut whole every session.
+  + # The cap is now derived from what the planner needs, not from the last raise:
+  + # the measured full block (5063) plus ~20% headroom = 6144 bytes (~1.5K
+  + # tokens, beside a ~40 KB CLAUDE.md in the same prompt). The line cap stays 100
+  + # (77 fits). The enforcer of the next silent loss is the planner itself:
+  + # `cap_output` names every `## ` section it cut, in band, so a block that
+  + # outgrows this cap says so in the prompt that loses the sections.
+    TOTAL_LINE_CAP = 100
+  - TOTAL_BYTE_CAP = 3424
+  + TOTAL_BYTE_CAP = 6144
+  ▶ edit scripts/extract_trajectory.py (2 → 3 lines)
+        absorbs all truncation pressure (Day 142, load-bearing: it has been cut
+  -     away before, and TOTAL_BYTE_CAP is 3072), so this must not crowd it.
+  +     away before, and TOTAL_BYTE_CAP bounds the whole block), so this must not
+  +     crowd it.
+  ▶ edit scripts/extract_trajectory.py (1 → 2 lines)
+  - # not a top-N: the section renders last and TOTAL_BYTE_CAP is 3KB.
+  + # not a top-N: the section renders last, so it is the first thing TOTAL_BYTE_CAP
+  + # cuts.
+ ✓ (8ms)
+    # section off the end. +96 pays for that one line, same rule as Day 236.
+  + # SUPERSEDED on Day 244 (2026-10-30, #1104), recorded rather than erased: the
+  + # "+N pays for exactly the new section" rule above kept whatever had ALREADY
+  + # been lost. Measured on #1104, the full block was 5063 bytes / 77 lines
+  + # against 3424, so Doc freshness, Productivity, Counterfactual pairing and
+  + # Epistemic blind spots (with its planner hint) were cut whole every session.
+  + # The cap is now derived from what the planner needs, not from the last raise:
+  + # the measured full block (5063) plus ~20% headroom = 6144 bytes (~1.5K
+  ... (7 more lines)
+ ✓ (7ms)
+        absorbs all truncation pressure (Day 142, load-bearing: it has been cut
+  -     away before, and TOTAL_BYTE_CAP is 3072), so this must not crowd it.
+  +     away before, and TOTAL_BYTE_CAP bounds the whole block), so this must not
+  +     crowd it.
+ ✓ (6ms)
+  - # not a top-N: the section renders last and TOTAL_BYTE_CAP is 3KB.
+  + # not a top-N: the section renders last, so it is the first thing TOTAL_BYTE_CAP
+  + # cuts.
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -on '"## [^"{]*' scripts/extr… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "cap_output\|truncated to … ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "cap_output\|truncated to … ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "cap_output\|truncated to … ✓ (6ms)
+  ▶ read /tmp/g.txt ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 58.1s (8 ✓)
+
+Now rewrite cap_output.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/extract_trajectory.py (19 → 96 lines)
+        stays under byte_cap (the marker itself was previously appended after
+        the cap, allowing the file to exceed it by ~37 bytes). Pure so the
+        self-tests can assert the epistemic steering section survives capping.
+  + 
+  +     Day 244 (#1104): any cut NAMES the `## ` sections it dropped, whole or
+  +     partly, on a line after the marker: `(cut: Doc freshness, Productivity)`.
+  +     For 100+ sessions the cap silently removed four sections and nothing in
+  +     the prompt said so; the planner that loses them is now the reader that is
+  +     told. The marker line itself is byte-for-byte unchanged, and the list's
+  +     bytes are reserved inside the budget, so the output still fits byte_cap.
+  +     An output under both caps is returned byte-identical.
+        """
+  -     output = truncate_lines(output, line_cap)
+  +     lines = output.splitlines()
+  +     line_cut = len(lines) > line_cap
+  +     out = truncate_lines(output, line_cap)
+  +     if not line_cut and len(out.encode("utf-8")) <= byte_cap:
+  +         return out
+        truncation_marker = "\n... (truncated to fit token budget)\n"
+  -     marker_bytes = len(truncation_marker.encode("utf-8"))
+  ... (80 more lines)
+ ✓ (3ms)
+        stays under byte_cap (the marker itself was previously appended after
+        the cap, allowing the file to exceed it by ~37 bytes). Pure so the
+        self-tests can assert the epistemic steering section survives capping.
+  + 
+  +     Day 244 (#1104): any cut NAMES the `## ` sections it dropped, whole or
+  +     partly, on a line after the marker: `(cut: Doc freshness, Productivity)`.
+  +     For 100+ sessions the cap silently removed four sections and nothing in
+  +     the prompt said so; the planner that loses them is now the reader that is
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the self-tests, after test 22.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/extract_trajectory.py (2 → 80 lines)
+            and "(truncated to fit token budget)" in huge_capped,
+  +     )
+  + 
+  +     # 23 (#1104). A cut NAMES the sections it dropped, whole or partly. Five
+  +     # sections, each 200 bytes of body; a cap that lands mid-third-section
+  +     # must list Third, Fourth and Fifth exactly — and not First or Second.
+  +     def five_sections() -> str:
+  +         names = ["First", "Second: verdict inline", "Third (with detail)",
+  +                  "Fourth — dashed", "Fifth"]
+  +         parts = []
+  +         for n in names:
+  +             body = "\n".join(["x" * 49] * 4)  # 4 lines × 50 bytes = 200
+  +             parts.append(f"## {n}\n{body}")
+  +         return "# YOUR TRAJECTORY\n\n" + "\n\n".join(parts) + "\n"
+  + 
+  +     five = five_sections()
+  +     # Header (19 bytes) + two whole sections (~2 × 216) + part of the third.
+  +     five_cap = 650
+  +     five_capped = cap_output(five, byte_cap=five_cap)
+  +     assert_true(
+  ... (60 more lines)
+ ✓ (3ms)
+            and "(truncated to fit token budget)" in huge_capped,
+  +     )
+  + 
+  +     # 23 (#1104). A cut NAMES the sections it dropped, whole or partly. Five
+  +     # sections, each 200 bytes of body; a cap that lands mid-third-section
+  +     # must list Third, Fourth and Fifth exactly — and not First or Second.
+  +     def five_sections() -> str:
+  +         names = ["First", "Second: verdict inline", "Third (with detail)",
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 scripts/extract_trajectory… ✓ (121ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 -c " (6 lines) ✓ (216ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 -c " (4 lines) ✓ (19ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 -c " (7 lines) ✓ (51ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "TOTAL_BYTE_CAP = \|TOTAL_… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "SUPERSEDED on Day 244\|sa… ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "is 3072\|bounds the whole… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 25.7s (8 ✓)
+
+The three parallel edits raced on the same file and two were lost. Redoing them one at a time.
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/extract_trajectory.py (3 → 14 lines)
+    # section off the end. +96 pays for that one line, same rule as Day 236.
+  + # SUPERSEDED on Day 244 (2026-10-30, #1104), recorded rather than erased: the
+  + # "+N pays for exactly the new section" rule above kept whatever had ALREADY
+  + # been lost. Measured on #1104, the full block was 5063 bytes / 77 lines
+  + # against 3424, so Doc freshness, Productivity, Counterfactual pairing and
+  + # Epistemic blind spots (with its planner hint) were cut whole every session.
+  + # The cap is now derived from what the planner needs, not from the last raise:
+  + # the measured full block (5063) plus ~20% headroom = 6144 bytes (~1.5K
+  + # tokens, beside a ~40 KB CLAUDE.md in the same prompt). The line cap stays 100
+  + # (77 fits). The enforcer of the next silent loss is the planner itself:
+  + # `cap_output` names every `## ` section it cut, in band, so a block that
+  + # outgrows this cap says so in the prompt that loses the sections.
+    TOTAL_LINE_CAP = 100
+  - TOTAL_BYTE_CAP = 3424
+  + TOTAL_BYTE_CAP = 6144
+ ✓ (3ms)
+    # section off the end. +96 pays for that one line, same rule as Day 236.
+  + # SUPERSEDED on Day 244 (2026-10-30, #1104), recorded rather than erased: the
+  + # "+N pays for exactly the new section" rule above kept whatever had ALREADY
+  + # been lost. Measured on #1104, the full block was 5063 bytes / 77 lines
+  + # against 3424, so Doc freshness, Productivity, Counterfactual pairing and
+  + # Epistemic blind spots (with its planner hint) were cut whole every session.
+  + # The cap is now derived from what the planner needs, not from the last raise:
+  + # the measured full block (5063) plus ~20% headroom = 6144 bytes (~1.5K
+  ... (7 more lines)
+  ▶ edit scripts/extract_trajectory.py (2 → 3 lines)
+        absorbs all truncation pressure (Day 142, load-bearing: it has been cut
+  -     away before, and TOTAL_BYTE_CAP is 3072), so this must not crowd it.
+  +     away before, and TOTAL_BYTE_CAP bounds the whole block), so this must not
+  +     crowd it.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "TOTAL_BYTE_CAP = \|SUPERS… ✓ (4ms)
+        absorbs all truncation pressure (Day 142, load-bearing: it has been cut
+  -     away before, and TOTAL_BYTE_CAP is 3072), so this must not crowd it.
+  +     away before, and TOTAL_BYTE_CAP bounds the whole block), so this must not
+  +     crowd it.
+ ✓ (117ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 8.3s (3 ✓)
+
+All 540 pass. Positive control (atomic mutate → run → restore): the cut list returns nothing.
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; f=scripts/extr… (5 lines) ✓ (252ms)
+
+Control reddens exactly the new tests; restored green. Now the real measurement against the audit-log.
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git fetch --depth 50 origin audit-… ✓ (6.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Full block: 5336 bytes / 78 lines, uncut, all 13 sections present. Epistemic section's size, then clean up:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n '73,$p' /tmp/traj.md | wc -… ✓ (291ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now harness and cargo checks.
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; bash tests/harness_logic.sh > /tmp… ✓ (7.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt -- --check && cargo clip… ✓ (4m 48s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test 2>&1 | grep -E "^test r… ✓ (7m 4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 12m 6s (3 ✓)
+
+All green. Checking for stale mentions of the old cap elsewhere in the tree:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git grep -n "3424\|TOTAL_BYTE_CAP\… ✓ (32ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1200p ARCHITECTURE.md; sed … ✓ (26ms)
+  2 tools completed in 14.6s (2 ✓)
+
+Update ARCHITECTURE.md's entry for this file (the "Hard-capped at 100 lines / 3KB" claim is now false) and append a Day-244 bullet.
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (15 lines) ✓ (67ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+ARCHITECTURE.md is read by some tests; re-running the suite quickly before commit.
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test 2>&1 | grep -E "^test r… ✓ (3m 32s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add -A && … (34 lines) ✓ (55ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3m 43s (2 ✓)
+
+Before the push closes #1104, I checked for anything else in the tree that points at it:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git grep -n '#1104\b' -- src docs … ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Fixed #1104 and committed it as f6c18d57. The trajectory block now fits under its cap, and if it ever gets cut again, the cut lists the sections it dropped.
+
+What changed (only scripts/extract_trajectory.py, plus the matching note in ARCHITECTURE.md):
+• The cap is now worked out from the block's size instead of raised a bit at a time. TOTAL_BYTE_CAP goes from 3424 to 6144: the 5063 bytes measured on #1104, plus about 20%. TOTAL_LINE_CAP stays at 100. The old "+N pays for exactly the new section" comment is marked superseded where it stood rather than deleted. That rule only kept whatever had already been lost: four whole sections were cut every session.
+• Any cut now names what it dropped. cap_output adds a line like (cut: Third, Fourth, Fifth) after the old ... (truncated to fit token budget) marker, which is unchanged. A section counts as cut if any part of it is missing, including one whose header survived but whose body didn't. Room for that line is set aside inside the budget, so the output still stays under the cap. A block that's already under the cap comes back unchanged.
+• Stale sentences fixed. The two comments that said "TOTAL_BYTE_CAP is 3072" and "is 3KB" now point at the constant instead of repeating a number. ARCHITECTURE.md's "3KB, typical 2–3KB" line is marked superseded too.
+
+Measured on the real audit log (fetched it, ran the script the way evolve.sh does, then removed the worktree): the block is 5336 bytes and 78 lines. Nothing is cut, all 13 sections are there, and ## Epistemic blind spots is 602 bytes. The block has grown about 270 bytes since #1104 was measured, so the real headroom is about 800 bytes (roughly 15%), not 20%. That's in the commit message.
+
+Checks:
+• extract_trajectory.py --test: 540 ok, 0 failures. The four new tests cover a cut in the middle of the third of five sections, the under-cap case, output size with the list, and a cut by line count alone.
+• Positive control, done as one mutate→run→restore step: making the cut list empty fails exactly the four tests that check the names. Restored, all green.
+• tests/harness_logic.sh: 321 passed, 0 failed.
+• fmt, clippy with -D warnings, and cargo test (7065 passed, 0 failed) all pass.
+
+One process note: my first three edits to the file ran in parallel and two were silently lost. A self-test failure showed it (the cap was still 3424), and I redid them one at a time.
+
+Still open: nothing fails if the block grows past 6144 again. The (cut: …) line only shows the loss in the planner's prompt; it doesn't block anything.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
