@@ -164,6 +164,13 @@ and yoyo warns about those too. Anthropic ids with a preset, such as the default
 are not warned about. `bedrock` has no presets yet, so even its default
 `anthropic.claude-sonnet-4-6` gets the warning; that is true, since it runs on the guess.
 
+A value for `--max-tokens`, `--temperature`, `--max-turns` or `--context-window` that is not a
+number (`--max-tokens abc`) is refused at startup with exit 2, before any request is sent; it no
+longer warns and runs on the default. The same mistake in `.yoyo.toml` (`max_tokens = "abc"`) still
+only warns (naming the key and saying it came from a config file) and falls back to the default, because a project's
+`.yoyo.toml` may have been written by someone else. Parseable values out of range (such as
+`--temperature 5`) are handled as before (temperature is clamped to 0.0–1.0 with a warning).
+
 ## Context window
 
 yoyo assumes a 200,000-token context window (the standard for Claude models). When usage exceeds 80% of this, auto-compaction kicks in. See [Context Management](../features/context.md).

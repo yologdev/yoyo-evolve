@@ -2703,6 +2703,10 @@ directory ({e}); this run is trusted, later runs will not be."
 
     // Warn about unknown flags
     warn_unknown_flags(args, flags_needing_values);
+    if let Some(msg) = crate::cli_config::bad_numeric_flag_refusal(args) {
+        eprintln!("{RED}error:{RESET} {msg}");
+        std::process::exit(2); // before any agent or request (Day 244)
+    }
 
     // Parse prompt and image flags early so we can validate --image before API key check
     let mut prompt_arg = flag_value(args, &["--prompt", "-p"]);
@@ -5368,7 +5372,7 @@ command = "server-two"
         let mut config = std::collections::HashMap::new();
         config.insert("max_tokens".to_string(), "2048".to_string());
         let result = parse_numeric_flag::<u32>(&args, "--max-tokens", &config, "max_tokens");
-        // Invalid CLI value warns and falls through to config
+        // Resolver-level fallback; startup refuses this first (Day 244, exit 2)
         assert_eq!(result, Some(2048));
     }
 

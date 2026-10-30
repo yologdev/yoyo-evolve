@@ -244,6 +244,10 @@ pub struct Config {
 /// Pure — returns the warnings instead of printing them, so tests see the
 /// exact text a user reads; `cli::parse_numeric_flag` prints each one.
 ///
+/// Since Day 244 the flag door never reaches its warning from startup: an
+/// unparseable flag value is refused first (`bad_numeric_flag_refusal`, exit
+/// 2). The flag-warning branch below stays as the resolver's own fallback.
+///
 /// Both doors warn when their value cannot be parsed (#1028: the config door
 /// used to drop `max_tokens = "abc"` silently and run on the default, which is
 /// how a user ends up cut off under a limit they think they changed). The
@@ -288,6 +292,61 @@ pub(crate) fn resolve_numeric_setting<T: std::str::FromStr>(
         parsed
     });
     (from_config, warnings)
+}
+
+/// Refusal for one numeric flag whose explicit value doesn't parse as `T`
+/// (`--max-tokens abc`), or `None` when the flag is absent or parses.
+/// Reads the same occurrence `resolve_numeric_setting` reads (the first).
+fn numeric_flag_refusal<T: std::str::FromStr>(
+    args: &[String],
+    flag_name: &str,
+    expected: &str,
+) -> Option<String> {
+    let i = args.iter().position(|a| a == flag_name)?;
+    let value = args.get(i + 1)?;
+    if value.parse::<T>().is_ok() {
+        return None;
+    }
+    Some(format!(
+        "{flag_name} value '{}' is not a number; expected {expected}. \
+Nothing was sent to the model.",
+        crate::cli::sanitize_for_display(value)
+    ))
+}
+
+/// Startup refusal for an explicit numeric flag whose value doesn't parse
+/// (`--max-tokens abc`, `--temperature hot`, `--max-turns x`,
+/// `--context-window big`). The caller prints it and exits 2 before any
+/// agent is built, so a typo can't run a paid prompt on the default.
+///
+/// Only the FLAG door refuses. A bad value in `.yoyo.toml` still warns
+/// (naming the key and "in config file") and falls back, because that file
+/// may be repo-authored: refusing would block every user of the repo over
+/// someone else's typo. Parseable but out-of-range values (`--temperature 5`,
+/// `--max-tokens 0`) are not decided here.
+pub(crate) fn bad_numeric_flag_refusal(args: &[String]) -> Option<String> {
+    numeric_flag_refusal::<u32>(
+        args,
+        "--max-tokens",
+        "a whole number, e.g. --max-tokens 4096",
+    )
+    .or_else(|| {
+        numeric_flag_refusal::<f32>(
+            args,
+            "--temperature",
+            "a number from 0.0 to 1.0, e.g. --temperature 0.3",
+        )
+    })
+    .or_else(|| {
+        numeric_flag_refusal::<usize>(args, "--max-turns", "a whole number, e.g. --max-turns 20")
+    })
+    .or_else(|| {
+        numeric_flag_refusal::<u32>(
+            args,
+            "--context-window",
+            "a whole number of tokens, e.g. --context-window 200000",
+        )
+    })
 }
 
 #[cfg(test)]
@@ -557,5 +616,58 @@ mod tests {
     fn test_safe_mode_defaults_to_false() {
         // SAFE_MODE static defaults to false — safe mode must be explicitly opted into
         assert!(!is_safe_mode());
+    }
+
+    /// Day 244: an explicit numeric flag whose value doesn't parse is refused
+    /// (the caller exits 2 before any request). Each row names flag and value.
+    #[test]
+    fn bad_numeric_flag_value_is_refused_naming_flag_and_value() {
+        let rows: &[(&str, &str)] = &[
+            ("--max-tokens", "abc"),
+            ("--max-tokens", "-5"),
+            ("--max-tokens", ""),
+            ("--temperature", "hot"),
+            ("--max-turns", "x"),
+            ("--context-window", "big"),
+        ];
+        for (flag, value) in rows {
+            let msg = bad_numeric_flag_refusal(&argv(&["-p", "hi", flag, value]))
+                .unwrap_or_else(|| panic!("{flag} {value:?} must be refused"));
+            assert!(msg.starts_with(flag), "{msg}");
+            assert!(msg.contains(&format!("'{value}'")), "{msg}");
+            assert!(msg.contains("Nothing was sent"), "{msg}");
+        }
+        assert_eq!(
+            bad_numeric_flag_refusal(&argv(&["--max-tokens", "abc"])).as_deref(),
+            Some(
+                "--max-tokens value 'abc' is not a number; expected a whole number, \
+e.g. --max-tokens 4096. Nothing was sent to the model."
+            )
+        );
+    }
+
+    /// Near-misses: valid values, an absent flag, and a flag with no value
+    /// (that one is `check_flag_values`' job, exit 1) are not refused here.
+    #[test]
+    fn valid_or_absent_numeric_flags_are_not_refused() {
+        let rows: &[&[&str]] = &[
+            &["--max-tokens", "4096"],
+            &["--temperature", "0.3"],
+            &["--temperature", "0"],
+            &["--max-turns", "1"],
+            &["--context-window", "200000"],
+            &["-p", "hi"],
+            &["--max-tokens"],
+        ];
+        for row in rows {
+            assert_eq!(bad_numeric_flag_refusal(&argv(row)), None, "{row:?}");
+        }
+    }
+
+    /// The value is untrusted text on its way to a terminal.
+    #[test]
+    fn bad_numeric_flag_refusal_escapes_control_bytes() {
+        let msg = bad_numeric_flag_refusal(&argv(&["--max-turns", "x\u{1b}[31m"])).unwrap();
+        assert!(!msg.as_bytes().contains(&0x1b), "{msg:?}");
     }
 }
