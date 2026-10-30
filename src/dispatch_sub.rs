@@ -357,6 +357,17 @@ pub(crate) fn try_dispatch_subcommand_in(
     // args[0] is the binary path; args[1] is the subcommand name.
     // Each arm calls the existing REPL handler from commands_dev and exits cleanly
     // (handlers return () and print directly to stdout).
+    // A subcommand after global flags is refused, not dispatched: each verb's
+    // own parser would read the leading flags (grep could take `--model`'s value
+    // as its pattern). Before this, it fell through to a paid prompt.
+    if let Some(i) = crate::cli::misplaced_subcommand(args) {
+        let plain = is_plain_output();
+        eprintln!(
+            "{}",
+            crate::cli::misplaced_subcommand_refusal(args, i, plain)
+        );
+        std::process::exit(2);
+    }
     if let Some(sub) = args.get(1) {
         match sub.as_str() {
             "doctor" => {
@@ -2482,6 +2493,43 @@ mod tests {
 #[cfg(test)]
 mod flaglike_subcommand_value_tests {
     use super::*;
+
+    #[test]
+    fn misplaced_subcommand_refusal_drops_the_flags_from_the_first_form() {
+        let argv: Vec<String> = ["yoyo", "--provider", "anthropic", "config", "get", "model"]
+            .map(String::from)
+            .to_vec();
+        assert_eq!(
+            crate::cli::misplaced_subcommand_refusal(&argv, 3, true),
+            "error: \"config\" is a subcommand; subcommands go first: yoyo config get model\n  \
+             the flags before it (--provider anthropic) were not applied; add the ones it supports after its name\n  \
+             to send it to the model as a prompt instead: yoyo --provider anthropic -p \"config get model\""
+        );
+        assert!(crate::cli::misplaced_subcommand_refusal(&argv, 3, false)
+            .starts_with("\u{2717} \"config\""));
+    }
+
+    /// Every arm `try_dispatch_subcommand_in` matches on is in KNOWN_SUBCOMMANDS,
+    /// or a verb after a flag would still fall through to a paid prompt.
+    #[test]
+    fn known_subcommands_names_every_dispatch_arm() {
+        let src = include_str!("dispatch_sub.rs");
+        let body = &src[src.find("fn try_dispatch_subcommand_in").unwrap()..];
+        let body = &body[..body.find("\n}\n").unwrap()];
+        let mut arms = 0;
+        for line in body.lines() {
+            let t = line.trim_start();
+            if line.starts_with("            \"") && t.ends_with("=> {") {
+                let verb = t.trim_start_matches('"').split('"').next().unwrap();
+                assert!(
+                    crate::cli::KNOWN_SUBCOMMANDS.contains(&verb),
+                    "dispatch arm {verb:?} missing"
+                );
+                arms += 1;
+            }
+        }
+        assert!(arms >= 30, "found only {arms} arms; the scan is broken");
+    }
 
     fn argv(xs: &[&str]) -> Vec<String> {
         xs.iter().map(|s| s.to_string()).collect()

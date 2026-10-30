@@ -4652,3 +4652,82 @@ fn goal_set_without_a_description_exits_two_and_saves_nothing() {
     assert_eq!(code, Some(0), "stdout={stdout} stderr={stderr}");
     assert!(dir.path().join(".yoyo/goal.md").exists());
 }
+
+/// Spawn yoyo against an unreachable endpoint with a bad key, in a tempdir, and
+/// read stderr until the prompt-mode banner or EOF. Returns (stderr, exit code);
+/// a prompt run is killed at the banner, so a regression fails fast, not on retries.
+fn run_until_prompt_banner(args: &[&str]) -> (String, Option<i32>) {
+    use std::io::{BufRead, BufReader};
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut child = yoyo_cmd()
+        .args(args)
+        .args(["--api-key", "bad", "--base-url", "http://127.0.0.1:9"])
+        .current_dir(dir.path())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to run yoyo");
+    let mut err = String::new();
+    for line in BufReader::new(child.stderr.take().unwrap()).lines() {
+        let line = line.unwrap_or_default();
+        err.push_str(&line);
+        err.push('\n');
+        if line.contains("prompt mode") {
+            let _ = child.kill();
+            break;
+        }
+    }
+    let code = child.wait().expect("wait").code();
+    (err, code)
+}
+
+#[test]
+fn subcommand_after_global_flags_is_refused_not_sent_as_a_prompt() {
+    let rows: &[&[&str]] = &[
+        &["--yes", "doctor"],
+        &["--model", "M", "status"],
+        &["--provider", "anthropic", "config", "get", "model"],
+        &["--model=M", "doctor"],
+    ];
+    for argv in rows {
+        let (err, code) = run_until_prompt_banner(argv);
+        assert!(
+            !err.contains("prompt mode"),
+            "{argv:?} became a prompt:\n{err}"
+        );
+        assert_eq!(code, Some(2), "{argv:?} exit; stderr:\n{err}");
+        assert!(
+            err.contains("is a subcommand; subcommands go first"),
+            "{argv:?}:\n{err}"
+        );
+    }
+}
+
+#[test]
+fn prompt_shapes_near_a_subcommand_name_stay_prompts() {
+    let rows: &[&[&str]] = &[
+        &["-p", "doctor"],
+        &["--model", "M", "-p", "doctor"],
+        &["fix the doctor module"],
+        &["--yes", "explain", "this", "code"],
+    ];
+    for argv in rows {
+        let (err, _) = run_until_prompt_banner(argv);
+        assert!(
+            err.contains("prompt mode"),
+            "{argv:?} should stay a prompt:\n{err}"
+        );
+        assert!(!err.contains("is a subcommand"), "{argv:?}:\n{err}");
+    }
+}
+
+#[test]
+fn subcommand_first_still_dispatches() {
+    let (err, code) = run_until_prompt_banner(&["doctor"]);
+    assert!(
+        !err.contains("prompt mode") && !err.contains("is a subcommand"),
+        "{err}"
+    );
+    assert_eq!(code, Some(0), "doctor exit; stderr:\n{err}");
+}

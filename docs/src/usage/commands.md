@@ -3,7 +3,9 @@
 All commands start with `/`. Type `/help` inside yoyo to see the full list.
 
 > **Note:** A few commands are also available as shell subcommands — run them
-> directly without entering the REPL:
+> directly without entering the REPL. The subcommand goes first: `yoyo --yes doctor`
+> is refused with exit 2 (it used to be sent to the model as the prompt "doctor"); write
+> `yoyo doctor --model M`, or `yoyo --yes -p doctor` to send the word as a prompt.
 >
 > | Subcommand | Description |
 > |------------|-------------|

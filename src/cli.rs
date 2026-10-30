@@ -818,6 +818,54 @@ pub(crate) const FLAGS_NEEDING_VALUES: &[&str] = &[
     "--save-session",
 ];
 
+// Subcommands dispatched by try_dispatch_subcommand — if args[1] is one of
+// these, the subcommand handler already ran and parse_args was never reached.
+// But we list them defensively so that a typo like `yoyo doctor something`
+// (which falls through because "doctor" was already dispatched) never
+// accidentally treats a subcommand name as a prompt token. `misplaced_subcommand`
+// reads it too, so it must name every arm of that match (pinned by a test).
+pub(crate) const KNOWN_SUBCOMMANDS: &[&str] = &[
+    "ast",
+    "blame",
+    "changelog",
+    "commit",
+    "config",
+    "def",
+    "diff",
+    "docs",
+    "doctor",
+    "evolution",
+    "extended",
+    "find",
+    "gasp",
+    "goal",
+    "grep",
+    "health",
+    "help",
+    "index",
+    "init",
+    "lint",
+    "map",
+    "memories",
+    "model",
+    "outline",
+    "permissions",
+    "review",
+    "risk",
+    "run",
+    "security",
+    "setup",
+    "skill",
+    "status",
+    "test",
+    "todo",
+    "tree",
+    "undo",
+    "update",
+    "version",
+    "watch",
+];
+
 /// Collect positional arguments that aren't flags, flag values, or known subcommands.
 ///
 /// Walks `args` (skipping `args[0]` — the binary name) and collects any token
@@ -830,46 +878,6 @@ pub(crate) fn collect_positional_args(
     args: &[String],
     flags_needing_values: &[&str],
 ) -> Vec<String> {
-    // Subcommands dispatched by try_dispatch_subcommand — if args[1] is one of
-    // these, the subcommand handler already ran and parse_args was never reached.
-    // But we list them defensively so that a typo like `yoyo doctor something`
-    // (which falls through because "doctor" was already dispatched) never
-    // accidentally treats a subcommand name as a prompt token.
-    const KNOWN_SUBCOMMANDS: &[&str] = &[
-        "blame",
-        "changelog",
-        "commit",
-        "config",
-        "diff",
-        "docs",
-        "doctor",
-        "evolution",
-        "extended",
-        "find",
-        "grep",
-        "health",
-        "help",
-        "index",
-        "init",
-        "lint",
-        "map",
-        "memories",
-        "outline",
-        "permissions",
-        "review",
-        "run",
-        "setup",
-        "skill",
-        "status",
-        "test",
-        "todo",
-        "tree",
-        "undo",
-        "update",
-        "version",
-        "watch",
-    ];
-
     let mut positional = Vec::new();
     let mut skip_next = false;
 
@@ -897,6 +905,58 @@ pub(crate) fn collect_positional_args(
         positional.push(arg.clone());
     }
     positional
+}
+
+/// Index of a subcommand that is the first positional token but not `args[1]`:
+/// `yoyo --yes doctor` used to send "doctor" to the model as a paid prompt,
+/// because dispatch matches only `args[1]`. Flags are skipped (with the value of
+/// any `FLAGS_NEEDING_VALUES` flag written without `=`), and `--` ends the search,
+/// so `yoyo -p doctor` and `yoyo --model M -p doctor` stay prompts.
+pub(crate) fn misplaced_subcommand(args: &[String]) -> Option<usize> {
+    let mut i = 1;
+    while let Some(a) = args.get(i) {
+        if a == "--" {
+            return None;
+        }
+        if !a.starts_with('-') {
+            return (i > 1 && KNOWN_SUBCOMMANDS.contains(&a.as_str())).then_some(i);
+        }
+        i += if FLAGS_NEEDING_VALUES.contains(&a.as_str()) {
+            2
+        } else {
+            1
+        };
+    }
+    None
+}
+
+/// The refusal for [`misplaced_subcommand`], built from the real argv. The
+/// "goes first" form drops the leading flags rather than moving them: verbs read
+/// only their own flags (`status`/`config get` ignore `--model`, and `run`
+/// would pass a moved `--model M` to the shell command), so moving them would
+/// promise an effect that does not happen. Exit code 2.
+pub(crate) fn misplaced_subcommand_refusal(args: &[String], idx: usize, plain: bool) -> String {
+    let show = |toks: &[String]| -> String {
+        let q = |t: &String| {
+            let t = sanitize_for_display(t);
+            if t.is_empty() || t.contains(char::is_whitespace) {
+                format!("\"{t}\"")
+            } else {
+                t
+            }
+        };
+        toks.iter().map(q).collect::<Vec<_>>().join(" ")
+    };
+    let (flags, tail) = (show(&args[1..idx]), &args[idx..]);
+    let lead = if plain { "error:" } else { "\u{2717}" };
+    format!(
+        "{lead} \"{}\" is a subcommand; subcommands go first: yoyo {}\n  \
+         the flags before it ({flags}) were not applied; add the ones it supports after its name\n  \
+         to send it to the model as a prompt instead: yoyo {flags} -p {}",
+        sanitize_for_display(&args[idx]),
+        show(tail),
+        show(&[tail.join(" ")])
+    )
 }
 
 /// Warn about any unrecognized flags in the arguments.
@@ -3081,6 +3141,34 @@ directory ({e}); this run is trusted, later runs will not be."
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn misplaced_subcommand_finds_a_verb_after_flags_and_leaves_prompts_alone() {
+        let rows: &[(&[&str], Option<usize>)] = &[
+            (&["--yes", "doctor"], Some(2)),
+            (&["--model", "M", "status"], Some(3)),
+            (&["--model=M", "doctor"], Some(2)),
+            (
+                &["--provider", "anthropic", "config", "get", "model"],
+                Some(3),
+            ),
+            (&["doctor"], None),
+            (&["doctor", "--model", "M"], None),
+            (&["-p", "doctor"], None),
+            (&["--model", "M", "-p", "doctor"], None),
+            (&["fix the doctor module"], None),
+            (&["--yes", "explain", "this", "code"], None),
+            (&["--yes", "--", "doctor"], None),
+            (&["--model", "doctor"], None), // `doctor` is --model's value
+        ];
+        for (tail, want) in rows {
+            let argv: Vec<String> = std::iter::once("yoyo")
+                .chain(tail.iter().copied())
+                .map(String::from)
+                .collect();
+            assert_eq!(misplaced_subcommand(&argv), *want, "{tail:?}");
+        }
+    }
 
     /// #941 — the warning consults the *preset* resolution rule, not a second
     /// exact-match rule over the same id. Asserted at the emission point: the
