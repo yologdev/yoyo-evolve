@@ -66,6 +66,12 @@ yoyo --provider ollama --model llama3.2
 yoyo --provider custom --base-url http://localhost:8080/v1 --model my-model
 ```
 
+A provider name that is not in the table above is refused at startup (exit 2, with a
+"did you mean" suggestion for a near typo such as `anthropc`) unless a base URL is given
+with `--base-url` or `base_url` in `.yoyo.toml`; with one, the name is treated as an
+OpenAI-compatible server at that URL. This applies to `--provider` and to `provider` in
+`.yoyo.toml` alike, so a typo never sends your key to a default local port.
+
 You can also set these in `.yoyo.toml`:
 ```toml
 provider = "openai"

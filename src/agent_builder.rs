@@ -1100,13 +1100,14 @@ pub fn create_model_config(provider: &str, model: &str, base_url: Option<&str>) 
             // Unknown provider — treat as OpenAI-compatible with custom base URL.
             // Note: parse_args and /provider already warn about unknown names,
             // but log here too as defense-in-depth for any future call sites.
+            let url = base_url.unwrap_or("http://localhost:8080/v1");
             eprintln!(
-                "{}warning:{} treating unknown provider '{}' as OpenAI-compatible (localhost:8080)",
+                "{}warning:{} treating unknown provider '{}' as OpenAI-compatible ({})",
                 crate::format::YELLOW,
                 crate::format::RESET,
-                provider
+                provider,
+                url
             );
-            let url = base_url.unwrap_or("http://localhost:8080/v1");
             let mut config = ModelConfig::local(url, model);
             config.provider = provider.to_string();
             config

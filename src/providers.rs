@@ -279,9 +279,105 @@ pub fn default_model_for_provider(provider: &str) -> String {
     }
 }
 
+/// #1103: `Some(refusal)` when `provider` is not a known name AND no base URL
+/// was given, so startup can refuse (exit 2) before any network call.
+///
+/// Who reaches the refused branch: anyone who mistypes a provider, on the
+/// `--provider` flag or `provider = "..."` in `.yoyo.toml`. Nobody chooses it:
+/// before this, the typo silently became an OpenAI-compatible client aimed at
+/// `localhost:8080`, carrying whatever key the fallback chain found
+/// (`ANTHROPIC_API_KEY`, then `API_KEY`), retried for ~80s and blamed the
+/// network. An unknown name WITH a base URL is a choice (the user pointed it
+/// somewhere), so it returns `None` and keeps that path.
+///
+/// Did-you-mean only within edit distance 2, via the one shared
+/// `commands::closest_match`; otherwise the known list. The name is
+/// sanitized (a project `.yoyo.toml` is repository-authored). Glyph-free
+/// except the em dash; callers add colour.
+pub fn unknown_provider_refusal(provider: &str, base_url_given: bool) -> Option<String> {
+    if KNOWN_PROVIDERS.contains(&provider) || base_url_given {
+        return None;
+    }
+    let shown = crate::cli::sanitize_for_display(provider);
+    let mut msg = format!("unknown provider '{shown}'");
+    match crate::commands::closest_match(provider, KNOWN_PROVIDERS, 2) {
+        Some(near) => msg.push_str(&format!(" — did you mean '{near}'?")),
+        None => msg.push_str(&format!(
+            ". Known providers: {}",
+            KNOWN_PROVIDERS.join(", ")
+        )),
+    }
+    msg.push_str("\nfor an OpenAI-compatible server use: --provider custom --base-url <url>");
+    Some(msg)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unknown_provider_refusal_table() {
+        // (provider, base_url_given, Some(expected first line) | None)
+        let rows: &[(&str, bool, Option<&str>)] = &[
+            (
+                "anthropc",
+                false,
+                Some("unknown provider 'anthropc' — did you mean 'anthropic'?"),
+            ),
+            (
+                "opnai",
+                false,
+                Some("unknown provider 'opnai' — did you mean 'openai'?"),
+            ),
+            // Near-miss rows: known names are never refused, with or without a URL.
+            ("anthropic", false, None),
+            ("custom", false, None),
+            ("ollama", false, None),
+            ("openai", true, None),
+            // A typo plus a base URL is a choice: keep the OpenAI-compatible path.
+            ("anthropc", true, None),
+            ("zzzz", true, None),
+        ];
+        for (p, url, want) in rows {
+            let got = unknown_provider_refusal(p, *url);
+            match want {
+                None => assert_eq!(got, None, "{p} url={url} must not be refused"),
+                Some(first) => {
+                    let msg = got.unwrap_or_else(|| panic!("{p} must be refused"));
+                    assert_eq!(
+                        msg,
+                        format!(
+                            "{first}\nfor an OpenAI-compatible server use: \
+                             --provider custom --base-url <url>"
+                        )
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn unknown_provider_far_from_everything_lists_the_known_ones() {
+        let msg = unknown_provider_refusal("zzzz", false).expect("zzzz is refused");
+        assert!(!msg.contains("did you mean"), "{msg}");
+        let first = msg.lines().next().unwrap();
+        assert_eq!(
+            first,
+            format!(
+                "unknown provider 'zzzz'. Known providers: {}",
+                KNOWN_PROVIDERS.join(", ")
+            )
+        );
+        // Anti-vacuous: the list really is the authority, not an empty join.
+        assert!(first.contains("anthropic") && first.contains("custom"));
+    }
+
+    #[test]
+    fn unknown_provider_refusal_escapes_control_bytes() {
+        let msg = unknown_provider_refusal("bad\u{1b}[31m", false).expect("refused");
+        assert!("bad\u{1b}[31m".as_bytes().contains(&0x1b));
+        assert!(!msg.as_bytes().contains(&0x1b), "{msg:?}");
+    }
 
     #[test]
     fn test_known_providers_has_at_least_10() {

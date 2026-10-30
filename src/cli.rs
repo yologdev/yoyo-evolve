@@ -1074,17 +1074,18 @@ fn parse_model_config(
         .unwrap_or_else(|| "anthropic".into())
         .to_lowercase();
 
-    // Validate provider name
-    if !KNOWN_PROVIDERS.contains(&provider.as_str()) {
-        eprintln!(
-            "{YELLOW}warning:{RESET} Unknown provider '{provider}'. Known providers: {}",
-            KNOWN_PROVIDERS.join(", ")
-        );
-    }
-
     // Parse --base-url flag (CLI > config file)
     let base_url =
         flag_value(args, &["--base-url"]).or_else(|| file_config.get("base_url").cloned());
+
+    // #1103: an unknown provider with no base URL is a typo, not a choice; refuse
+    // before any network call instead of sending the fallback key to localhost:8080.
+    // Both doors (flag and .yoyo.toml) resolve into `provider` above.
+    let url_given = base_url.as_deref().is_some_and(|u| !u.trim().is_empty());
+    if let Some(msg) = crate::providers::unknown_provider_refusal(&provider, url_given) {
+        eprintln!("{RED}error:{RESET} {msg}");
+        std::process::exit(2);
+    }
 
     // API key: --api-key flag > provider-specific env > ANTHROPIC_API_KEY > API_KEY > config file
     let api_key_from_flag = flag_value(args, &["--api-key"]);
