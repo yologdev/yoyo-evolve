@@ -74,8 +74,12 @@ STUCK_ON_THRESHOLD = 3         # ≥N attempts AND 0 successes → flag
 # mid-order, and the block was already at its cap, so without the raise it
 # pushed the module-size warning's body off the end. +256 pays for exactly the
 # new section; every older section keeps the room it had.
+# 3328 → 3424 on Day 244 (#1071): synthesize became a third phase-spend line
+# (~50 bytes, ~92 with an uncosted-records clause), and measured on the live
+# audit-log it pushed config.rs's FATAL-proximity line and the doc-freshness
+# section off the end. +96 pays for that one line, same rule as Day 236.
 TOTAL_LINE_CAP = 100
-TOTAL_BYTE_CAP = 3328
+TOTAL_BYTE_CAP = 3424
 
 # ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -2516,8 +2520,8 @@ def render_usage_coverage(cov: UsageCoverage, state: str = AUDIT_DIR_OK) -> str:
 # and diverge forever after, which is the whole duplication lesson.
 
 # ── #944: the per-phase spend sinks finally get a reader ────────────────────
-# social.sh and dream.sh each append one JSON row per run to
-# `phases/<phase>/spend.jsonl` on the audit-log branch (a sibling of
+# social.sh, dream.sh and synthesize_state.sh each append one JSON row per
+# run to `phases/<phase>/spend.jsonl` on the audit-log branch (a sibling of
 # `sessions/`, so SESSION_DIR_RE never sees it). Until this section nothing
 # read those rows: a sink with no reader is a value printed to a channel
 # nothing later reads (Day 213). This is that reader, in the block every
@@ -2540,7 +2544,12 @@ def render_usage_coverage(cov: UsageCoverage, state: str = AUDIT_DIR_OK) -> str:
 # top-level fields), but this reader sums top-level `cost_usd` only, so the
 # totals are still a floor even when every run recorded. Reading
 # `sub_agents.cost_usd` here is the owed reader-side half of #1073.
-PHASE_SPEND_PHASES = ("social", "dream")
+#
+# synthesize (Day 244, #1071): its rows carry a `steps` dict (learnings /
+# social / dreams: ran|skipped) where social and dream carry day/exit. The
+# reader looks only at `ts` and `usage_records`, so the shape needs no branch;
+# a run whose steps were mostly skipped is still one run with its own records.
+PHASE_SPEND_PHASES = ("social", "dream", "synthesize")
 PHASE_SPEND_WINDOW_DAYS = 7
 PHASE_SPEND_ROWS = "phase-spend-rows"
 PHASE_SPEND_NO_ROWS = "phase-spend-no-rows"
@@ -2551,7 +2560,7 @@ PHASE_SPEND_FLOOR_LINE = (
 
 
 def phase_spend_rel_path(phase: str) -> str:
-    """The sink path social.sh / dream.sh append to, relative to the branch root."""
+    """The sink path each phase's script appends to, relative to the branch root."""
     return f"phases/{phase}/spend.jsonl"
 
 
@@ -8513,6 +8522,39 @@ src/commands_config.rs
         assert_eq("phase-spend io: social read from worktree, dream absent",
                   f"{got[0].state}/{got[0].runs}/{got[1].state}",
                   f"{PHASE_SPEND_ROWS}/1/{PHASE_SPEND_NO_ROWS}")
+        # #1071: synthesize is a third sink. Its rows carry a `steps` dict
+        # (learnings/social/dreams: ran|skipped) instead of day/exit, which the
+        # reader ignores; the fixture is the real 2026-10-28T18:09:21Z row (the
+        # first dreams-ran row after 0a8b7113, three priced records, no
+        # test-model) trimmed to the fields the reader looks at.
+        syn_ran = (
+            '{"ts":"2026-10-28T18:09:21Z","phase":"synthesize","steps":{"learnings":"ran",'
+            '"social":"ran","dreams":"ran"},"usage_records":['
+            '{"cost_usd":1.0945886,"model":"claude-opus-5-5","type":"usage",'
+            '"sub_agents":{"cost_usd":2.4414569999999998,"runs":5}},'
+            '{"cost_usd":0.5382428,"model":"claude-opus-5-5","type":"usage"},'
+            '{"cost_usd":0.8314124,"model":"claude-opus-5-5","type":"usage"}]}'
+        )
+        syn_skip = (
+            '{"ts":"2026-10-29T18:09:46Z","phase":"synthesize","steps":{"learnings":"ran",'
+            '"social":"skipped","dreams":"skipped"},"usage_records":['
+            '{"cost_usd":0.9900038000000001,"model":"claude-opus-5-5","type":"usage"}]}'
+        )
+        (root / "phases" / "synthesize").mkdir(parents=True)
+        (root / "phases" / "synthesize" / "spend.jsonl").write_text(syn_ran + "\n" + syn_skip + "\n")
+        syn_now = datetime(2026, 10, 30, 7, 0, 0, tzinfo=timezone.utc)
+        got = collect_phase_spend(root / "sessions", syn_now)
+        assert_eq("phase-spend io: synthesize is read as a third phase",
+                  ",".join(sp.phase for sp in got), "social,dream,synthesize")
+        syn = got[2]
+        assert_eq("phase-spend io: synthesize rows (one with steps skipped) both count",
+                  f"{syn.state}/{syn.runs}/{syn.uncosted}/{syn.no_usage}",
+                  f"{PHASE_SPEND_ROWS}/2/0/0")
+        assert_eq("phase-spend io: synthesize sums top-level cost_usd only",
+                  f"{syn.cost_usd:.7f}", "3.4542476")
+        assert_eq("phase-spend io: synthesize renders with its sum, no uncosted calls",
+                  render_phase_spend([syn]).splitlines()[1],
+                  "- synthesize: 2 run(s), $3.45 summed cost_usd.")
     got = collect_phase_spend(None, ps_now)
     assert_eq("phase-spend io: no worktree -> could not check for every phase",
               ",".join(sp.state for sp in got),
