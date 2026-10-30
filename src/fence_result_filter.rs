@@ -44,8 +44,10 @@
 //! `matches` / `total` is lowered by the same amount. A footer this module
 //! does not recognise is left alone, never invented.
 //!
-//! Limits, stated rather than implied: `find` and `rg` warning lines after the
-//! footer are kept verbatim even if they name a denied path. A single-FILE root is not put
+//! Limits, stated rather than implied: `rg` warning lines after `search`'s
+//! footer are kept verbatim even if they name a denied path (`list_files`'
+//! `find` warnings are checked since #1023, and a cut one is withheld under
+//! a fence since #1105). A single-FILE root is not put
 //! in fail-closed mode: `rg` prints that file's lines without a path, and the
 //! root itself already passed the argument check.
 
@@ -175,6 +177,13 @@ fn unattributed_note(count: usize) -> String {
     )
 }
 
+/// The note for a find warning the 2000-char cap cut before its path ended
+/// (#1105): the cut remainder can stop inside a denied directory's own name,
+/// where no path check can tell it apart from an innocent one.
+fn cut_warning_note() -> String {
+    "[1 line withheld: a directory fence is active and the output cap cut this find warning before its path ended, so the fence could not check the path and dropped it rather than risk a leak]".to_string()
+}
+
 /// Filter one tool's text output. Returns the kept text and how many lines were
 /// withheld; with `0` withheld the input comes back byte-identical.
 ///
@@ -189,7 +198,7 @@ fn filter_fenced_lines(
     refused: &dyn Fn(&str) -> bool,
     strict_root: Option<&str>,
 ) -> (String, usize) {
-    let f = filter_fenced(tool, output, refused, strict_root);
+    let f = filter_fenced(tool, output, refused, strict_root, strict_root.is_some());
     (f.text, f.withheld)
 }
 
@@ -197,6 +206,7 @@ fn filter_fenced_lines(
 /// footer, and the line its 2000-char cap ends that stderr with (spellings
 /// copied from yoagent 0.25 `src/tools/list.rs`) <!-- yoagent-version-claim: 0.25 -->.
 const FIND_WARNINGS_HEADER: &str = "Warnings from find (the listing may be incomplete):";
+const FIND_WARNINGS_CAP: &str = "... (more warnings not shown)";
 /// `list_files`' whole text when `find` printed no file.
 const NO_FILES_PREFIX: &str = "No files found in ";
 /// The prefix of yoagent's `list_files` error when `find` failed and printed
@@ -237,15 +247,8 @@ fn list_files_regions(lines: &[&str], output: &str) -> (usize, Option<usize>) {
 /// so such a name is the root itself (already past the argument check) or a
 /// word like `warning`. Not a `find:` line: no candidates, the line stays.
 fn find_warning_paths(line: &str) -> Vec<String> {
-    let Some(rest) = line.trim_end_matches('\r').strip_prefix("find: ") else {
+    let Some((body, sep)) = find_warning_body(line) else {
         return Vec::new();
-    };
-    let (body, sep) = if let Some(b) = rest.strip_prefix('\u{2018}') {
-        (b, "\u{2019}: ")
-    } else if let Some(b) = rest.strip_prefix('\'') {
-        (b, "': ")
-    } else {
-        (rest, ": ")
     };
     let mut out: Vec<String> = body
         .match_indices(sep)
@@ -263,6 +266,26 @@ fn find_warning_paths(line: &str) -> Vec<String> {
     out
 }
 
+/// A `find:` line split into the text after its opening quote (if any) and
+/// the separator that ends the path in that quoting style.
+fn find_warning_body(line: &str) -> Option<(&str, &'static str)> {
+    let rest = line.trim_end_matches('\r').strip_prefix("find: ")?;
+    Some(if let Some(b) = rest.strip_prefix('\u{2018}') {
+        (b, "\u{2019}: ")
+    } else if let Some(b) = rest.strip_prefix('\'') {
+        (b, "': ")
+    } else {
+        (rest, ": ")
+    })
+}
+
+/// A `find:` line whose path never reached its separator: the line yoagent's
+/// cap cut mid-path (#1105). Only the line directly above the cap marker can
+/// be one; a line whose reason was cut has its path whole and is checked.
+fn is_unterminated_find_warning(line: &str) -> bool {
+    find_warning_body(line).is_some_and(|(body, sep)| !body.contains(sep))
+}
+
 /// Fence yoagent's `list_files` error text too: when `find` fails having
 /// printed no file, its warnings come back as `Err("Listing error: ...")`,
 /// which never reaches [`fence_tool_result`]. Warning lines naming a refused
@@ -271,6 +294,7 @@ pub(crate) fn fence_tool_error(
     tool: &str,
     err: yoagent::types::ToolError,
     refused: &dyn Fn(&str) -> bool,
+    fence_active: bool,
 ) -> yoagent::types::ToolError {
     let yoagent::types::ToolError::Failed(msg) = &err else {
         return err;
@@ -286,6 +310,7 @@ pub(crate) fn fence_tool_error(
         &format!("{FIND_WARNINGS_HEADER}\n{w}"),
         refused,
         None,
+        fence_active,
     );
     if f.withheld == 0 {
         return err;
@@ -306,11 +331,14 @@ struct Filtered {
 }
 
 /// The filter itself; see [`filter_fenced_lines`] for the contract.
+/// `fence_active` (any fence source live) withholds a `list_files` warning
+/// the cap cut mid-path (#1105); `false` leaves such a line to the path check.
 fn filter_fenced(
     tool: &str,
     output: &str,
     refused: &dyn Fn(&str) -> bool,
     strict_root: Option<&str>,
+    fence_active: bool,
 ) -> Filtered {
     if !RECURSIVE_READERS.contains(&tool) {
         return Filtered {
@@ -335,6 +363,7 @@ fn filter_fenced(
     let mut keep = vec![false; lines.len()];
     let mut denied = 0usize;
     let mut unattributed = 0usize;
+    let mut cut = 0usize;
     for (idx, line) in lines.iter().enumerate() {
         let deny = match tool {
             "list_files" if idx < body_end => {
@@ -352,6 +381,13 @@ fn filter_fenced(
         };
         if deny {
             denied += 1;
+        } else if fence_active
+            && tool == "list_files"
+            && warn_header.is_some_and(|h| idx > h)
+            && lines.get(idx + 1) == Some(&FIND_WARNINGS_CAP)
+            && is_unterminated_find_warning(line)
+        {
+            cut += 1;
         } else if strict_root
             .is_some_and(|root| idx < tail_start && !attributable_to_root(line, root))
         {
@@ -365,7 +401,7 @@ fn filter_fenced(
     if let Some(h) = warn_header {
         keep[h] = keep[h + 1..].iter().any(|&k| k);
     }
-    let withheld = denied + unattributed;
+    let withheld = denied + unattributed + cut;
     if withheld == 0 {
         return Filtered {
             text: output.to_string(),
@@ -397,6 +433,7 @@ fn filter_fenced(
     for note in [
         (denied > 0).then(|| withheld_note(denied)),
         (unattributed > 0).then(|| unattributed_note(unattributed)),
+        (cut > 0).then(cut_warning_note),
     ]
     .into_iter()
     .flatten()
@@ -436,7 +473,7 @@ pub(crate) fn fence_tool_result(
     let mut recounted_by = 0usize;
     for block in result.content.iter_mut() {
         if let yoagent::types::Content::Text { text } = block {
-            let f = filter_fenced(tool, text, refused, strict_root);
+            let f = filter_fenced(tool, text, refused, strict_root, fence_active);
             if f.withheld > 0 {
                 *text = f.text;
                 recounted_by += f.recounted_by;
@@ -979,6 +1016,120 @@ mod tests {
         );
     }
 
+    /// #1105: the cap cut a warning INSIDE the denied root's own name
+    /// (`<root>/se` for a deny on `<root>/secrets`). That prefix is not under
+    /// the denied dir, so the path check passes it; while a fence is active the
+    /// unterminated line is withheld instead, in all three quoting styles.
+    #[test]
+    fn a_warning_cut_inside_a_denied_roots_name_is_withheld_under_a_fence() {
+        let (_dir, root, r) = fixture();
+        let refused = |p: &str| r.check_path(p).is_err();
+        let prefix = format!("{root}/se");
+        assert!(!refused(&prefix), "the prefix must pass the path check");
+        let files = vec![format!("{root}/src/a.txt")];
+        let kept = format!("find: \u{2018}{root}/src/locked\u{2019}: Permission denied");
+        for cut in [
+            format!("find: \u{2018}{prefix}"),
+            format!("find: '{prefix}"),
+            format!("find: {prefix}"),
+        ] {
+            let w = format!("{kept}\n{cut}\n... (more warnings not shown)");
+            let output = list_output(&files, Some(&w));
+            assert!(output.contains(&cut), "anti-vacuous: {output}");
+            let (out, n) = filter_fenced_lines("list_files", &output, &refused, Some(&root));
+            assert_eq!(n, 1, "{out}");
+            assert_eq!(
+                out,
+                format!(
+                    "{root}/src/a.txt\n\n(1 files)\nWarnings from find (the listing may be incomplete):\n{kept}\n... (more warnings not shown)\n{}",
+                    cut_warning_note()
+                )
+            );
+            assert!(!out.contains(&prefix), "{out}");
+        }
+    }
+
+    /// Near-misses of #1105: with no fence the cut line passes byte-identically
+    /// (it was never checked as a leak then: nothing is denied), and under a
+    /// fence a complete line, even one whose REASON the cap cut, is kept.
+    #[test]
+    fn cut_warning_near_misses_pass_byte_identically() {
+        let (_dir, root, r) = fixture();
+        let refused = |p: &str| r.check_path(p).is_err();
+        let files = vec![format!("{root}/src/a.txt")];
+        let cut = format!("find: \u{2018}{root}/se\n... (more warnings not shown)");
+        let output = list_output(&files, Some(&cut));
+        assert_eq!(
+            filter_fenced_lines("list_files", &output, &|_| false, None),
+            (output.clone(), 0)
+        );
+        for w in [
+            format!("find: \u{2018}{root}/src/locked\u{2019}: Permission denied"),
+            format!(
+                "find: \u{2018}{root}/src/locked\u{2019}: Permis\n... (more warnings not shown)"
+            ),
+            format!("find: \u{2018}{root}/src/x\u{2019}: y\nfind: \u{2018}{root}/src/z\u{2019}: y"),
+        ] {
+            let output = list_output(&files, Some(&w));
+            assert_eq!(
+                filter_fenced_lines("list_files", &output, &refused, Some(&root)),
+                (output.clone(), 0)
+            );
+        }
+    }
+
+    /// The existing behaviour survives: a cut INSIDE the denied subtree is
+    /// still withheld as a denied result (the path check fires first).
+    #[test]
+    fn a_cut_inside_the_denied_subtree_is_still_a_denied_result_under_a_fence() {
+        let (_dir, root, r) = fixture();
+        let refused = |p: &str| r.check_path(p).is_err();
+        let files = vec![format!("{root}/src/a.txt")];
+        let w = format!("find: \u{2018}{root}/secrets/ke\n... (more warnings not shown)");
+        let output = list_output(&files, Some(&w));
+        assert!(output.contains("secrets/ke"), "anti-vacuous: {output}");
+        let (out, n) = filter_fenced_lines("list_files", &output, &refused, Some(&root));
+        assert_eq!(n, 1, "{out}");
+        assert!(!out.contains("secrets"), "{out}");
+        assert!(out.ends_with(&withheld_note(1)), "{out}");
+    }
+
+    /// #1105 on the error path: `find` printed no file, so the cut block comes
+    /// back as `Listing error: ...`. Withheld only while a fence is active.
+    #[test]
+    fn listing_error_cut_inside_a_denied_roots_name_is_withheld_under_a_fence() {
+        use yoagent::types::ToolError;
+        let (_dir, root, r) = fixture();
+        let refused = |p: &str| r.check_path(p).is_err();
+        let cut = format!("find: \u{2018}{root}/se");
+        let msg = format!("Listing error: {cut}\n... (more warnings not shown)");
+        assert!(msg.contains(&format!("{root}/se")), "anti-vacuous");
+        let text = |e: ToolError| match e {
+            ToolError::Failed(m) => m,
+            other => panic!("{other:?}"),
+        };
+        let fenced = text(fence_tool_error(
+            "list_files",
+            ToolError::Failed(msg.clone()),
+            &refused,
+            true,
+        ));
+        assert_eq!(
+            fenced,
+            format!(
+                "Listing error: ... (more warnings not shown)\n{}",
+                cut_warning_note()
+            )
+        );
+        let open = text(fence_tool_error(
+            "list_files",
+            ToolError::Failed(msg.clone()),
+            &|_| false,
+            false,
+        ));
+        assert_eq!(open, msg);
+    }
+
     #[test]
     fn non_path_find_warnings_are_never_checked() {
         let root = "/r";
@@ -1041,12 +1192,14 @@ mod tests {
             "list_files",
             ToolError::Failed(msg(&denied)),
             &refused,
+            true,
         ));
         assert_eq!(all, msg(&withheld_note(1)));
         let mixed = text(fence_tool_error(
             "list_files",
             ToolError::Failed(msg(&format!("{denied}\n{allowed}"))),
             &refused,
+            true,
         ));
         assert_eq!(mixed, msg(&format!("{allowed}\n{}", withheld_note(1))));
         // Nothing denied, another tool, another error: untouched.
@@ -1059,7 +1212,8 @@ mod tests {
                 text(fence_tool_error(
                     tool,
                     ToolError::Failed(m.clone()),
-                    &refused
+                    &refused,
+                    true
                 )),
                 m
             );

@@ -160,7 +160,12 @@ impl AgentTool for GuardedTool {
         let refused =
             |p: &str| crate::cd_config_note::path_guard_refusal(&self.restrictions, p).is_some();
         let result = self.inner.execute(params, ctx).await.map_err(|e| {
-            crate::fence_result_filter::fence_tool_error(self.inner.name(), e, &refused)
+            crate::fence_result_filter::fence_tool_error(
+                self.inner.name(),
+                e,
+                &refused,
+                fence_active,
+            )
         })?;
         crate::partial_read_guard::record(seen, &result);
         Ok(crate::fence_result_filter::fence_tool_result(
@@ -273,7 +278,12 @@ impl AgentTool for ArcGuardedTool {
         let refused =
             |p: &str| crate::cd_config_note::path_guard_refusal(&self.restrictions, p).is_some();
         let result = self.inner.execute(params, ctx).await.map_err(|e| {
-            crate::fence_result_filter::fence_tool_error(self.inner.name(), e, &refused)
+            crate::fence_result_filter::fence_tool_error(
+                self.inner.name(),
+                e,
+                &refused,
+                fence_active,
+            )
         })?;
         crate::partial_read_guard::record(seen, &result);
         Ok(crate::fence_result_filter::fence_tool_result(
