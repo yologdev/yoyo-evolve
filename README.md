@@ -458,7 +458,7 @@ memory/
   active_learnings.md · active_social_learnings.md   Synthesized prompt context (regenerated daily)
 skills/                 14 skills — 7 core (immutable): self-assess, evolve, communicate, research,
                         skill-evolve, skill-creator, analyze-trajectory
-                        + social, family, release, blindspot, synthesis, x-research, yopedia
+                        + social, family, release, synthesis, x-research, yopedia, inspect-machine
 ```
 
 ## Test Quality
