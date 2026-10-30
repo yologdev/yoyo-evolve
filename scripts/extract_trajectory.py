@@ -78,8 +78,19 @@ STUCK_ON_THRESHOLD = 3         # ≥N attempts AND 0 successes → flag
 # (~50 bytes, ~92 with an uncosted-records clause), and measured on the live
 # audit-log it pushed config.rs's FATAL-proximity line and the doc-freshness
 # section off the end. +96 pays for that one line, same rule as Day 236.
+# SUPERSEDED on Day 244 (2026-10-30, #1104), recorded rather than erased: the
+# "+N pays for exactly the new section" rule above kept whatever had ALREADY
+# been lost. Measured on #1104, the full block was 5063 bytes / 77 lines
+# against 3424, so Doc freshness, Productivity, Counterfactual pairing and
+# Epistemic blind spots (with its planner hint) were cut whole every session.
+# The cap is now derived from what the planner needs, not from the last raise:
+# the measured full block (5063) plus ~20% headroom = 6144 bytes (~1.5K
+# tokens, beside a ~40 KB CLAUDE.md in the same prompt). The line cap stays 100
+# (77 fits). The enforcer of the next silent loss is the planner itself:
+# `cap_output` names every `## ` section it cut, in band, so a block that
+# outgrows this cap says so in the prompt that loses the sections.
 TOTAL_LINE_CAP = 100
-TOTAL_BYTE_CAP = 3424
+TOTAL_BYTE_CAP = 6144
 
 # ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -3298,7 +3309,8 @@ def classify_productivity(
 def render_productivity(prod: Productivity) -> str:
     """At most 2 lines, header included — the epistemic block renders LAST and
     absorbs all truncation pressure (Day 142, load-bearing: it has been cut
-    away before, and TOTAL_BYTE_CAP is 3072), so this must not crowd it.
+    away before, and TOTAL_BYTE_CAP bounds the whole block), so this must not
+    crowd it.
 
     Prints one short line even when healthy, following
     `render_usage_coverage`'s precedent rather than `render_module_sizes`':
@@ -4064,7 +4076,8 @@ EPISTEMIC_NEVER_FORECAST_RE = re.compile(r"never forecast")
 EPISTEMIC_NEVER_FORECAST_ROW_RE = re.compile(r"^\s*◦\s+(\S+)\s+\(risk\s")
 # How many never-forecast paths reach the planner. They are unranked (a list
 # where everything is equally unknown ranks nothing), so this is a byte budget,
-# not a top-N: the section renders last and TOTAL_BYTE_CAP is 3KB.
+# not a top-N: the section renders last, so it is the first thing TOTAL_BYTE_CAP
+# cuts.
 EPISTEMIC_NEVER_FORECAST_SHOWN = 2
 
 
@@ -4247,19 +4260,96 @@ def cap_output(
     stays under byte_cap (the marker itself was previously appended after
     the cap, allowing the file to exceed it by ~37 bytes). Pure so the
     self-tests can assert the epistemic steering section survives capping.
+
+    Day 244 (#1104): any cut NAMES the `## ` sections it dropped, whole or
+    partly, on a line after the marker: `(cut: Doc freshness, Productivity)`.
+    For 100+ sessions the cap silently removed four sections and nothing in
+    the prompt said so; the planner that loses them is now the reader that is
+    told. The marker line itself is byte-for-byte unchanged, and the list's
+    bytes are reserved inside the budget, so the output still fits byte_cap.
+    An output under both caps is returned byte-identical.
     """
-    output = truncate_lines(output, line_cap)
+    lines = output.splitlines()
+    line_cut = len(lines) > line_cap
+    out = truncate_lines(output, line_cap)
+    if not line_cut and len(out.encode("utf-8")) <= byte_cap:
+        return out
     truncation_marker = "\n... (truncated to fit token budget)\n"
-    marker_bytes = len(truncation_marker.encode("utf-8"))
-    if len(output.encode("utf-8")) > byte_cap:
-        budget = byte_cap - marker_bytes
-        b = output.encode("utf-8")[:budget]
+    if line_cut:
+        # Only the line cap fired: truncate_lines already wrote its own
+        # marker line, so add just the names — if they still fit.
+        cut = _cut_section_names(lines, line_cap)
+        candidate = out + ("\n" + _cut_list_line(cut) if cut else "")
+        if len(candidate.encode("utf-8")) <= byte_cap:
+            return candidate
+    enc = out.encode("utf-8")
+    reserve = len(truncation_marker.encode("utf-8"))
+    # Fixpoint: a bigger reserve cuts earlier, which can only add names, so
+    # the reserve grows monotonically and stops once the marker fits it.
+    while True:
+        budget = max(byte_cap - reserve, 0)
+        b = enc[:budget]
         # Back off to last newline within b for clean cut
         idx = b.rfind(b"\n")
         if idx > 0:
             b = b[:idx]
-        output = b.decode("utf-8", errors="ignore") + truncation_marker
-    return output
+        kept = b.decode("utf-8", errors="ignore")
+        complete = kept.count("\n") + 1 if idx > 0 else 0
+        kept_original = min(complete, line_cap) if line_cut else complete
+        cut = _cut_section_names(lines, kept_original)
+        marker = truncation_marker + (_cut_list_line(cut) + "\n" if cut else "")
+        marker_bytes = len(marker.encode("utf-8"))
+        if marker_bytes <= reserve:
+            return kept + marker
+        if marker_bytes > byte_cap:
+            # Pathological: the names alone exceed the cap. Fall back to the
+            # bare marker rather than break the byte bound.
+            b = enc[: max(byte_cap - len(truncation_marker.encode("utf-8")), 0)]
+            idx = b.rfind(b"\n")
+            if idx > 0:
+                b = b[:idx]
+            return b.decode("utf-8", errors="ignore") + truncation_marker
+        reserve = marker_bytes
+
+
+def _section_name(header_line: str) -> str:
+    """`## Doc freshness: not checked — …` → `Doc freshness`.
+
+    Section headers carry their verdict inline after `:`, ` (` or ` —`; the
+    cut list needs only the name, so a long header cannot crowd the budget.
+    """
+    title = header_line[3:].strip()
+    for sep in (":", " (", " —"):
+        i = title.find(sep)
+        if i > 0:
+            title = title[:i]
+    return title.strip()
+
+
+def _cut_section_names(lines: list[str], kept: int) -> list[str]:
+    """Names of the `## ` sections with any non-blank line at index >= kept.
+
+    A section whose header survived but whose body did not counts as cut
+    (partly), because the planner reads a decapitated section as complete.
+    """
+    names: list[str] = []
+    cur = None
+    cur_cut = False
+    for i, line in enumerate(lines):
+        if line.startswith("## "):
+            if cur is not None and cur_cut:
+                names.append(cur)
+            cur = _section_name(line)
+            cur_cut = False
+        if cur is not None and i >= kept and line.strip():
+            cur_cut = True
+    if cur is not None and cur_cut:
+        names.append(cur)
+    return names
+
+
+def _cut_list_line(names: list[str]) -> str:
+    return f"(cut: {', '.join(names)})"
 
 
 def main() -> int:
@@ -5301,6 +5391,84 @@ src/commands_config.rs
         "oversized input capped with marker",
         len(huge_capped.encode("utf-8")) <= TOTAL_BYTE_CAP
         and "(truncated to fit token budget)" in huge_capped,
+    )
+
+    # 23 (#1104). A cut NAMES the sections it dropped, whole or partly. Five
+    # sections, each 200 bytes of body; a cap that lands mid-third-section
+    # must list Third, Fourth and Fifth exactly — and not First or Second.
+    def five_sections() -> str:
+        names = ["First", "Second: verdict inline", "Third (with detail)",
+                 "Fourth — dashed", "Fifth"]
+        parts = []
+        for n in names:
+            body = "\n".join(["x" * 49] * 4)  # 4 lines × 50 bytes = 200
+            parts.append(f"## {n}\n{body}")
+        return "# YOUR TRAJECTORY\n\n" + "\n\n".join(parts) + "\n"
+
+    five = five_sections()
+    # Header (19 bytes) + two whole sections (~2 × 216) + part of the third.
+    five_cap = 650
+    five_capped = cap_output(five, byte_cap=five_cap)
+    assert_true(
+        "anti-vacuous: the five-section fixture really is over its cap and "
+        "the third section really starts inside it",
+        len(five.encode("utf-8")) > five_cap
+        and five.index("## Third") < five_cap - 100,
+    )
+    assert_true(
+        "cut lands mid-third: its header survived, its tail did not",
+        "## Third (with detail)" in five_capped
+        and "## Fourth" not in five_capped,
+    )
+    assert_eq(
+        "cut list names the third, fourth and fifth sections exactly",
+        five_capped.rstrip("\n").split("\n")[-1],
+        "(cut: Third, Fourth, Fifth)",
+    )
+    assert_true(
+        "existing marker line is byte-for-byte unchanged above the list",
+        "\n... (truncated to fit token budget)\n(cut: Third, Fourth, Fifth)\n"
+        in five_capped,
+    )
+    assert_true(
+        "output WITH the cut list still fits byte_cap",
+        len(five_capped.encode("utf-8")) <= five_cap,
+    )
+    assert_true(
+        "huge input's cut list names the padding section and still fits",
+        "(cut: Padding)" in huge_capped
+        and len(huge_capped.encode("utf-8")) <= TOTAL_BYTE_CAP,
+    )
+
+    # 24 (#1104 near-miss). A block under both caps comes back byte-identical
+    # — no marker, no `(cut:` line. This is every session whose block fits.
+    assert_eq(
+        "under-cap block is returned byte-identical",
+        cap_output(five, byte_cap=len(five.encode("utf-8"))),
+        five,
+    )
+
+    # 25 (#1104). The re-derived cap fits the realistic full block measured on
+    # #1104 (5063 bytes, 77 lines): a block of that size is not cut.
+    measured = "# YOUR TRAJECTORY\n" + "\n".join(
+        [f"## S{i}\n" + "y" * 60 for i in range(38)]
+    )
+    measured = measured + "z" * max(0, 5063 - len(measured.encode("utf-8")))
+    assert_true(
+        "a 5063-byte, ~77-line block fits TOTAL_BYTE_CAP / TOTAL_LINE_CAP uncut",
+        len(measured.encode("utf-8")) == 5063
+        and len(measured.splitlines()) <= TOTAL_LINE_CAP
+        and cap_output(measured) == measured,
+    )
+
+    # 26 (#1104). Line-cap-only cut also names what it dropped.
+    many = "\n".join([f"## L{i}\nrow" for i in range(60)])
+    many_capped = cap_output(many, line_cap=100, byte_cap=100_000)
+    assert_true(
+        "line-cap cut keeps its own marker and names the dropped sections",
+        "(20 more lines truncated)" in many_capped
+        and many_capped.endswith("(cut: L50, L51, L52, L53, L54, L55, L56, "
+                                 "L57, L58, L59)"),
     )
 
     # --- planner-fallback (unchosen session) self-tests ---
