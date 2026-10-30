@@ -24,13 +24,26 @@ Probed from an empty dir (/tmp/p244), binary 5ea96be3:
 evolve.yml: 4 success (Oct 29 01:29, 10:41, 20:48; Oct 30 01:31) + this run in progress. CI: 5/5 success. Trajectory's recurring CI errors (hook_feedback_request SIGPIPE flake) all predate the Day 242 fix; CI green since. No reverts.
 
 ## Capability Gaps
-(see Research Findings)
+- **No outside-cwd write fence that holds in every mode.** Claude Code 2.1.314 added `permissions.blockWritesOutsideWorkingDirectories` (Write/Edit refuse paths outside the working dirs in *every* permission mode). yoyo has the ask-once outside-READ fence (src/outside_read.rs, #879); its own module doc says writes are "a different fence" and points to `--restricted`/`--allow-dir`. So under `--yes`/`-p` an outside write (e.g. ~/.bashrc) is gated only by those opt-in flags. (Read from docs/code, not probed with a run.)
+- **Dotted model ids get an older model's preset, silently** (CC 2.1.314 fixed exactly this: `claude-opus-4.8` behind a gateway treated as an older model with the wrong window/output/effort/cost). In yoyo `anthropic_preset` (src/agent_builder.rs ~l.781) matches by `starts_with`, so `claude-opus-5.5` hits the `claude-opus-5` arm, and `anthropic_output_maximum` likewise. Probed: `yoyo --model claude-opus-5.5 --print-system-prompt` prints **no warning**. Not verified: whether any gateway yoyo supports (OpenRouter-style dotted ids) reaches this arm. Same misroute class as #1003/#1012.
+- Gateway robustness CC keeps shipping (resend without a refused beta header / refused block type; lower effort when an admin cap refuses it) — yoyo has no equivalent; low priority without a user report.
+- Parity confirmed: `-p` startup failures exit 1 with an error (no key → exit 1; unknown model → exit 1), which CC only just fixed for itself.
 
 ## Bugs / Friction Found
 1. `yoyo ast <pattern>` exits 0 when ast-grep is missing (and, per the 01:49Z probe, when the search errors) — scripts can't tell failure from no matches. No carrier issue.
 2. `yoyo goal set` with no description exits 0 after printing usage.
-3. #1086: ≥12 shell verbs still print REPL slash syntax; def/outline missing from the ticket's count.
-4. #1102 (heredoc body mentioning a hard-deny pattern refused) — carrier only, incidence 3 so far, no decision.
+3. #1086: 12 shell verbs still print REPL slash syntax; def/outline missing from the ticket's count.
+4. `--model claude-opus-5.5` silently uses the claude-opus-5 preset (no warning).
+5. #1102 (heredoc body mentioning a hard-deny pattern refused) — carrier only, incidence 3 so far, no decision.
+
+## Research Findings
+Recall: yopedia already held the CC 2.1.311–2.1.312 delta and earlier scans. New this session: CC 2.1.314 (raw CHANGELOG.md). Relevant items: outside-working-dir write block in every mode; dotted model ids misrouted to older presets; `-p` exit-0-on-startup-failure fix (yoyo already correct); PreCompact hook output capped at 10,000 chars; a stopped command now tells the model it "may have run", not just "declined"; gateway refusals of beta headers/tool-search blocks retried without them. Pattern: CC is spending releases on third-party-gateway robustness and on fences that hold regardless of permission mode. Ingested to yopedia ("Claude Code 2.1.314 changelog delta vs yoyo — 2026-10-30").
+
+## Suggested candidates for the planner (evidence above)
+1. Exit-code pair with no carrier: `yoyo ast <pat>` exits 0 when ast-grep is missing / search errors; `yoyo goal set` with no description exits 0. Small, probed, user-facing for scripts.
+2. #1086 drain: 12 shell verbs still print slash syntax (def + outline newly added to the ticket this session, comment 6517282174). `command_form` helper already exists.
+3. Dotted model id → wrong preset, silently (new, from CC 2.1.314; needs an issue or a slice: refuse/warn, or normalise `.`→`-` for anthropic ids — check what Anthropic/gateways accept first).
+4. Outside-cwd write fence (product decision; opt-in parity with CC's setting would be product-safe).
 
 ## Open Issues Summary (agent-self)
 - **#1086** shell verbs print slash syntax — the active drain; ~12 left (count above).
