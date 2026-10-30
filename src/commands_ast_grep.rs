@@ -41,17 +41,51 @@ pub fn cap_ast_output(out: &str) -> String {
     )
 }
 
-/// Run ast-grep structural search.
-/// Returns Ok(output) or Err(error message).
-pub fn run_ast_grep_search(
-    pattern: &str,
-    lang: Option<&str>,
-    path: Option<&str>,
-) -> Result<String, String> {
+/// What one `sg run` produced, before it is rendered: the REPL prints it, the
+/// shell door also turns it into an exit status ([`ast_outcome_status`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AstOutcome {
+    /// `sg` is not on PATH (or is not ast-grep: shadow-utils' `sg` fails
+    /// `--version`), so nothing was searched.
+    Missing,
+    /// The search ran and printed matches (already capped).
+    Matches(String),
+    /// The search ran and matched nothing.
+    NoMatches,
+    /// `sg` could not run, or reported an error on stderr.
+    Error(String),
+}
+
+/// Classify a finished `sg run`. Same rules `run_ast_grep_search` has always
+/// used: output means matches (whatever the status), a failure with empty
+/// stderr and empty stdout means no matches, a failure with stderr is an error.
+pub fn classify_sg_output(success: bool, stdout: &str, stderr: &str) -> AstOutcome {
+    if !stdout.trim().is_empty() && (success || stderr.trim().is_empty()) {
+        return AstOutcome::Matches(cap_ast_output(stdout));
+    }
+    if success || stderr.trim().is_empty() {
+        return AstOutcome::NoMatches;
+    }
+    AstOutcome::Error(format!("ast-grep error: {}", stderr.trim()))
+}
+
+/// Shell exit status for an [`AstOutcome`], copying `yoyo grep`'s convention
+/// (`commands_search.rs`): matches 0; no matches `GREP_NO_MATCH_EXIT` (1, as
+/// grep, git grep and rg); a missing tool or a failed search `GREP_ERROR_EXIT`
+/// (2, grep's own error status), so `yoyo ast <pat> && …` can no longer read
+/// "ast-grep is not installed" as a search that ran.
+pub fn ast_outcome_status(outcome: &AstOutcome) -> i32 {
+    match outcome {
+        AstOutcome::Matches(_) => 0,
+        AstOutcome::NoMatches => crate::commands_search::GREP_NO_MATCH_EXIT,
+        AstOutcome::Missing | AstOutcome::Error(_) => crate::commands_search::GREP_ERROR_EXIT,
+    }
+}
+
+/// Run ast-grep structural search, keeping every outcome distinct.
+pub fn run_ast_grep_outcome(pattern: &str, lang: Option<&str>, path: Option<&str>) -> AstOutcome {
     if !is_ast_grep_available() {
-        return Err(
-            "ast-grep (sg) is not installed. Install from: https://ast-grep.github.io/".into(),
-        );
+        return AstOutcome::Missing;
     }
     let mut cmd = std::process::Command::new("sg");
     cmd.arg("run").arg("--pattern").arg(pattern);
@@ -62,28 +96,12 @@ pub fn run_ast_grep_search(
         cmd.arg(p);
     }
     match cmd.output() {
-        Ok(out) if out.status.success() => {
-            let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-            if stdout.trim().is_empty() {
-                Ok("No matches found.".into())
-            } else {
-                Ok(cap_ast_output(&stdout))
-            }
-        }
-        Ok(out) => {
-            let stderr = String::from_utf8_lossy(&out.stderr).to_string();
-            if stderr.trim().is_empty() {
-                let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-                if stdout.trim().is_empty() {
-                    Ok("No matches found.".into())
-                } else {
-                    Ok(cap_ast_output(&stdout))
-                }
-            } else {
-                Err(format!("ast-grep error: {}", stderr.trim()))
-            }
-        }
-        Err(e) => Err(format!("Failed to run sg: {e}")),
+        Ok(out) => classify_sg_output(
+            out.status.success(),
+            &String::from_utf8_lossy(&out.stdout),
+            &String::from_utf8_lossy(&out.stderr),
+        ),
+        Err(e) => AstOutcome::Error(format!("Failed to run sg: {e}")),
     }
 }
 
@@ -191,29 +209,43 @@ pub fn parse_ast_grep_args(
 
 /// Handle the `/ast` REPL command.
 pub fn handle_ast_grep(input: &str) {
+    let _ = handle_ast_grep_status(input);
+}
+
+/// `/ast` core returning the shell exit status (the REPL door drops it): 2 for
+/// a usage error (#982), then [`ast_outcome_status`] for the search. The
+/// printed text is the same on both doors.
+pub fn handle_ast_grep_status(input: &str) -> i32 {
     match parse_ast_grep_args(input) {
         Err(msg) => {
             println!("{YELLOW}  {msg}{RESET}\n");
+            2
         }
         Ok((pattern, lang, path)) => {
             if !is_ast_grep_available() {
                 println!("{YELLOW}  ast-grep (sg) is not installed.{RESET}");
                 println!("{DIM}  Install from: https://ast-grep.github.io/{RESET}");
                 println!("{DIM}  Example: npm i -g @ast-grep/cli{RESET}\n");
-                return;
+                return ast_outcome_status(&AstOutcome::Missing);
             }
             println!("{DIM}  Searching for pattern: {pattern}{RESET}");
-            match run_ast_grep_search(&pattern, lang.as_deref(), path.as_deref()) {
-                Ok(output) => {
-                    println!("{output}");
-                }
-                Err(e) => {
-                    println!("{YELLOW}  {e}{RESET}\n");
-                }
+            let outcome = run_ast_grep_outcome(&pattern, lang.as_deref(), path.as_deref());
+            match &outcome {
+                AstOutcome::Matches(output) => println!("{output}"),
+                AstOutcome::NoMatches => println!("No matches found."),
+                AstOutcome::Missing => println!(
+                    "{YELLOW}  ast-grep (sg) is not installed. Install from: https://ast-grep.github.io/{RESET}\n"
+                ),
+                AstOutcome::Error(e) => println!("{YELLOW}  {e}{RESET}\n"),
             }
+            ast_outcome_status(&outcome)
         }
     }
 }
+
+#[cfg(test)]
+#[path = "commands_ast_grep_tests.rs"]
+mod commands_ast_grep_tests;
 
 #[cfg(test)]
 mod tests {
@@ -284,9 +316,8 @@ mod tests {
     fn test_ast_grep_search_no_sg() {
         // When sg is not installed, should return a helpful error
         if !is_ast_grep_available() {
-            let result = run_ast_grep_search("$X.unwrap()", None, None);
-            assert!(result.is_err());
-            assert!(result.unwrap_err().contains("not installed"));
+            let result = run_ast_grep_outcome("$X.unwrap()", None, None);
+            assert_eq!(result, AstOutcome::Missing);
         }
     }
 

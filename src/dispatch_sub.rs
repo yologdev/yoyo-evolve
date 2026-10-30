@@ -293,8 +293,11 @@ fn goal_shell_status(args: &[String]) -> i32 {
     }
     // #982: an unknown verb printed its usage and exited 0. Same predicate
     // handle_goal routed on, so the text and the code cannot disagree.
+    // `goal set` with no description printed its usage and exited 0 too.
     let arg = input.strip_prefix("/goal").unwrap_or("");
-    2 * i32::from(crate::commands_goal::goal_subcommand_is_unknown(arg))
+    let usage = crate::commands_goal::goal_subcommand_is_unknown(arg)
+        || crate::commands_goal::goal_set_lacks_description(arg);
+    2 * i32::from(usage)
 }
 
 /// `yoyo todo <verb>` exit code after the handler ran (#982): 2 when the verb
@@ -303,14 +306,6 @@ fn goal_shell_status(args: &[String]) -> i32 {
 fn todo_shell_status(verb: &str) -> i32 {
     let unknown = !verb.is_empty() && !crate::commands_todo::TODO_VERBS.contains(&verb);
     2 * i32::from(unknown)
-}
-
-/// `yoyo ast` exit code for a usage error (#982): 2 when the same parser
-/// `handle_ast_grep` uses rejected the input (bare `yoyo ast`, a flag with no
-/// value, a bare positional path), so the printed usage no longer reads as
-/// success. 0 otherwise, including "sg not installed", which is not a usage error.
-fn ast_shell_status(input: &str) -> i32 {
-    2 * i32::from(crate::commands_ast_grep::parse_ast_grep_args(input).is_err())
 }
 
 /// `yoyo extended` from the shell: always a refusal, since extended mode needs
@@ -603,8 +598,7 @@ pub(crate) fn try_dispatch_subcommand_in(
                 // correction the REPL path earned — #767's bare-path refusal,
                 // `cap_ast_output`'s 200-line bound — applies here too.
                 let input = join_args_as_command(args);
-                crate::commands_ast_grep::handle_ast_grep(&input);
-                exit_if_nonzero(ast_shell_status(&input));
+                exit_if_nonzero(crate::commands_ast_grep::handle_ast_grep_status(&input));
                 return Some(None);
             }
             "def" => {
@@ -1922,9 +1916,10 @@ mod tests {
             // Day 231 (#982): the Day 169 shape `ast $X.unwrap() src/` is now the
             // #767 bare-path usage error, which exits 2 inside the arm and would
             // kill this test binary; its code is pinned by
-            // `unknown_verbs_exit_with_the_usage_code`. Its `--in` spelling routes.
-            &["yoyo", "ast", "$X.unwrap()", "--in", "src/"],
-            &["yoyo", "ast", "unwrap()", "--in", "src/commands_goal.rs"],
+            // `unknown_verbs_exit_with_the_usage_code`. Day 244: the two `--in`
+            // ast shapes now exit 2 (sg missing) or 1 (no match) inside the arm
+            // too, so their routing is pinned against the real binary instead:
+            // tests/integration.rs `ast_exit_status_*` runs both argv shapes.
             &["yoyo", "def", "handle_goal"],
         ];
         for case in cases {
@@ -2250,15 +2245,19 @@ mod tests {
             assert_eq!(todo_shell_status(verb), 0, "todo {verb} is a real verb");
         }
 
-        assert_eq!(ast_shell_status("/ast"), 2);
-        assert_eq!(ast_shell_status("/ast --lang"), 2);
+        // The usage rows return before sg is looked for, so they are hermetic.
+        let ast_status = crate::commands_ast_grep::handle_ast_grep_status;
+        assert_eq!(ast_status("/ast"), 2);
+        assert_eq!(ast_status("/ast --lang"), 2);
         // The #767 bare positional path (needs `src/` to exist; tests run at the
         // crate root) is a usage error too.
-        assert_eq!(ast_shell_status("/ast $X.unwrap() src/"), 2);
+        assert_eq!(ast_status("/ast $X.unwrap() src/"), 2);
         // Near-miss: a well-formed query is not a usage error, whether or not
-        // sg is installed to run it.
-        assert_eq!(ast_shell_status("/ast $X.unwrap() --in src/"), 0);
-        assert_eq!(ast_shell_status("/ast $X.unwrap()"), 0);
+        // sg is installed to run it (its run status is pinned in
+        // commands_ast_grep_tests.rs, where sg's presence is controlled).
+        let parses = crate::commands_ast_grep::parse_ast_grep_args;
+        assert!(parses("/ast $X.unwrap() --in src/").is_ok());
+        assert!(parses("/ast $X.unwrap()").is_ok());
     }
 
     #[test]

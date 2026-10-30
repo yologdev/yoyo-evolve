@@ -4496,7 +4496,8 @@ fn shell_usage_names_the_shell_form_not_the_slash_form() {
         (&["todo", "board", "zz1"], "todo", 0),
         (&["goal"], "goal", 0),
         (&["goal", "zz1", "zz2", "zz3"], "goal", 2),
-        (&["goal", "set"], "goal", 0),
+        // Day 244: no description is a usage error now (was 0).
+        (&["goal", "set"], "goal", 2),
         (&["goal", "check"], "goal", 2),
     ];
     for (argv, verb, code) in rows {
@@ -4521,4 +4522,133 @@ fn shell_usage_names_the_shell_form_not_the_slash_form() {
         });
         assert!(!leaked, "{argv:?} leaks {slash}: {text}");
     }
+}
+
+/// Write a stand-in `sg` into `dir`: `--version` succeeds (so yoyo treats it
+/// as ast-grep), and `run` executes `body`. Absolute `#!/bin/sh`, so it works
+/// with PATH pointing only at `dir`.
+#[cfg(unix)]
+fn write_stub_sg(dir: &std::path::Path, body: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    let path = dir.join("sg");
+    let script = format!(
+        "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 'ast-grep stub'; exit 0; fi\n{body}\n"
+    );
+    std::fs::write(&path, script).expect("write stub sg");
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+}
+
+/// Run `yoyo ast zz1` in an empty dir with PATH = only `bin` (scrubbed via
+/// `yoyo_cmd`), so whether ast-grep "exists" is up to the test, not the host:
+/// a Linux runner's /usr/bin/sg is shadow-utils and must not leak in.
+#[cfg(unix)]
+fn yoyo_ast_with_path(bin: &std::path::Path) -> (Option<i32>, String, String) {
+    yoyo_ast_args_with_path(bin, &["ast", "zz1"])
+}
+
+#[cfg(unix)]
+fn yoyo_ast_args_with_path(bin: &std::path::Path, args: &[&str]) -> (Option<i32>, String, String) {
+    let work = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir_all(work.path().join("src")).expect("mkdir src");
+    let out = yoyo_cmd()
+        .args(args)
+        .current_dir(work.path())
+        .env("PATH", bin)
+        .env("NO_COLOR", "1")
+        .stdin(Stdio::null())
+        .output()
+        .expect("run yoyo");
+    (
+        out.status.code(),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+#[cfg(unix)]
+#[test]
+fn ast_exit_status_distinguishes_missing_failed_empty_and_found() {
+    // Day 244: `yoyo ast` exited 0 when ast-grep was missing and when the
+    // search errored, so `yoyo ast <pat> && …` read both as a search that ran.
+    // Convention copied from `yoyo grep`: 2 could-not-search, 1 no match.
+    let bin = tempfile::tempdir().expect("tempdir");
+
+    // Missing: PATH holds nothing at all.
+    let (code, stdout, stderr) = yoyo_ast_with_path(bin.path());
+    assert_eq!(code, Some(2), "missing: stdout={stdout} stderr={stderr}");
+    assert!(
+        stdout.contains("ast-grep (sg) is not installed."),
+        "{stdout}"
+    );
+
+    // Search error: sg exits nonzero with stderr.
+    write_stub_sg(bin.path(), "echo 'bad pattern' >&2; exit 2");
+    let (code, stdout, stderr) = yoyo_ast_with_path(bin.path());
+    assert_eq!(code, Some(2), "error: stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("ast-grep error: bad pattern"), "{stdout}");
+
+    // No matches: sg prints nothing and exits 1 (empty stderr).
+    write_stub_sg(bin.path(), "exit 1");
+    let (code, stdout, stderr) = yoyo_ast_with_path(bin.path());
+    assert_eq!(code, Some(1), "no match: stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("No matches found."), "{stdout}");
+
+    // Near-miss: matches still exit 0.
+    write_stub_sg(bin.path(), "echo 'a.rs:1:zz1'; exit 0");
+    let (code, stdout, stderr) = yoyo_ast_with_path(bin.path());
+    assert_eq!(code, Some(0), "match: stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("a.rs:1:zz1"), "{stdout}");
+}
+
+#[cfg(unix)]
+#[test]
+fn ast_exit_status_day_169_shapes_route_to_the_handler() {
+    // Moved from dispatch_sub's in-process routing table, whose test binary
+    // the arm's nonzero exit would now kill: these argv shapes reach the ast
+    // handler (its own text, its own status) rather than falling through to
+    // the paid single-prompt path.
+    let bin = tempfile::tempdir().expect("tempdir");
+    let shapes: [&[&str]; 2] = [
+        &["ast", "$X.unwrap()", "--in", "src/"],
+        &["ast", "unwrap()", "--in", "src/commands_goal.rs"],
+    ];
+    for args in shapes {
+        let (code, stdout, stderr) = yoyo_ast_args_with_path(bin.path(), args);
+        assert_eq!(code, Some(2), "{args:?}: stdout={stdout} stderr={stderr}");
+        assert!(
+            stdout.contains("ast-grep (sg) is not installed."),
+            "{stdout}"
+        );
+    }
+    write_stub_sg(bin.path(), "echo \"hit: $*\"; exit 0");
+    for args in shapes {
+        let (code, stdout, stderr) = yoyo_ast_args_with_path(bin.path(), args);
+        assert_eq!(code, Some(0), "{args:?}: stdout={stdout} stderr={stderr}");
+        assert!(stdout.contains("hit: run --pattern"), "{stdout}");
+    }
+}
+
+#[test]
+fn goal_set_without_a_description_exits_two_and_saves_nothing() {
+    // Day 244: `yoyo goal set` with nothing to set printed its usage and
+    // exited 0. Bare, "" and whitespace-only each get a row: argv joining
+    // merges them, so they must all land on the usage branch.
+    let dir = tempfile::tempdir().expect("tempdir");
+    for args in [
+        &["goal", "set"][..],
+        &["goal", "set", ""][..],
+        &["goal", "set", "   "][..],
+    ] {
+        let (code, stdout, stderr) = yoyo_plain_in(dir.path(), args);
+        assert_eq!(code, Some(2), "{args:?}: stdout={stdout} stderr={stderr}");
+        assert!(
+            stdout.contains("Usage: yoyo goal set <description>"),
+            "{stdout}"
+        );
+        assert!(!dir.path().join(".yoyo").exists(), "{args:?} wrote a goal");
+    }
+    // Near-miss: a real description still succeeds and is saved.
+    let (code, stdout, stderr) = yoyo_plain_in(dir.path(), &["goal", "set", "real text"]);
+    assert_eq!(code, Some(0), "stdout={stdout} stderr={stderr}");
+    assert!(dir.path().join(".yoyo/goal.md").exists());
 }

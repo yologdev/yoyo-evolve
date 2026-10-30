@@ -742,6 +742,17 @@ pub(crate) fn goal_subcommand_is_unknown(arg: &str) -> bool {
         || arg == "check")
 }
 
+/// True when `/goal <arg>` reaches the `set` arm with nothing to set, so
+/// [`handle_goal_on`] printed the `set <description>` usage and saved nothing.
+/// Same parse as that arm (trim, strip `set`, trim), so bare `set`, `set ""`
+/// and `set "   "` are all true and `set x` is false. The shell door exits 2
+/// on it: nobody types a bare `goal set` to mean "succeed".
+pub(crate) fn goal_set_lacks_description(arg: &str) -> bool {
+    arg.trim()
+        .strip_prefix("set")
+        .is_some_and(|d| d.trim().is_empty())
+}
+
 /// The unknown-subcommand usage, naming the command as `surface` types it
 /// (#1086). `check` only runs inside a session, so the shell row says so.
 fn goal_unknown_subcommand_text(arg: &str, surface: DoctorSurface) -> String {
@@ -837,6 +848,19 @@ mod tests {
                 goal_subcommand_is_unknown(unknown),
                 "{unknown:?} is not a verb"
             );
+        }
+    }
+
+    #[test]
+    fn goal_set_lacks_description_matches_the_set_arm() {
+        // Bare, "" and whitespace-only all reach the same usage branch once
+        // argv is joined and trimmed; each gets its own row (Day 235).
+        for empty in ["set", "set ", "set    ", "  set  ", "set \t"] {
+            assert!(goal_set_lacks_description(empty), "{empty:?}");
+        }
+        // Near-misses: a real description, and verbs that are not `set`.
+        for not in ["set x", "set  ship it ", "", "show", "clear", "verify"] {
+            assert!(!goal_set_lacks_description(not), "{not:?}");
         }
     }
     use serial_test::serial;
