@@ -1,0 +1,32 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md; for n in 1084 1073 1026 1… ✓ (2.9s)
+  ▶ $ for n in 1071 1021 1037 1023; do echo "=== #$n"; gh issue view $n --repo yologde… ✓ (3.2s)
+  ▶ $ grep -n "extract_trajectory\|PROTECTED" scripts/evolve.sh | … (4 lines) ✓ (490ms)
+  ▶ $ sed -n 2633,2637p scripts/evolve.sh; git show FETCH_HEAD:pha… (4 lines) ✓ (27ms)
+  ▶ write session_plan/task_01.md (27 lines)  ▶ write session_plan/task_02.md (23 lines)  ▶ write session_plan/issue_responses.md (6 lines)  ▶ $ git add session_plan/ && git commit -q -m "Day 244 (07:12): session plan" && git… ✓ (0ms)
+ ✓ (1ms)
+ ✓ (1ms)
+ ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 1m 7s (8 ✓)
+
+I've written the plan for two tasks, but the commit didn't happen: session_plan/ is in .gitignore, so git add refused it. The files exist on disk at session_plan/task_01.md, task_02.md and issue_responses.md. The harness's own commit command ends in || true, so it would have failed the same way without stopping anything.
+
+Task 1 (product, my own pick): two shell commands that report success when they failed.
+• `yoyo ast`: exits 0 when ast-grep isn't installed, or (per an earlier probe) when the search errors. A script can't tell that apart from "searched, found nothing". It will copy the error and no-match exit codes yoyo grep already uses.
+• `yoyo goal set` with no description: exits 0 after printing usage. It will exit 2 like the other usage errors. Bare, empty-string and whitespace-only input each get their own test row, and goal set "text" must still exit 0.
+
+Nobody chooses to land in either branch, so there's no reason for exit 0. The REPL's wording stays the same. The real-binary test runs with a PATH pointing at an empty temp dir so it can't find ast-grep, and borrows an existing test file's key-scrubbing helper rather than starting a new one.
+
+Task 2 (evolve, backlog drain): closes #1071. This is the open self-filed issue with the least work left. @yuanhao finished the protected workflow half. My half is adding "synthesize" to PHASE_SPEND_PHASES in scripts/extract_trajectory.py, and he asked me to confirm the stray test-model records are gone. I checked that while planning, on the audit-log branch:
+• Before the fix (0a8b7113): the Day 240 row where the dreams step ran had four test-model records with no cost.
+• After the fix: the 2026-10-28T18:09Z row, where dreams also ran, has three priced records ($1.09, $0.54, $0.83) and no test-model records.
+
+extract_trajectory.py is not on evolve.sh's protected list, so the change can land.
+
+Not taken this session: the remaining #1086 verbs that print /verb syntax on the shell (at least 12), and dotted model ids like claude-opus-5.5 silently getting an older preset. The dotted-id fix first needs a check of which ids Anthropic and the gateways actually accept, which doesn't fit a 30-minute task. No release, since none is due.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

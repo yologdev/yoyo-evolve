@@ -1,0 +1,197 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --short | head;… ✓ (12ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 2490,2700p scripts/extract_trajectory.… ✓ (5ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 2515,2545p scripts/extract_trajectory.… ✓ (612ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 7.5s (3 ✓)
+
+Shapes match (ts, usage_records list; `steps` is ignored by the reader). Confirm the test-model claim:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; git show FETCH_HEAD:phase… (4 lines) ✓ (27ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read scripts/extract_trajectory.py:2518..2544  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -n 'phase_spend\|PHASE_SPEND\|"social", … ✓ (3ms)
+ ✓ (10ms)
+  ▶ read scripts/extract_trajectory.py:8436..8524 ✓ (2ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 16.5s (4 ✓)
+
+Write the tests first (synthesize fixture from the real 18:09:21Z row + a partly-skipped row), then the change.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ edit scripts/extract_trajectory.py (2 → 35 lines)
+  +         # #1071: synthesize is a third sink. Its rows carry a `steps` dict
+  +         # (learnings/social/dreams: ran|skipped) instead of day/exit, which the
+  +         # reader ignores; the fixture is the real 2026-10-28T18:09:21Z row (the
+  +         # first dreams-ran row after 0a8b7113, three priced records, no
+  +         # test-model) trimmed to the fields the reader looks at.
+  +         syn_ran = (
+  +             '{"ts":"2026-10-28T18:09:21Z","phase":"synthesize","steps":{"learnings":"ran",'
+  +             '"social":"ran","dreams":"ran"},"usage_records":['
+  +             '{"cost_usd":1.0945886,"model":"claude-opus-5-5","type":"usage",'
+  +             '"sub_agents":{"cost_usd":2.4414569999999998,"runs":5}},'
+  +             '{"cost_usd":0.5382428,"model":"claude-opus-5-5","type":"usage"},'
+  +             '{"cost_usd":0.8314124,"model":"claude-opus-5-5","type":"usage"}]}'
+  +         )
+  +         syn_skip = (
+  +             '{"ts":"2026-10-29T18:09:46Z","phase":"synthesize","steps":{"learnings":"ran",'
+  +             '"social":"skipped","dreams":"skipped"},"usage_records":['
+  +             '{"cost_usd":0.9900038000000001,"model":"claude-opus-5-5","type":"usage"}]}'
+  +         )
+  +         (root / "phases" / "synthesize").mkdir(parents=True)
+  +         (root / "phases" / "synthesize" / "spend.jsonl").write_text(syn_ran + "\n" + syn_skip + "\n")
+  ... (15 more lines)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -n 'self.test\|argv' scripts/extract_tra… ✓ (10ms)
+  +         # #1071: synthesize is a third sink. Its rows carry a `steps` dict
+  +         # (learnings/social/dreams: ran|skipped) instead of day/exit, which the
+  +         # reader ignores; the fixture is the real 2026-10-28T18:09:21Z row (the
+  +         # first dreams-ran row after 0a8b7113, three priced records, no
+  +         # test-model) trimmed to the fields the reader looks at.
+  +         syn_ran = (
+  +             '{"ts":"2026-10-28T18:09:21Z","phase":"synthesize","steps":{"learnings":"ran",'
+  +             '"social":"ran","dreams":"ran"},"usage_records":['
+  ... (13 more lines)
+ ✓ (1.2s)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -n 'run_self_tests()' scripts/extract_tr… ✓ (6ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; python3 scripts/extract_trajectory.py --test … ✓ (187ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; python3 scripts/extract_trajectory.py --test … ✓ (169ms)
+  5 tools completed in 12.7s (5 ✓)
+
+Red for the right reason. Now the change:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; python3 - <<'EOF' (24 lines) ✓ (135ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Green. Now a real run for the block, and check for other text naming only social/dream:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; rm -rf /tmp/al && git worktree add -q --detac… ✓ (2.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; rm -rf /tmp/al; git workt… (5 lines) ✓ (2.6s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 12.4s (2 ✓)
+
+The 4 uncosted records are exactly the pre-0a8b7113 test-model records from 2026-10-26T06:44:57Z (still inside the 7-day window). Why was the full run's stdout empty?
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; head -5 /tmp/traj.err; sed -n 8595,8625p scri… ✓ (5ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; tail -25 scripts/extract_trajectory.py; grep … ✓ (5ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; rm -rf /tmp/al; git worktree add -q --detach … ✓ (2.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 10.7s (3 ✓)
+
+Output is 3202 bytes against the 3328 cap. Check nothing was cut by the cap:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -n 'MAX_BYTES\s*=\|MAX_LINES\s*=\|trunca… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Something is truncated. Compare against HEAD to see whether my line causes it:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; git show HEAD:scripts/extract_trajectory.py >… ✓ (3.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+My new line pushes the config.rs FATAL-proximity warning and the Doc-freshness header out of the cap. Day 236 handled the same cost for this section by raising the cap; let me read that rationale.
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ read scripts/extract_trajectory.py:60..82  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -rn 'TOTAL_BYTE_CAP\|3328' scripts tests… ✓ (2ms)
+ ✓ (18ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.0s (2 ✓)
+
+Same mechanism as Day 236, so same remedy: raise the cap by what the new line costs (~92 bytes worst case today with the uncosted clause), +96.
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; rm -rf scripts/__pycache_… (16 lines) ✓ (2.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Tail now matches HEAD's cut point exactly. Docs: check ARCHITECTURE.md's phase-spend record for claims this changes.
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -n -o '.\{120\}3328.\{120\}\|.\{150\}PHA… ✓ (108ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 1232p ARCHITECTURE.md | fold -w 400 | … ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 11.8s (2 ✓)
+
+I'll update the cap history at line 1200 and append a short Day 244 bullet after the Day 236 one.
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; python3 - <<'EOF' (13 lines) ✓ (70ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Red-before/green-after already observed for the tuple. Now the harness and cargo gates:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; bash tests/harness_logic.sh 2>&1 | tail -3; p… ✓ (7.3s)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; cargo fmt -- --check && cargo clippy --all-ta… ✓ (4m 36s)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; cargo test 2>&1 | grep -E '^test result' | aw… ✓ (3m 46s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; git add -A && git commit … (33 lines) ✓ (54ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 8m 51s (4 ✓)
+
+I've committed the fix for #1071 as 17b64add, and the planner's spend report now has a synthesize line. All checks pass: the script's self-tests, harness_logic.sh (321/0), cargo test (7059/0), clippy and fmt.
+
+The change (scripts/extract_trajectory.py)
+• "synthesize" is now in the list of phases the report reads.
+• Synthesize rows record which steps ran or were skipped, where social and dream rows record day and exit code. The reader only uses the timestamp and the usage records, so it needed no special case, and the social and dream lines come out exactly as before.
+• New self-test: a copy of the real 2026-10-28T18:09:21Z row plus a 10-29 row where most steps were skipped. Before the change it failed by name, and it passes now. The fixture keeps the row's sub-agent cost to show that number is not added in (that's #1073).
+
+The confirmation @yuanhao asked for, read from origin/audit-log:
+• 10-26 06:44Z, dreams ran, before 0a8b7113: 4 test-model records with no cost.
+• 10-28 18:09Z, the first dreams-ran row after the fix: 3 priced claude-opus-5-5 records and no test-model records. The fix holds.
+
+Live report:
+```
+- social: 26 run(s), $33.43 summed cost_usd.
+- dream: 1 run(s), $2.27 summed cost_usd.
+- synthesize: 5 run(s), $7.27 summed cost_usd; 4 usage record(s) without cost_usd.
+```
+The 4 records without a cost are the old 10-26 test-model ones, still inside the 7-day window. They drop out on 2026-11-02.
+
+One change the plan didn't name: I raised the report's size cap, TOTAL_BYTE_CAP, from 3328 to 3424 bytes. On the real data, the extra line pushed two things off the end of the report: the warning that config.rs is 11 lines from failing the module size check, and the doc-freshness section. I raised the cap by the size of the new line, the same fix Day 236 used when this section was added. Now the report gets cut off at the same point it did before my change. This is recorded in the code comment and in ARCHITECTURE.md, which also has a new Day 244 entry.
+
+The remaining #1071 mentions in src/, tests/ and scripts/synthesize_state.sh describe fixes already made for that ticket, so they stay accurate once it closes. I didn't change them.
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; git status --short | head; git log -2 --forma… ✓ (14ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Nothing is left to do. The task was a single item, and it's committed as 17b64add:
+
+• Working tree: clean. The temporary audit-log worktree I used for the real runs is gone, and so is the stray __pycache__ directory that importing the script created.
+• Checks: all passed before the commit: the script's self-tests, harness_logic.sh (321/0), cargo test (7059/0), clippy and fmt.
+• References to #1071: I grepped src, docs, skills and scripts one last time. The commit's "Fixes #1071" will close the ticket when it's pushed, and every remaining mention will still be accurate after that:
+  • two dated history comments I added in scripts/extract_trajectory.py
+  • a test-guard message in src/prompt_budget.rs, which names the bug the guard prevents
+
+  None of them treats #1071 as an open tracker, so I didn't need to retarget any.
+• Push: I haven't pushed. The task said to commit, so pushing is left to the loop.
+• Leftovers: I'm not filing a follow-up issue, because nothing from #1071 is unfinished. One thing will change on its own: the synthesize line currently says 4 usage record(s) without cost_usd. Those are the four 10-26 test-model records from before the fix, and they leave the 7-day window on 2026-11-02. After that the line should show no uncosted records.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
