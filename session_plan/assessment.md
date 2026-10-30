@@ -27,14 +27,19 @@ Probed binary e525f828 from an empty dir `/tmp/probe244` (no git, no config). Re
 `gh run list --workflow evolve.yml --limit 5`: 4 × success (2026-10-28 20:44, 10-29 01:29, 10-29 10:41, 10-29 20:48) + the current run (in progress). No failed runs to diagnose. Trajectory: 0 task reverts, 0 whole-session reverts in 14 days; no provider-error lines.
 
 ## Capability Gaps
-(filled in after research — see Research Findings)
+- **Write fence outside cwd in every mode:** Claude Code 2.1.314 added `permissions.blockWritesOutsideWorkingDirectories` (Write/Edit refuse outside working dirs in *every* permission mode). yoyo's outside fence (`src/outside_read.rs`) covers only read_file/search/list_files; its doc (lines 85-89) says writes "are a different fence" — i.e. `confirm_file_operation`, which `--yes` bypasses; only `--restricted`/`--allow-dir` hard-fence writes.
+- **Mid-turn steering** (Codex rust-v0.163: send a follow-up while the model is responding) and **/presets** (saved prompts in slots) — yoyo has neither.
+- **Startup-failure exit codes:** CC fixed `claude -p` exiting 0 with no output on startup failure. yoyo -p with a bad key / bad model exits 1 correctly (probed) — parity there.
+- Standing: no TUI (#215), no benchmark submission (#156), sub-agent spend absent from `/cost` (#1073), `/cd` into a trusted project loads nothing without restart (#1040), openai default still `gpt-6-sol` while Codex defaults to `gpt-6.1-sol` (the remaining slice of #1037; `providers.rs:243-245` says so; #1037's title "openai defaults to gpt-5" is stale).
 - Standing gaps known from prior assessments: no TUI (#215), no official benchmark submission (#156), sub-agent spend not in `/cost` (#1073), MCP reconnect after failure, `/cd` into trusted project doesn't load hooks/MCP/skills without restart (#1040).
 
 ## Bugs / Friction Found
 1. **#1086 residue (shell doors print slash syntax):** grep, map, index, blame, lint, risk, skill, help doctor — plus newly found **docs** and **ast** bare usage. Mechanical now that `command_form` + `DoctorSurface` is the established shape. grep alone is 10 lines (one usage block) — good single-verb slice.
 2. **`yoyo ast` exits 0 when sg is missing or the search errors.** Population that reaches it: anyone running `yoyo ast` without ast-grep installed (default for most users) — none chose it. Fix shape: 1 for "not installed"/search error, keep 2 for usage, 0 for a real (even empty) result. Needs `handle_ast_grep` to return a status instead of `()` (or a `_status` sibling like `handle_def_status`).
 3. **`yoyo goal set` (no description) exits 0** while printing usage. Same class; `goal_subcommand_is_unknown` covers unknown verbs only.
-4. #991 item 3: held on @yuanhao's A/B (my default A = drop `collected_text`). Do not act until he answers.
+4. **Unknown `--provider` (a typo) runs for ~80s against localhost:8080 and then blames the network.** `yoyo --provider anthropc -p hi` (probed): one `Unknown provider` warning (`cli.rs:1078`), then `treating unknown provider 'anthropc' as OpenAI-compatible (localhost:8080)` printed **5 times** (`agent_builder.rs:1104`, once per `create_model_config` call), 6 retry attempts on `Connection refused`, then `💡 Network error — Check your internet connection and that anthropc's API is reachable. You can retry with /retry.` and exit 1 after **80 s**. Problems: (a) no did-you-mean (`anthropc` → `anthropic` is one edit); (b) wrong diagnosis (it's a typo, not the internet); (c) `/retry` is REPL-only advice printed in `-p` mode (`prompt_retry.rs:699`, #1086's class in a hint); (d) the key sent to localhost:8080 comes from the fallback chain (`ANTHROPIC_API_KEY` → `API_KEY`) — a credential handed to whatever listens locally; (e) the warning hardcodes "(localhost:8080)" even when `--base-url` was given. Population: anyone who mistypes a provider, none chose this. Candidate fix: unknown provider **without** `--base-url` → refuse at startup, exit 2, with a nearest-known suggestion; with `--base-url` keep today's OpenAI-compatible path (that's a choice, `custom` is the documented spelling). Check `/provider` in the REPL (same `KNOWN_PROVIDERS` check per the comment at `agent_builder.rs:1101`) for the second door.
+5. Minor: `--model claude-opus-4.8` warns unknown but doesn't suggest the listed `claude-opus-4-8` (CC 2.1.314 fixed exactly this dot-spelling behind gateways).
+6. #991 item 3: held on @yuanhao's A/B (my default A = drop `collected_text`). Do not act until he answers.
 
 ## Open Issues Summary (agent-self)
 - **#1086** shell subcommands print slash syntax — 7 verbs + help topic left (+ docs, ast found today).
@@ -57,4 +62,7 @@ Probed binary e525f828 from an empty dir `/tmp/probe244` (no git, no config). Re
 - agent-input: **#1096** (challenge: X outreach — social-session scope, not an evolve task), **#991** (held, see above).
 
 ## Research Findings
-(pending)
+- **Recall:** yopedia already has CC delta notes through 2.1.312 (`agent-changelog-delta-analysis`, `agent-safety-guard-parity-and-stop-attribution`, `agent-tool-i-o-hazards`). This scan covered 2.1.313–2.1.314 and Codex Oct 2026; ingested as "Agent Changelog Delta — Claude Code 2.1.313-2.1.314 and Codex rust-v0.166 (2026-10-30)".
+- **Claude Code 2.1.314** (relevant items): write fence outside working dirs in every mode; `-p` startup failure now exit 1 (was 0 + no output); PreCompact hook output capped at 10,000 chars (huge hook output broke compaction — yoyo hook feedback cap worth checking); dot-spelled model ids behind gateways normalized; refused shell/MCP calls no longer displayed as if they ran; subagent tool results freed before turn end.
+- **Codex CLI rust-v0.160–0.166 (Oct 2026):** mid-turn steering, `/presets`, inline `/model`/`/permissions` args, searchable `/config` that flags which changes need a restart, Vertex AI provider, GPT-6.1 Sol default, `/mcp login`, managed git worktrees, memory v2 default.
+- Biggest practical gaps for yoyo users remain interactive UX (steering, TUI) rather than correctness; the correctness items above (provider typo, ast exit 0, #1086 residue) are cheap, product-kind, and each probed at HEAD e525f828.
