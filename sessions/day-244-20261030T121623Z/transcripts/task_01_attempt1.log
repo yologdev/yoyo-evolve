@@ -1,0 +1,253 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git log --oneli… ✓ (29ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 230,315p src/cli_config.rs;… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1125,1175p src/cli.rs; sed … ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 2660,2720p src/cli.rs; sed … ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "fn clamp_temperature" -A8… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat tests/unknown_provider_refusal… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 25,32p tests/unknown_provid… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "env_remove\|\.env(" tests… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 37.3s (8 ✓)
+
+Now the logic in src/cli_config.rs, placed after resolve_numeric_setting:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli_config.rs (2 → 53 lines)
+        (from_config, warnings)
+  + }
+  + 
+  + /// Refusal for one numeric flag whose explicit value doesn't parse as `T`
+  + /// (`--max-tokens abc`), or `None` when the flag is absent or parses.
+  + /// Reads the same occurrence `resolve_numeric_setting` reads (the first).
+  + fn numeric_flag_refusal<T: std::str::FromStr>(
+  +     args: &[String],
+  +     flag_name: &str,
+  +     expected: &str,
+  + ) -> Option<String> {
+  +     let i = args.iter().position(|a| a == flag_name)?;
+  +     let value = args.get(i + 1)?;
+  +     if value.parse::<T>().is_ok() {
+  +         return None;
+  +     }
+  +     Some(format!(
+  +         "{flag_name} value '{}' is not a number; expected {expected}. \
+  + Nothing was sent to the model.",
+  +         crate::cli::sanitize_for_display(value)
+  ... (33 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "^}" src/cli_config.rs | t… ✓ (23.9s)
+        (from_config, warnings)
+  + }
+  + 
+  + /// Refusal for one numeric flag whose explicit value doesn't parse as `T`
+  + /// (`--max-tokens abc`), or `None` when the flag is absent or parses.
+  + /// Reads the same occurrence `resolve_numeric_setting` reads (the first).
+  + fn numeric_flag_refusal<T: std::str::FromStr>(
+  +     args: &[String],
+  ... (13 more lines)
+ ✓ (23.9s)
+  2 tools completed in 26.8s (2 ✓)
+
+Now the call site in cli.rs (keep it to as few lines as possible), right after the flag-value check loop:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (2 → 6 lines)
+        // Warn about unknown flags
+        warn_unknown_flags(args, flags_needing_values);
+  +     if let Some(msg) = crate::cli_config::bad_numeric_flag_refusal(args) {
+  +         eprintln!("{RED}error:{RESET} {msg}");
+  +         std::process::exit(2); // before any agent or request (Day 244)
+  +     }
+ ✓ (4m 57s)
+        // Warn about unknown flags
+        warn_unknown_flags(args, flags_needing_values);
+  +     if let Some(msg) = crate::cli_config::bad_numeric_flag_refusal(args) {
+  +         eprintln!("{RED}error:{RESET} {msg}");
+  +         std::process::exit(2); // before any agent or request (Day 244)
+  +     }
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now unit tests in the existing cli_config test module:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli_config.rs (6 → 59 lines)
+        fn test_safe_mode_defaults_to_false() {
+            // SAFE_MODE static defaults to false — safe mode must be explicitly opted into
+            assert!(!is_safe_mode());
+  +     }
+  + 
+  +     /// Day 244: an explicit numeric flag whose value doesn't parse is refused
+  +     /// (the caller exits 2 before any request). Each row names flag and value.
+  +     #[test]
+  +     fn bad_numeric_flag_value_is_refused_naming_flag_and_value() {
+  +         let rows: &[(&str, &str)] = &[
+  +             ("--max-tokens", "abc"),
+  +             ("--max-tokens", "-5"),
+  +             ("--max-tokens", ""),
+  +             ("--temperature", "hot"),
+  +             ("--max-turns", "x"),
+  +             ("--context-window", "big"),
+  +         ];
+  +         for (flag, value) in rows {
+  +             let msg = bad_numeric_flag_refusal(&argv(&["-p", "hi", flag, value]))
+  +                 .unwrap_or_else(|| panic!("{flag} {value:?} must be refused"));
+  ... (38 more lines)
+ ✓ (4m 48s)
+        fn test_safe_mode_defaults_to_false() {
+            // SAFE_MODE static defaults to false — safe mode must be explicitly opted into
+            assert!(!is_safe_mode());
+  +     }
+  + 
+  +     /// Day 244: an explicit numeric flag whose value doesn't parse is refused
+  +     /// (the caller exits 2 before any request). Each row names flag and value.
+  +     #[test]
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "mod tests\|fn argv" src/c… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5m 4s (2 ✓)
+
+Good, one module. Now the binary test:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ write tests/bad_flag_value.rs (96 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo build 2>&1 | tail -3; cargo … ✓ (3m 22s)
+ ✓ (3m 22s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "TcpListener\|HTTP/1.1" te… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 25,110p tests/openai_respon… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (144 lines) ✓ (1m 0s)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 4m 53s (5 ✓)
+
+The BASE helper was already inside the replaced span; rerun without that removal.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (4 lines) ✓ (28ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat > /tmp/fix… (144 lines) ✓ (524ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 24.3s (2 ✓)
+
+Positive control, one atomic command (neuter → run → restore → run):
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/cli_con… (6 lines) ✓ (1m 36s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git diff --sta… (6 lines) ✓ (12.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 57s (2 ✓)
+
+Control fired by name and was restored (0 markers). Now update the now-stale comments about the flag warning path:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 236,260p src/cli_config.rs;… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; awk 'NR>=241 && NR<=258' src/cli_c… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read src/cli_config.rs:241..259 ✓ (0ms)
+  ▶ edit src/cli_config.rs (1 → 5 lines)
+  + /// Since Day 244 the flag door never reaches its warning from startup: an
+  + /// unparseable flag value is refused first (`bad_numeric_flag_refusal`, exit
+  + /// 2). The flag-warning branch below stays as the resolver's own fallback.
+  + ///
+    /// Both doors warn when their value cannot be parsed (#1028: the config door
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -i '5375s|// Invalid CLI value… ✓ (4m 50s)
+  + /// Since Day 244 the flag door never reaches its warning from startup: an
+  + /// unparseable flag value is refused first (`bad_numeric_flag_refusal`, exit
+  + /// 2). The flag-warning branch below stays as the resolver's own fallback.
+  + ///
+    /// Both doors warn when their value cannot be parsed (#1028: the config door
+ ✗ (4m 50s)
+    │ Command timed out after 120s. Output so far:
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 5m 2s (4 ✓, 1 ✗)
+
+cli.rs is now 7873 (+4). Paste the new count per the size gate:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -i 's|    ("src/cli.rs", 7774)… ✓ (489ms)
+
+Now docs:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "using default\|Invalid -… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n -- "--max-tokens\|--temper… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read docs/src/configuration/models.md:64..76 ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 140,169p docs/src/configura… ✓ (5ms)
+  ▶ edit docs/src/configuration/models.md (3 → 12 lines)
+    or pass `--max-tokens` / `--context-window`. Setting `max_tokens` is what silences it; setting only
+  - `context_window` keeps the warning about the output cap. `ollama` and `custom` endpoints use the same
+  + `context_window` keeps the warning about the output cap.
+  + 
+  + A value for `--max-tokens`, `--temperature`, `--max-turns` or `--context-window` that is not a
+  + number (`--max-tokens abc`) is refused at startup with exit 2, before any request is sent; it no
+  + longer warns and runs on the default. The same mistake in `.yoyo.toml` (`max_tokens = "abc"`) still
+  + only warns, naming the key and the config file, and falls back to the default, because a project's
+  + `.yoyo.toml` may have been written by someone else. Parseable values out of range (such as
+  + `--temperature 5`) are handled as before (temperature is clamped to 0.0–1.0 with a warning).
+  + 
+  + `ollama` and `custom` endpoints use the same
+    defaults but are not warned about, since you configure those servers yourself.
+ ✓ (0ms)
+    or pass `--max-tokens` / `--context-window`. Setting `max_tokens` is what silences it; setting only
+  - `context_window` keeps the warning about the output cap. `ollama` and `custom` endpoints use the same
+  + `context_window` keeps the warning about the output cap.
+  + 
+  + A value for `--max-tokens`, `--temperature`, `--max-turns` or `--context-window` that is not a
+  + number (`--max-tokens abc`) is refused at startup with exit 2, before any request is sent; it no
+  + longer warns and runs on the default. The same mistake in `.yoyo.toml` (`max_tokens = "abc"`) still
+  + only warns, naming the key and the config file, and falls back to the default, because a project's
+  ... (5 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 14.9s (5 ✓)
+
+That split the guessed-limits paragraph awkwardly; move it to after that paragraph instead.
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (11 lines) ✓ (22ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The config warning says "in config file" but not which file — so the task's "already names the file" is half true. I'll word the doc precisely and file that in the residue.
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -i 's|only warns, naming the k… ✓ (22ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Behaviour confirmed in prompt and REPL modes. Empty value still exits 1 via the pre-existing requires a non-empty value check (noted for residue). Full checks:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt && cargo fmt -- --check … ✓ (26.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; (timeout 590 cargo test > /tmp/tes… ✓ (4m 31s)
+  ▶ $ grep -cE "FAILED|panicked" /tmp/test.log; grep EXIT /tmp/test.log; grep -c "test… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 5m 6s (3 ✓)
+
+All green (30 suites, 0 failures, exit 0). Now the residue issue — check the agent-self count first:
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue list --label agent-self -… ✓ (868ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+18 open (under 20), so filing is allowed. Probing each residue member before naming it (d232):
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp/pb; B=/home/runner/work/yoyo-evolve/yoyo-evolve/target/debug/yoyo; for a…
+  (interrupted)
+
