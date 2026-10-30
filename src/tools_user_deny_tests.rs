@@ -319,9 +319,11 @@ fn eval_of_an_assembled_command_string_is_refused_with_a_deny_list() {
         "eval \"$(printf '%s %s %s' rm -rf ~)\"",
         "eval \"$(printf '%s %s' rm -rf x)\"",
         "eval `printf hi`",
-        "FOO=1 eval \"$(ssh-agent)\"",
-        "export A=1; eval \"$(ssh-agent)\"",
-        "cd x && eval $(ssh-agent -s)",
+        // #1066: these three spelled ssh-agent until the carve-out made it
+        // allowed; the prefix/wrapper paths keep their coverage with `cat x`.
+        "FOO=1 eval \"$(cat x)\"",
+        "export A=1; eval \"$(cat x)\"",
+        "cd x && eval $(cat x)",
         "builtin eval \"$(x)\"",
         "eval \"echo $(id)\"",
         "bash -c 'eval \"$(x)\"'",
@@ -364,4 +366,88 @@ fn eval_of_a_substitution_passes_without_a_deny_list() {
     ] {
         assert_eq!(user_deny_refusal(&empty, cmd), None, "{cmd:?}");
     }
+}
+
+/// #1066: with a deny list set, `eval` of exactly one command substitution
+/// whose content is one simple command, run by a bare program on
+/// `KNOWN_ENV_EMITTERS` with its required first argument, is allowed when that
+/// inner command itself passes the deny list. Prefix forms reach it too.
+#[test]
+fn eval_of_a_known_env_emitter_passes_with_a_deny_list() {
+    use crate::tools::user_deny_refusal;
+    let list = vec!["rm -rf *".to_string()];
+    // Anti-vacuous: the deny list is live and the eval rule still fires.
+    assert!(user_deny_refusal(&list, "eval \"$(cat x)\"").is_some());
+    for cmd in [
+        "eval \"$(ssh-agent)\"",
+        "eval \"$(ssh-agent -s)\"",
+        "eval $(ssh-agent -s)",
+        "eval `ssh-agent -s`",
+        "eval \"$(direnv hook bash)\"",
+        "eval \"$(direnv export zsh)\"",
+        "eval \"$(brew shellenv)\"",
+        "eval \"$(pyenv init -)\"",
+        "eval \"$(zoxide init bash)\"",
+        "eval \"$(mise activate bash)\"",
+        "FOO=1 eval \"$(ssh-agent)\"",
+        "cd x && eval $(ssh-agent -s)",
+    ] {
+        assert_eq!(user_deny_refusal(&list, cmd), None, "{cmd:?} must pass");
+    }
+}
+
+/// #1066 near-misses: everything outside the carve-out is still refused by
+/// the eval rule, including an emitter the user's own deny list names.
+#[test]
+fn eval_carve_out_near_misses_are_still_refused() {
+    use crate::tools::user_deny_refusal;
+    let list = vec!["rm -rf *".to_string()];
+    for cmd in [
+        "eval \"$(printf 'rm -rf x')\"",
+        "eval \"$(cat x)\"",
+        "eval \"$(ssh-agent; rm -rf x)\"",
+        "eval \"$(ssh-agent && cat x)\"",
+        "eval \"$(ssh-agent | sh)\"",
+        "eval \"$(ssh-agent > x)\"",
+        "eval \"$(ssh-agent)$(cat x)\"",
+        "eval \"$(ssh-agent) $(cat x)\"",
+        "eval \"$(ssh-agent)\" \"$(cat x)\"",
+        "eval \"$(ssh-agent $(cat x))\"",
+        "eval \"$(ssh-agent $X)\"",
+        "eval \"$(./ssh-agent)\"",
+        "eval \"$(/usr/bin/ssh-agent)\"",
+        "eval \"$(brew install x)\"",
+        "eval \"$(direnv)\"",
+        "eval \"$(direnv allow)\"",
+        "eval \"x$(ssh-agent)\"",
+        "eval '$(ssh-agent)'",
+        "eval `cat x`",
+        "eval `printf 'rm -rf x'`",
+    ] {
+        let r = user_deny_refusal(&list, cmd).unwrap_or_else(|| panic!("{cmd:?} passed"));
+        assert!(r.contains("eval"), "{cmd:?}: {r}");
+    }
+    // The inner command is itself denied: the carve-out does not apply.
+    let own = vec!["ssh-agent*".to_string()];
+    for cmd in [
+        "eval \"$(ssh-agent)\"",
+        "eval \"$(ssh-agent -s)\"",
+        "eval `ssh-agent`",
+    ] {
+        assert!(user_deny_refusal(&own, cmd).is_some(), "{cmd:?} passed");
+    }
+    let exact = vec!["brew shellenv".to_string()];
+    assert!(user_deny_refusal(&exact, "eval \"$(brew shellenv)\"").is_some());
+}
+
+/// #1066: the refusal no longer names ssh-agent as refused; it names the
+/// carve-out and the way out for anything else.
+#[test]
+fn eval_refusal_message_names_the_carve_out() {
+    use crate::tools::user_deny_refusal;
+    let list = vec!["rm -rf *".to_string()];
+    let r = user_deny_refusal(&list, "eval \"$(cat x)\"").unwrap();
+    assert!(r.contains("direnv hook"), "{r}");
+    assert!(r.contains("passes your deny list"), "{r}");
+    assert!(r.contains("outside yoyo"), "{r}");
 }

@@ -303,13 +303,14 @@ pub(super) fn check_indirect_command_word(cmd: &str, _cmd_lower: &str) -> Option
             .collect();
         let inner = if base == "eval" {
             // Day 225 exemption, kept rather than overridden: `eval "$(tool)"`
-            // is the load-what-a-tool-prints idiom (ssh-agent, direnv, brew
-            // shellenv), the program printing it is readable, and
+            // is the load-what-a-tool-prints idiom (the programs are listed
+            // once, in `KNOWN_ENV_EMITTERS`), the program printing it is readable, and
             // `test_analyze_eval_fetch` already pins `eval $(cat local_script.sh)`
             // as unflagged. Residue, stated: the substitution's OUTPUT is
             // still unread, so `eval "$(printf …)"` assembling a command
             // passes this analyser. With a user deny list set it is refused
-            // instead, by `eval_of_substitution` (#1011).
+            // instead, by `eval_of_substitution` (#1011), except the narrow
+            // `KNOWN_ENV_EMITTERS` shape (#1066).
             let whole_substitution = |s: &&str| {
                 let s = strip_outer_quotes(s);
                 (s.starts_with("$(") && s.ends_with(')'))
@@ -393,13 +394,67 @@ fn deny_segments(cmd: &str) -> Vec<String> {
     out
 }
 
+/// #1066: the load-what-a-tool-prints programs whose output is shell env
+/// setup, as `(program, required first arguments)`; an empty list means any
+/// arguments. The single authority for these idioms: the analyser's
+/// `whole_substitution` exemption names them by pointing here. Fails closed: an
+/// emitter missing from this list is refused exactly as before the carve-out,
+/// so a stale list costs convenience, never safety.
+const KNOWN_ENV_EMITTERS: &[(&str, &[&str])] = &[
+    ("ssh-agent", &[]),
+    ("direnv", &["hook", "export"]),
+    ("brew", &["shellenv"]),
+    ("pyenv", &["init"]),
+    ("rbenv", &["init"]),
+    ("nodenv", &["init"]),
+    ("zoxide", &["init"]),
+    ("starship", &["init"]),
+    ("fnm", &["env"]),
+    ("mise", &["activate"]),
+];
+
+/// #1066: if `arg` (the sole argument of an `eval`) is exactly one command
+/// substitution, `"$(…)"`, bare `$(…)` or `` `…` ``, whose content is one
+/// simple command run by a BARE program on [`KNOWN_ENV_EMITTERS`] with its
+/// required first argument, return that inner command. The content may only
+/// hold letters, digits, spaces and `-_.=,:/+`, so `;`, `&&`, `|`, newlines,
+/// redirections, quotes, `$`, nested substitutions and globs all fail. A path
+/// form (`./ssh-agent`, `/usr/bin/ssh-agent`) is not exempt: like every plain
+/// command the deny check passes, this trusts program NAMES and nothing more
+/// (a PATH-shadowed `ssh-agent` is a different binary, the same as for `ls`).
+fn known_env_emitter(arg: &str) -> Option<&str> {
+    let arg = arg
+        .strip_prefix('"')
+        .and_then(|a| a.strip_suffix('"'))
+        .unwrap_or(arg);
+    let inner = arg
+        .strip_prefix("$(")
+        .and_then(|a| a.strip_suffix(')'))
+        .or_else(|| {
+            arg.strip_prefix('`')
+                .and_then(|a| a.strip_suffix('`'))
+                .filter(|_| arg.len() > 1)
+        })?;
+    let safe = |c: char| c.is_ascii_alphanumeric() || " -_.=,:/+".contains(c);
+    if !inner.chars().all(safe) {
+        return None;
+    }
+    let mut words = inner.split_whitespace();
+    let program = words.next()?;
+    let (_, required) = KNOWN_ENV_EMITTERS.iter().find(|(p, _)| *p == program)?;
+    if !required.is_empty() && !words.next().is_some_and(|w| required.contains(&w)) {
+        return None;
+    }
+    Some(inner.trim())
+}
+
 /// #1011: the first deny segment that runs `eval` with a command substitution
 /// (`$(...)` or backticks) anywhere in its arguments, or `None`. Segments come
 /// from [`deny_segments`], so `VAR=` / `export` prefixes are already stripped;
 /// `builtin` / `command` in front of `eval` are skipped, and `bash -c '…'`
 /// strings are searched too. Unlike the analyser's `whole_substitution`
 /// exemption, this is only consulted when the user has a deny list.
-fn eval_of_substitution(cmd: &str) -> Option<String> {
+fn eval_of_substitution(cmd: &str, inner_allowed: &dyn Fn(&str) -> bool) -> Option<String> {
     for seg in deny_segments(cmd) {
         let words: Vec<String> = lex_shell_words(&seg)
             .into_iter()
@@ -418,6 +473,12 @@ fn eval_of_substitution(cmd: &str) -> Option<String> {
         let base = strip_outer_quotes(program).rsplit('/').next().unwrap_or("");
         let args = &words[start + 1..];
         if base == "eval" && args.iter().any(|a| a.contains("$(") || a.contains('`')) {
+            // #1066: the one shape that is let through.
+            if let [only] = args {
+                if known_env_emitter(only).is_some_and(inner_allowed) {
+                    continue;
+                }
+            }
             return Some(seg);
         }
         if INLINE_SHELLS.contains(&base) {
@@ -425,7 +486,9 @@ fn eval_of_substitution(cmd: &str) -> Option<String> {
                 .iter()
                 .position(|s| s.starts_with('-') && !s.starts_with("--") && s.contains('c'))
                 .and_then(|p| args.get(p + 1));
-            if let Some(found) = inner.and_then(|s| eval_of_substitution(strip_outer_quotes(s))) {
+            if let Some(found) =
+                inner.and_then(|s| eval_of_substitution(strip_outer_quotes(s), inner_allowed))
+            {
                 return Some(found);
             }
         }
@@ -458,7 +521,8 @@ pub(crate) fn user_deny_spelling_refusal(
             ));
         }
     }
-    if let Some(seg) = eval_of_substitution(command) {
+    let inner_allowed = |inner: &str| !user_deny.iter().any(|p| glob_match(p, inner));
+    if let Some(seg) = eval_of_substitution(command, &inner_allowed) {
         let shown: String = crate::cli::sanitize_for_display(&seg)
             .chars()
             .take(80)
@@ -466,8 +530,11 @@ pub(crate) fn user_deny_spelling_refusal(
         return Some(format!(
             "Command blocked by your permission rules: `{shown}` runs eval on a command \
              substitution, so the text that actually runs only exists at runtime and a deny \
-             list cannot check it. Write the command plainly; for setup like \
-             eval \"$(ssh-agent)\", run it outside yoyo, or start this session without a deny list."
+             list cannot check it. Write the command plainly. Shell setup from a short list of \
+             known emitters (eval \"$(ssh-agent -s)\", direnv hook, brew shellenv, pyenv/rbenv/nodenv \
+             init, zoxide/starship init, fnm env, mise activate) is allowed when the command inside \
+             passes your deny list; for anything else, run it outside yoyo, or start this session \
+             without a deny list."
         ));
     }
     let reason = check_indirect_command_word(command, "")?;
