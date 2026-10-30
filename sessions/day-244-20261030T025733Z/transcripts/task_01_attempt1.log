@@ -1,0 +1,215 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git log --oneli… ✓ (46ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1040,1130p src/cli.rs; sed … ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "fn closest_match" -B2 src… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 2600,2700p src/cli.rs; grep… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "fn handle_provider" src … ✓ (21ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 540,570p src/commands.rs; w… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "Unknown provider\|--prov… ✓ (22ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn -A1 '"--provider"' tests/… ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1,110p tests/guessed_limits… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 85,100p tests/guessed_limit… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 91,96p tests/guessed_limits… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; awk 'NR>=90 && NR<=97' tests/guess… ✓ (6ms)
+  ▶ read tests/guessed_limits_note_binary.rs:90..98 ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  13 tools completed in 49.1s (13 ✓)
+
+Now the composer in providers.rs (the authority), with its table tests first.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/providers.rs (3 → 99 lines)
+  + /// #1103: `Some(refusal)` when `provider` is not a known name AND no base URL
+  + /// was given, so startup can refuse (exit 2) before any network call.
+  + ///
+  + /// Who reaches the refused branch: anyone who mistypes a provider, on the
+  + /// `--provider` flag or `provider = "..."` in `.yoyo.toml`. Nobody chooses it:
+  + /// before this, the typo silently became an OpenAI-compatible client aimed at
+  + /// `localhost:8080`, carrying whatever key the fallback chain found
+  + /// (`ANTHROPIC_API_KEY`, then `API_KEY`), retried for ~80s and blamed the
+  + /// network. An unknown name WITH a base URL is a choice (the user pointed it
+  + /// somewhere), so it returns `None` and keeps that path.
+  + ///
+  + /// Did-you-mean only within edit distance 2, via the one shared
+  + /// `commands::closest_match`; otherwise the known list. The name is
+  + /// sanitized (a project `.yoyo.toml` is repository-authored). Glyph-free
+  + /// except the em dash; callers add colour.
+  + pub fn unknown_provider_refusal(provider: &str, base_url_given: bool) -> Option<String> {
+  +     if KNOWN_PROVIDERS.contains(&provider) || base_url_given {
+  +         return None;
+  +     }
+  +     let shown = crate::cli::sanitize_for_display(provider);
+  ... (79 more lines)
+ ✓ (23.8s)
+  + /// #1103: `Some(refusal)` when `provider` is not a known name AND no base URL
+  + /// was given, so startup can refuse (exit 2) before any network call.
+  + ///
+  + /// Who reaches the refused branch: anyone who mistypes a provider, on the
+  + /// `--provider` flag or `provider = "..."` in `.yoyo.toml`. Nobody chooses it:
+  + /// before this, the typo silently became an OpenAI-compatible client aimed at
+  + /// `localhost:8080`, carrying whatever key the fallback chain found
+  + /// (`ANTHROPIC_API_KEY`, then `API_KEY`), retried for ~80s and blamed the
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the consumer in parse_model_config:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (11 → 12 lines)
+  -     // Validate provider name
+  -     if !KNOWN_PROVIDERS.contains(&provider.as_str()) {
+  -         eprintln!(
+  -             "{YELLOW}warning:{RESET} Unknown provider '{provider}'. Known providers: {}",
+  -             KNOWN_PROVIDERS.join(", ")
+  -         );
+  -     }
+  - 
+        // Parse --base-url flag (CLI > config file)
+        let base_url =
+            flag_value(args, &["--base-url"]).or_else(|| file_config.get("base_url").cloned());
+  + 
+  +     // #1103: an unknown provider with no base URL is a typo, not a choice; refuse
+  +     // before any network call instead of sending the fallback key to localhost:8080.
+  +     // Both doors (flag and .yoyo.toml) resolve into `provider` above.
+  +     let url_given = base_url.as_deref().is_some_and(|u| !u.trim().is_empty());
+  +     if let Some(msg) = crate::providers::unknown_provider_refusal(&provider, url_given) {
+  +         eprintln!("{RED}error:{RESET} {msg}");
+  +         std::process::exit(2);
+  +     }
+  ▶ edit src/agent_builder.rs (8 → 9 lines)
+  +             let url = base_url.unwrap_or("http://localhost:8080/v1");
+                eprintln!(
+  -                 "{}warning:{} treating unknown provider '{}' as OpenAI-compatible (localhost:8080)",
+  +                 "{}warning:{} treating unknown provider '{}' as OpenAI-compatible ({})",
+                    crate::format::YELLOW,
+                    crate::format::RESET,
+  -                 provider
+  +                 provider,
+  +                 url
+                );
+  -             let url = base_url.unwrap_or("http://localhost:8080/v1");
+                let mut config = ModelConfig::local(url, model);
+ ✓ (3m 6s)
+  +             let url = base_url.unwrap_or("http://localhost:8080/v1");
+                eprintln!(
+  -                 "{}warning:{} treating unknown provider '{}' as OpenAI-compatible (localhost:8080)",
+  +                 "{}warning:{} treating unknown provider '{}' as OpenAI-compatible ({})",
+                    crate::format::YELLOW,
+                    crate::format::RESET,
+  -                 provider
+  +                 provider,
+  ... (4 more lines)
+ ✓ (5m 9s)
+  -     // Validate provider name
+  -     if !KNOWN_PROVIDERS.contains(&provider.as_str()) {
+  -         eprintln!(
+  -             "{YELLOW}warning:{RESET} Unknown provider '{provider}'. Known providers: {}",
+  -             KNOWN_PROVIDERS.join(", ")
+  -         );
+  -     }
+  - 
+  ... (12 more lines)
+  2 tools completed in 5m 21s (2 ✓)
+
+Now the real-binary test (sibling file, env scrub copied from guessed_limits_note_binary.rs):
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ write tests/unknown_provider_refusal.rs (82 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n '"--trust-project"' src/cl… ✓ (2m 2s)
+ ✗ (2m 2s)
+    │ Command timed out after 120s. Output so far:
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 580 cargo test --test unkn… ✓ (388ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 2m 10s (2 ✓, 1 ✗)
+
+Positive control, atomic mutate→run→restore:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/cli.rs /tmp/cli.bak && sed … ✓ (32.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control reddened both doors; restored. Now docs and the #1103 grep:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git grep -n '#1103' src docs; grep… ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read docs/src/configuration/models.md:58..72 ✓ (0ms)
+  ▶ edit docs/src/configuration/models.md (2 → 8 lines)
+    yoyo --provider custom --base-url http://localhost:8080/v1 --model my-model
+    ```
+  + 
+  + A provider name that is not in the table above is refused at startup (exit 2, with a
+  + "did you mean" suggestion for a near typo such as `anthropc`) unless a base URL is given
+  + with `--base-url` or `base_url` in `.yoyo.toml`; with one, the name is treated as an
+  + OpenAI-compatible server at that URL. This applies to `--provider` and to `provider` in
+  + `.yoyo.toml` alike, so a typo never sends your key to a default local port.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt && timeout 580 cargo cli… ✓ (1ms)
+    yoyo --provider custom --base-url http://localhost:8080/v1 --model my-model
+    ```
+  + 
+  + A provider name that is not in the table above is refused at startup (exit 2, with a
+  + "did you mean" suggestion for a near typo such as `anthropc`) unless a base URL is given
+  + with `--base-url` or `base_url` in `.yoyo.toml`; with one, the name is treated as an
+  + OpenAI-compatible server at that URL. This applies to `--provider` and to `provider` in
+  + `.yoyo.toml` alike, so a typo never sends your key to a default local port.
+ ✓ (24.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 590 cargo test 2>&1 | grep… ✓ (2m 42s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 590 cargo test 2>&1 | grep… ✓ (2m 2s)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 5m 26s (6 ✓)
+
+An existing test pins the old Known providers: wording for a typo with no near match. Its intent still holds, so I'll keep that wording rather than edit the test:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1515,15… (11 lines) ✓ (27ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt && timeout 300 cargo cli… ✓ (4m 41s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4m 47s (2 ✓)
+
+All green. A quick look at the real output:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp; ANTHROPIC_API_KEY=x /home/runner/work/yoyo-evolve/yoyo-evolve/target/de… ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add -A && … (46 lines) ✓ (26ms)
+  2 tools completed in 19.7s (2 ✓)
+
+I fixed #1103 and committed it as ad1fbcb6. Running yoyo --provider anthropc -p hi now stops at startup with exit 2, before any network call:
+
+```
+error: unknown provider 'anthropc' — did you mean 'anthropic'?
+for an OpenAI-compatible server use: --provider custom --base-url <url>
+```
+
+Before, it ran for about 80 seconds and sent your fallback API key to whatever was listening on localhost:8080.
+
+What changed:
+• The check: a new function in src/providers.rs decides whether to refuse, and parse_model_config in src/cli.rs calls it. It suggests a name only when a known provider is within 2 typos, using the project's existing closest_match helper. Otherwise it prints the full list (zzzz → Known providers: …). It reads the known providers from the existing KNOWN_PROVIDERS list rather than copying it.
+• Both ways of setting the provider: the --provider flag and provider = "..." in .yoyo.toml both end up in the same variable before the check, so one check covers both. The real-binary test runs each one.
+• Unknown name with a base URL: this still works as an OpenAI-compatible server, since the user chose where to point it. Its warning used to say "(localhost:8080)" even when a base URL was given; it now names the URL actually used. That was a one-line move in src/agent_builder.rs.
+• REPL `/provider <name>`: it already refused unknown names and stayed on the current provider, so I didn't touch it. The commit says so.
+• Exit code: I used 2 as the task asked. The neighbouring errors for empty or missing flag values exit 1, so this differs from them; the commit explains that.
+
+Tests: all four checks pass (build, test, clippy, fmt check).
+• A table test covers every row the task listed, plus a check that control characters in the provider name are escaped.
+• A new file, tests/unknown_provider_refusal.rs, runs the real binary with provider env vars cleared, the same way the existing binary tests do. For both the flag and .yoyo.toml cases it checks for exit 2, the suggestion, and no "Network error", /retry or localhost:8080.
+• I confirmed the binary tests can fail: turning off the check made both time out on the old retry loop. I restored it in the same command.
+• One existing test (tests/integration.rs) checks for the text Known providers:. I kept that wording instead of editing the test.
+
+Docs: docs/src/configuration/models.md now says an unknown provider name is refused unless a base URL is given. git grep '#1103' finds only two code comments describing the fix, which stay true after the issue closes.
+
+As instructed, I left the retry and network-hint logic alone; a mistyped provider can no longer reach it.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 1/3 changed files were in top-10 predictions (33.3% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/3 (0.0%) — reactive was 33.3%
+     Predicted correctly: src/cli.rs
+     Surprises (not predicted): src/providers.rs, src/agent_builder.rs

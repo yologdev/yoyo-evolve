@@ -1,0 +1,111 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh… ✓ (12ms)
+  ▶ $ sed -n 240,480p src/safety/indirect_command.rs; sed -n 540,582p src/safety/indir…  ▶ $ grep -n 'eval\|fn \|deny' src/tools_user_deny_tests.rs | head -60; grep -n 'indi… ✓ (8ms)
+ ✓ (48ms)
+  ▶ $ sed -n 280,367p src/tools_user_deny_tests.rs; sed -n 340,400p src/safety/indirec… ✓ (7ms)
+  ▶ $ sed -n 1,140p src/safety/indirect_command.rs; sed -n 396,425p src/safety/indirec… ✓ (5ms)
+  ▶ $ grep -n 'eval_of_substitution' -r src; grep -n 'ssh-agent\|1066\|1011' -r src do… ✓ (31ms)
+  ▶ $ sed -n 55,80p src/bash_refusal_tests.rs; sed -n 49p docs/src/configuration/permi… ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 52.7s (7 ✓)
+
+Tests first. I'll edit the existing refused test's ssh-agent prefix rows to a non-emitter (cat x), so the prefix/wrapper coverage stays, and add the new allowed/refused tables.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ python3 - <<'EOF' (97 lines) ✓ (165ms)
+  ▶ $ cargo test --lib eval_ 2>&1 | tail -30 ✓ (110ms)
+  ▶ $ cargo test --bin yoyo eval_ 2>&1 | grep -E '^test |panicked|test result' | head … ✓ (36.1s)
+  3 tools completed in 54.8s (3 ✓)
+
+Red as expected. Now the implementation.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 - <<'EOF' (106 lines) ✓ (26ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ sed -n 305,312p src/safety/indirect_command.rs ✓ (3ms)
+  ▶ $ sed -n 305,312p src/safety/indirect_command.rs | cat -A | cut -c1-200 ✓ (4ms)
+  ▶ $ for n in 306 307 308 309 310 311; do awk -v n=$n 'NR==n' src/safety/indirect_com… ✓ (14ms)
+  ▶ $ python3 -c " (4 lines) ✓ (19ms)
+  ▶ $ python3 - <<'EOF' (5 lines) ✓ (19ms)
+  ▶ $ python3 - <<'EOF' (15 lines) ✓ (38.3s)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 56.3s (7 ✓)
+
+Green. Positive control, atomic and serial: neuter the carve-out, expect the allowed rows red by name, restore.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ f=src/safety/indirect_command.rs; cp $f /tmp/ic.bak && sed -… (3 lines) ✓ (1m 36s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Second control didn't compile (my sed renamed the param). Redo it properly:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ f=src/safety/indirect_command.rs; cp $f /tmp/ic.bak && sed -i 's/let inner_allow… ✓ (37.2s)
+
+Both controls red by name, restored (0 markers). Now docs and the grep for stale ssh-agent/#1066 claims.
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 - <<'EOF' (15 lines) ✓ (51ms)
+  ▶ $ git grep -n '#1066\|ssh-agent' src docs | grep -v 'tools_user_deny_tests.rs' | a… ✓ (17ms)
+  ▶ $ git grep -n '#1066\|ssh-agent' src | grep -v 'tools_user_deny_tests.rs' | awk -F… ✓ (36ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 8.4s (3 ✓)
+
+All hits now describe the carve-out (the #1066 ones are history labels in code comments, not user-facing pointers). Check tests/ and the doc comment of eval_of_substitution, then full gate.
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ git grep -n 'ssh-agent' tests README.md CLAUDE.md | cut -c1-160; cargo fmt -- --… ✗ (2m 0s)
+    │ Command timed out after 120s. Output so far:
+  ▶ $ cargo clippy --all-targets -- -D warnings 2>&1 | grep -A15 '^error' | head -30 ✓ (23.1s)
+  ▶ $ cargo clippy --all-targets -- -D warnings 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | gre… ✓ (23.6s)
+  ▶ $ sed -i 's/is_some_and(|inner| inner_allowed(inner))/is_some_and(inner_allowed)/'… ✓ (25.4s)
+  ▶ $ cargo test 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep -E 'test result|FAILED|panick… ✓ (7m 48s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 11m 16s (4 ✓, 1 ✗)
+
+Everything is green: 29 test binaries ok, no failures. Quick check of tests/ for stale claims, then commit.
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ git grep -n 'ssh-agent' tests README.md CLAUDE.md | cut -c1-… (31 lines) ✓ (58ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+With a deny list set, yoyo now runs eval "$(ssh-agent -s)" and similar shell-setup commands instead of refusing them. Every other eval of a command substitution is still refused. Build, test, clippy and fmt all pass, and it's committed as a5d0de3d with "Fixes #1066" in the title.
+
+What's allowed: eval with a single argument that is one substitution ("$(…)", a bare $(…) or backticks). Inside it must be one plain command with no ;, &&, |, redirection, quotes, $ or nested substitution. Its program must be a bare name from a fixed list, given its required first argument. And the inner command must itself pass the user's deny list. The list, defined once in src/safety/indirect_command.rs:
+• ssh-agent (any arguments)
+• direnv hook / direnv export
+• brew shellenv
+• pyenv init, rbenv init, nodenv init
+• zoxide init, starship init
+• fnm env, mise activate
+
+The older comment that named some of these programs now points at the list, so there's only one copy.
+
+The issue's two objections, answered in the commit:
+• "One more hand-kept list": if a program is missing from it, the command is refused exactly as before. A stale list costs convenience, never safety.
+• "A different `ssh-agent` earlier on PATH is a different program": true, and equally true of every plain command the deny check passes today, since it only checks names. Path forms like ./ssh-agent or /usr/bin/ssh-agent are not allowed.
+
+Tests (in src/tools_user_deny_tests.rs):
+• Allowed: the four rows the task named, plus backtick, unquoted and prefixed forms.
+• Still refused (20 rows): printf, cat, chained or piped commands, two substitutions, nested $(, $X, path forms, brew install, bare direnv, direnv allow, single-quoted text, and backtick versions of refused cases.
+• On the user's own deny list: if the deny list names the emitter (e.g. ssh-agent* or brew shellenv), the eval is refused.
+
+One existing test edited: three rows in the older "refused" test used ssh-agent behind FOO=1, export A=1; and cd x && prefixes, and those are now allowed. I swapped ssh-agent for cat x so the prefix cases are still covered and still refused. The no-deny-list test is untouched and passes.
+
+Checking the tests can fail: I broke the code twice, one at a time and restored each right after. Disabling the exception failed the "allowed" test, and skipping the inner deny check failed the "still refused" test. No sabotage marker is left in the code.
+
+Wording updated: the refusal message no longer gives ssh-agent as an example of what's refused; it now lists the allowed emitters and the way out. docs/src/configuration/permissions.md describes the exception and its list. ARCHITECTURE.md marks the Day-235 note ("eval "$(ssh-agent)" is refused") as out of date. A search of src, docs and tests for ssh-agent and #1066 turns up nothing that still says it's refused.
+
+This closes #1066, so there's nothing left over to file.
+  watch: no files changed this turn — skipping

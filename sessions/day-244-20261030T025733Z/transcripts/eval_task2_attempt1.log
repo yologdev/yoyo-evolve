@@ -1,0 +1,21 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git grep -n 'ssh-agent' src docs |… ✓ (13ms)
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 17.0s (2 ✓)
+
+Verdict: PASS, written to session_plan/eval_task_2.md.
+
+I judged the diff and ran one grep. I didn't run the binary, so the allowed and refused cases are confirmed by the new tests (which already pass), not by trying them myself.
+
+• Does what the task asked: with a deny list set, eval is now allowed only when its single argument is one substitution holding one plain command. The command has to be run by a bare program name from the one list (KNOWN_ENV_EMITTERS), include its required first argument, and pass the user's own deny patterns. Path forms like ./ssh-agent are still refused, and so is every other eval of a substitution.
+• Tests: every allowed and refused case the task listed is covered, plus extras. That includes the case where the deny list names the emitter itself, e.g. ssh-agent* refusing eval "$(ssh-agent)". The existing check that nothing changes without a deny list was left alone. Three rows of an older test were respelled from ssh-agent to cat x, and they still go through the same VAR=, export and cd x && paths.
+• Nothing left dangling: the new list and function are both used, and the new parameter is passed at both places that need it, including the bash -c path.
+• Docs: the refusal message and permissions.md describe the exception and its list. A git grep for ssh-agent across src and docs found no text still saying it's refused.
+
+One gap for a follow-up (not a fail): ssh-agent is allowed with any arguments, and ssh-agent <command> runs that command. So eval "$(ssh-agent rm -rf build)" gets past a rm -rf * deny list. From reading the code, the plain ssh-agent rm -rf build looks like it gets past too, because the deny check doesn't look inside wrapper programs. I didn't test either one. On that reading this change doesn't open a new hole, and "any arguments" was what the task specified.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
