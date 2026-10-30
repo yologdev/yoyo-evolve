@@ -193,6 +193,110 @@ fn filter_fenced_lines(
     (f.text, f.withheld)
 }
 
+/// The header yoagent's `list_files` puts above `find`'s stderr, after its
+/// footer, and the line its 2000-char cap ends that stderr with (spellings
+/// copied from yoagent 0.25 `src/tools/list.rs`) <!-- yoagent-version-claim: 0.25 -->.
+const FIND_WARNINGS_HEADER: &str = "Warnings from find (the listing may be incomplete):";
+/// `list_files`' whole text when `find` printed no file.
+const NO_FILES_PREFIX: &str = "No files found in ";
+/// The prefix of yoagent's `list_files` error when `find` failed and printed
+/// no file: the rest is `find`'s (capped) stderr.
+const LISTING_ERROR_PREFIX: &str = "Listing error: ";
+
+/// For `list_files`: where its body (the file lines `find` printed) ends, and
+/// the index of the find-warnings header, if any. Everything from the body's
+/// end up to the header is yoagent's own (blank line, footer). Other tools:
+/// the whole output is body, no header.
+fn list_files_regions(lines: &[&str], output: &str) -> (usize, Option<usize>) {
+    if !output.starts_with(NO_FILES_PREFIX) && !lines.contains(&FIND_WARNINGS_HEADER) {
+        let footer = lines
+            .iter()
+            .rposition(|l| recount_footer("list_files", l, 0).is_some());
+        return (footer.unwrap_or(lines.len()), None);
+    }
+    let header = lines.iter().rposition(|l| *l == FIND_WARNINGS_HEADER);
+    let before = header.unwrap_or(lines.len());
+    let body_end = if output.starts_with(NO_FILES_PREFIX) {
+        0
+    } else {
+        lines[..before]
+            .iter()
+            .rposition(|l| recount_footer("list_files", l, 0).is_some())
+            .unwrap_or(before)
+    };
+    (body_end, header)
+}
+
+/// Every path a `find` warning line could name: GNU's `find: ‘<p>’: <reason>`
+/// (UTF-8 locale), `find: '<p>': <reason>` (C locale, an inner quote escaped
+/// as `\'`), or BSD's unquoted `find: <p>: <reason>`. A name containing the
+/// separator yields several candidates and any refused one withholds the line
+/// (fails closed, like [`search_path_candidates`]). A line yoagent's cap cut
+/// mid-name has no separator, so its whole remainder is the candidate.
+/// Candidates without a `/` are dropped: every path below the root has one,
+/// so such a name is the root itself (already past the argument check) or a
+/// word like `warning`. Not a `find:` line: no candidates, the line stays.
+fn find_warning_paths(line: &str) -> Vec<String> {
+    let Some(rest) = line.trim_end_matches('\r').strip_prefix("find: ") else {
+        return Vec::new();
+    };
+    let (body, sep) = if let Some(b) = rest.strip_prefix('\u{2018}') {
+        (b, "\u{2019}: ")
+    } else if let Some(b) = rest.strip_prefix('\'') {
+        (b, "': ")
+    } else {
+        (rest, ": ")
+    };
+    let mut out: Vec<String> = body
+        .match_indices(sep)
+        .map(|(i, _)| body[..i].to_string())
+        .collect();
+    if out.is_empty() {
+        out.push(body.to_string());
+    }
+    if sep == "': " {
+        for p in out.iter_mut() {
+            *p = p.replace("\\'", "'");
+        }
+    }
+    out.retain(|p| p.contains('/'));
+    out
+}
+
+/// Fence yoagent's `list_files` error text too: when `find` fails having
+/// printed no file, its warnings come back as `Err("Listing error: ...")`,
+/// which never reaches [`fence_tool_result`]. Warning lines naming a refused
+/// path are withheld the same way; anything else is returned unchanged.
+pub(crate) fn fence_tool_error(
+    tool: &str,
+    err: yoagent::types::ToolError,
+    refused: &dyn Fn(&str) -> bool,
+) -> yoagent::types::ToolError {
+    let yoagent::types::ToolError::Failed(msg) = &err else {
+        return err;
+    };
+    let Some(w) = msg.strip_prefix(LISTING_ERROR_PREFIX) else {
+        return err;
+    };
+    if tool != "list_files" {
+        return err;
+    }
+    let f = filter_fenced(
+        "list_files",
+        &format!("{FIND_WARNINGS_HEADER}\n{w}"),
+        refused,
+        None,
+    );
+    if f.withheld == 0 {
+        return err;
+    }
+    let rest = f
+        .text
+        .strip_prefix(FIND_WARNINGS_HEADER)
+        .map_or(f.text.as_str(), |r| r.trim_start_matches('\n'));
+    yoagent::types::ToolError::Failed(format!("{LISTING_ERROR_PREFIX}{rest}"))
+}
+
 /// What [`filter_fenced`] produced: the text, how many lines it withheld, and
 /// how far it lowered the footer's count (`0` when it found no footer).
 struct Filtered {
@@ -227,14 +331,22 @@ fn filter_fenced(
         .iter()
         .rposition(|l| is_search_footer(l))
         .unwrap_or(lines.len());
+    let (body_end, warn_header) = list_files_regions(&lines, output);
     let mut keep = vec![false; lines.len()];
     let mut denied = 0usize;
     let mut unattributed = 0usize;
     for (idx, line) in lines.iter().enumerate() {
         let deny = match tool {
-            "list_files" => {
+            "list_files" if idx < body_end => {
                 let p = line.trim_end_matches('\r');
                 !p.is_empty() && refused(p)
+            }
+            // yoagent's own lines (footer, header, cap) are never paths; under
+            // an allow list a relative `(1 files)` resolved against the cwd
+            // was refused and miscounted as a withheld result (#1023).
+            "list_files" => {
+                warn_header.is_some_and(|h| idx > h)
+                    && find_warning_paths(line).iter().any(|p| refused(p))
             }
             _ => search_path_candidates(line).into_iter().any(refused),
         };
@@ -247,6 +359,11 @@ fn filter_fenced(
         } else {
             keep[idx] = true;
         }
+    }
+    // A warnings header with nothing left under it would be a dangling claim;
+    // the withheld note covers what was under it.
+    if let Some(h) = warn_header {
+        keep[h] = keep[h + 1..].iter().any(|&k| k);
     }
     let withheld = denied + unattributed;
     if withheld == 0 {
@@ -778,5 +895,218 @@ mod tests {
             );
             assert_eq!(out.details, serde_json::json!({"matches": 2}));
         }
+    }
+
+    /// `list_files` output in yoagent's exact shape: format strings copied from
+    /// yoagent 0.25 `src/tools/list.rs` (`"{}\n\n({} files)"`, then
+    /// `"\nWarnings from find (the listing may be incomplete):\n{w}"`).
+    fn list_output(files: &[String], warnings: Option<&str>) -> String {
+        let mut text = format!("{}\n\n({} files)", files.join("\n"), files.len());
+        if let Some(w) = warnings {
+            text.push_str(&format!(
+                "\nWarnings from find (the listing may be incomplete):\n{w}"
+            ));
+        }
+        text
+    }
+
+    #[test]
+    fn find_warning_naming_a_denied_path_is_withheld_and_header_dropped() {
+        let (_dir, root, r) = fixture();
+        let refused = |p: &str| r.check_path(p).is_err();
+        let files = vec![format!("{root}/src/a.txt")];
+        // GNU find's UTF-8-locale quoting, as `find` on this runner prints it.
+        let w = format!("find: \u{2018}{root}/secrets/keys\u{2019}: Permission denied");
+        let output = list_output(&files, Some(&w));
+        let (out, n) = filter_fenced_lines("list_files", &output, &refused, None);
+        assert_eq!(n, 1, "{out}");
+        assert_eq!(
+            out,
+            format!("{root}/src/a.txt\n\n(1 files)\n{}", withheld_note(1)),
+            "denied warning withheld, header dropped, footer count unchanged"
+        );
+    }
+
+    #[test]
+    fn find_warning_naming_an_allowed_path_is_kept_byte_identically() {
+        let (_dir, root, r) = fixture();
+        let refused = |p: &str| r.check_path(p).is_err();
+        let files = vec![format!("{root}/src/a.txt")];
+        let w = format!("find: \u{2018}{root}/src/locked\u{2019}: Permission denied");
+        let output = list_output(&files, Some(&w));
+        // Anti-vacuous: the fixture really carries the header and a warning.
+        assert!(output.contains("Warnings from find") && output.contains("src/locked"));
+        let (out, n) = filter_fenced_lines("list_files", &output, &refused, None);
+        assert_eq!(n, 0);
+        assert_eq!(out, output);
+    }
+
+    #[test]
+    fn mixed_find_warnings_keep_header_and_allowed_line_only() {
+        let (_dir, root, r) = fixture();
+        let refused = |p: &str| r.check_path(p).is_err();
+        let files = vec![format!("{root}/src/a.txt")];
+        let allowed = format!("find: '{root}/src/locked': Permission denied");
+        let w = format!(
+            "find: '{root}/secrets/k\\'s: x': Permission denied\n{allowed}\nfind: {root}/secrets/bsd: Permission denied"
+        );
+        let output = list_output(&files, Some(&w));
+        let (out, n) = filter_fenced_lines("list_files", &output, &refused, None);
+        assert_eq!(n, 2, "{out}");
+        assert_eq!(
+            out,
+            format!(
+                "{root}/src/a.txt\n\n(1 files)\nWarnings from find (the listing may be incomplete):\n{allowed}\n{}",
+                withheld_note(2)
+            )
+        );
+    }
+
+    #[test]
+    fn a_warning_cut_mid_name_by_the_cap_is_still_checked() {
+        let (_dir, root, r) = fixture();
+        let refused = |p: &str| r.check_path(p).is_err();
+        let files = vec![format!("{root}/src/a.txt")];
+        let w = format!("find: \u{2018}{root}/secrets/ke\n... (more warnings not shown)");
+        let output = list_output(&files, Some(&w));
+        let (out, n) = filter_fenced_lines("list_files", &output, &refused, None);
+        assert_eq!(n, 1, "{out}");
+        assert!(!out.contains("secrets"), "{out}");
+        // The cap line survives, so the header above it does too.
+        assert!(
+            out.contains("incomplete):\n... (more warnings not shown)\n"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn non_path_find_warnings_are_never_checked() {
+        let root = "/r";
+        assert!(find_warning_paths("find: warning: odd thing").is_empty());
+        assert!(find_warning_paths("not find output").is_empty());
+        assert_eq!(
+            find_warning_paths(&format!("find: '{root}/a\\'b': Permission denied")),
+            vec![format!("{root}/a'b")]
+        );
+    }
+
+    #[test]
+    fn list_files_own_lines_are_not_path_checked_under_an_allow_list() {
+        // Under an allow list, a relative `(1 files)` resolved against the cwd
+        // is "not under any allowed directory": it must not count as withheld.
+        let (_dir, root, _r) = fixture();
+        let r = DirectoryRestrictions {
+            allow: vec![format!("{root}/src")],
+            deny: vec![],
+        };
+        let refused = |p: &str| r.check_path(p).is_err();
+        // Anti-vacuous: the footer really is refused as a path here.
+        assert!(refused("(1 files)") && refused("No files found in x"));
+        let files = vec![format!("{root}/src/a.txt")];
+        let w = format!("find: \u{2018}{root}/src/locked\u{2019}: Permission denied");
+        for output in [
+            list_output(&files, None),
+            list_output(&files, Some(&w)),
+            format!("No files found in {root}/src"),
+        ] {
+            let (out, n) = filter_fenced_lines("list_files", &output, &refused, None);
+            assert_eq!((n, out.as_str()), (0, output.as_str()));
+        }
+    }
+
+    #[test]
+    fn search_output_mentioning_find_warnings_is_unaffected() {
+        let (_dir, root, r) = fixture();
+        let refused = |p: &str| r.check_path(p).is_err();
+        let output = format!(
+            "{root}/src/a.txt:1:Warnings from find (the listing may be incomplete):\n{root}/src/a.txt:2:find: '{root}/secrets/x': y\n(2 matches)"
+        );
+        let (out, n) = filter_fenced_lines("search", &output, &refused, None);
+        assert_eq!((n, out.as_str()), (0, output.as_str()));
+    }
+
+    #[test]
+    fn listing_error_warnings_naming_a_denied_path_are_withheld() {
+        use yoagent::types::ToolError;
+        let (_dir, root, r) = fixture();
+        let refused = |p: &str| r.check_path(p).is_err();
+        let msg = |w: &str| format!("Listing error: {w}");
+        let denied = format!("find: \u{2018}{root}/secrets\u{2019}: Permission denied");
+        let allowed = format!("find: \u{2018}{root}/src\u{2019}: Permission denied");
+        let text = |e: ToolError| match e {
+            ToolError::Failed(m) => m,
+            other => panic!("{other:?}"),
+        };
+        let all = text(fence_tool_error(
+            "list_files",
+            ToolError::Failed(msg(&denied)),
+            &refused,
+        ));
+        assert_eq!(all, msg(&withheld_note(1)));
+        let mixed = text(fence_tool_error(
+            "list_files",
+            ToolError::Failed(msg(&format!("{denied}\n{allowed}"))),
+            &refused,
+        ));
+        assert_eq!(mixed, msg(&format!("{allowed}\n{}", withheld_note(1))));
+        // Nothing denied, another tool, another error: untouched.
+        for (tool, m) in [
+            ("list_files", msg(&allowed)),
+            ("search", msg(&denied)),
+            ("list_files", format!("Directory not found: {root}/secrets")),
+        ] {
+            assert_eq!(
+                text(fence_tool_error(
+                    tool,
+                    ToolError::Failed(m.clone()),
+                    &refused
+                )),
+                m
+            );
+        }
+    }
+
+    /// The `--allow-dir` probe (#1023): through the REAL wrapper and the REAL
+    /// yoagent tools, a root above the allowed dir is refused at the argument
+    /// check (nothing walked, nothing to leak), and listing the allowed dir
+    /// itself from a cwd outside it withholds nothing.
+    #[tokio::test]
+    async fn allow_dir_refuses_a_parent_root_and_lists_the_allowed_one_cleanly() {
+        use yoagent::types::ToolContext;
+        let (_dir, root, _r) = fixture();
+        let r = DirectoryRestrictions {
+            allow: vec![format!("{root}/src")],
+            deny: vec![],
+        };
+        for tool in ["list_files", "search"] {
+            let inner: Box<dyn yoagent::types::AgentTool> = if tool == "search" {
+                Box::new(yoagent::tools::search::SearchTool::default())
+            } else {
+                Box::new(yoagent::tools::list::ListFilesTool::default())
+            };
+            let t = crate::tool_wrappers::maybe_guard(inner, &r);
+            let args = serde_json::json!({"pattern": CANARY, "path": root});
+            let err = t
+                .execute(args, ToolContext::new("c", tool))
+                .await
+                .expect_err("a parent of the allowed dir is refused");
+            assert!(
+                err.to_string().contains("not under any allowed directory"),
+                "{tool}: {err}"
+            );
+        }
+        let list = crate::tool_wrappers::maybe_guard(
+            Box::new(yoagent::tools::list::ListFilesTool::default()),
+            &r,
+        );
+        let res = list
+            .execute(
+                serde_json::json!({"path": format!("{root}/src")}),
+                ToolContext::new("c", "list_files"),
+            )
+            .await
+            .expect("the allowed dir lists");
+        let out = text_of(&res);
+        assert_eq!(out, format!("{root}/src/a.txt\n\n(1 files)"));
     }
 }

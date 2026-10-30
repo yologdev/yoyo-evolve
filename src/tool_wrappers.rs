@@ -157,10 +157,12 @@ impl AgentTool for GuardedTool {
             || !crate::cd_config_note::cd_dir_fence_is_empty(
                 &crate::cd_config_note::cd_denied_dirs_handle(),
             );
-        let result = self.inner.execute(params, ctx).await?;
-        crate::partial_read_guard::record(seen, &result);
         let refused =
             |p: &str| crate::cd_config_note::path_guard_refusal(&self.restrictions, p).is_some();
+        let result = self.inner.execute(params, ctx).await.map_err(|e| {
+            crate::fence_result_filter::fence_tool_error(self.inner.name(), e, &refused)
+        })?;
+        crate::partial_read_guard::record(seen, &result);
         Ok(crate::fence_result_filter::fence_tool_result(
             self.inner.name(),
             result,
@@ -268,10 +270,12 @@ impl AgentTool for ArcGuardedTool {
             || !crate::cd_config_note::cd_dir_fence_is_empty(
                 &crate::cd_config_note::cd_denied_dirs_handle(),
             );
-        let result = self.inner.execute(params, ctx).await?;
-        crate::partial_read_guard::record(seen, &result);
         let refused =
             |p: &str| crate::cd_config_note::path_guard_refusal(&self.restrictions, p).is_some();
+        let result = self.inner.execute(params, ctx).await.map_err(|e| {
+            crate::fence_result_filter::fence_tool_error(self.inner.name(), e, &refused)
+        })?;
+        crate::partial_read_guard::record(seen, &result);
         Ok(crate::fence_result_filter::fence_tool_result(
             self.inner.name(),
             result,

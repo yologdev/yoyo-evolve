@@ -210,7 +210,10 @@ This affects `read_file`, `write_file`, `edit_file`, `list_files`, and `search`.
 fence covers the results as well as the path you pass: searching or listing an allowed root still withholds every
 match or file inside a refused directory, and the result ends with a line saying how many were withheld. The
 tool's own count (`(N matches)` / `(N files)`) is then re-counted to the results actually shown, so it agrees with
-that line.
+that line. `list_files` also reports the warnings `find` printed (`find: '<path>': Permission denied`, under a
+`Warnings from find` header, or as the whole error when nothing could be listed): a warning that names a path inside
+a refused directory is withheld and counted in that same line, and the header goes too if no warning is left under
+it. The count of files is not changed by this, because warnings were never part of it.
 Your ripgrep config cannot reshape a fenced `search`: yoyo's `search` runs `rg` with `--no-config` and with
 `RIPGREP_CONFIG_PATH` (and `GREP_OPTIONS`) removed from its environment (yoagent 0.25.5 and later), so there is
 nothing to unset. As a second line of defence, while a fence is active any result line that does not name a file
