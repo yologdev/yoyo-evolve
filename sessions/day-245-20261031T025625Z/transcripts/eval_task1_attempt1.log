@@ -1,0 +1,36 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && grep -n … ✓ (18ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && B=$PWD/target/debug/yoyo; rm -f … ✓ (5.0s)
+  ▶ $ cd /tmp/p245e && timeout 120 /home/runner/work/yoyo-evolve/yoyo-evolve/target/de… ✓ (2.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > sessio… (8 lines) ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 29.8s (4 ✓)
+
+Verdict: PASS — I've written it to session_plan/eval_task_1.md.
+
+I tested the real binary in both directions, run with --yes from /tmp/p245e:
+• With `YOYO_BLOCK_OUTSIDE_WRITES=1`: write_file to /tmp/p245e_probe.txt was refused, and the file was never created. The model got the refusal and told the user how to allow the write.
+• Without the variable: the same write went through and the file contained probe, so users who don't set it see no change.
+
+What the diff does against the task:
+• Opt-in and hard: it's off unless the variable is exactly 1, it's read once per run, and it refuses without asking even under --yes.
+• Same anchor as the read fence: it uses the launch directory recorded at startup (main.rs:1260), which /cd never moves. Both fences now share one is_inside check, and the read fence's old no-anchor behaviour is unchanged.
+• Path handling:
+  • A relative path resolves against the current directory at call time.
+  • A target that doesn't exist yet is checked through its nearest existing parent.
+  • A symlink inside the project that points outside is refused.
+  • A .. or a dangling symlink in the not-yet-existing part is refused, because yoyo can't tell where it leads.
+  • --allow-dir counts as consent, as it does for reads.
+• Scope: the doc comment and the docs both say that bash and rename_symbol are not covered, and why.
+• Refusal type: the refusal is classed the same way as the read fence's, so the recovery-hint wrapper won't treat it as a flaky tool.
+• Tests: they cover flag off, inside, a new nested path, a symlink, a .. escape, and the anchor staying put when the cwd moves. A wiring test goes through both wrappers, maybe_guard for the main agent and maybe_guard_arc for sub-agents.
+• Nothing left unused: every new definition is read somewhere in this diff.
+• Size gate: tool_wrappers.rs only changed one comment line at each call site, so its line count didn't move and tests/module_size.rs didn't need updating.
+• Docs: docs/src/configuration/permissions.md has a new section next to the read fence.
+
+One limit: I didn't re-run the positive control the task asked for (deleting a call site to check the wiring test fails), and the diff can't show whether it was done.
+  watch: no files changed this turn — skipping
