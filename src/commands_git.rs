@@ -183,6 +183,8 @@ pub struct DiffOptions {
     /// A git ref or ref range (e.g. `main`, `main..feature`, `HEAD~3`, `v1.0..HEAD`).
     /// When set, the diff compares the specified commits instead of working tree changes.
     pub ref_range: Option<String>,
+    /// The first flag the parser does not know (#1107); both doors refuse it.
+    pub unknown_flag: Option<String>,
 }
 
 /// Parse `/diff` arguments into structured options.
@@ -220,15 +222,21 @@ fn diff_options_from_tokens<'a>(parts: impl IntoIterator<Item = &'a str>) -> Dif
     let mut functions = false;
     let mut file = None;
     let mut ref_range = None;
+    let (mut unknown_flag, mut after_separator) = (None, false);
 
     for part in parts {
         match part {
+            "--" => after_separator = true,
             "--staged" | "--cached" => staged_only = true,
             "--name-only" => name_only = true,
             "--stat" => stat_only = true,
             "--explain" => explain = true,
             "--functions" => functions = true,
-            _ if part.starts_with('-') => {} // ignore unknown flags
+            _ if part.starts_with('-') => {
+                if !after_separator && unknown_flag.is_none() {
+                    unknown_flag = Some(part.to_string());
+                }
+            }
             _ => {
                 // Distinguish file paths from git refs:
                 // 1. Contains ".." → definitely a ref range (e.g. main..feature)
@@ -259,7 +267,22 @@ fn diff_options_from_tokens<'a>(parts: impl IntoIterator<Item = &'a str>) -> Dif
         functions,
         file,
         ref_range,
+        unknown_flag,
     }
+}
+
+/// #1107: the refusal for an unknown `/diff` flag, in the door's own terms.
+/// The shell door omits `--explain`, which needs an agent session.
+pub(crate) fn diff_unknown_flag_message(flag: &str, repl: bool) -> String {
+    let (cmd, explain) = if repl {
+        ("/diff", " [--explain]")
+    } else {
+        ("yoyo diff", "")
+    };
+    format!(
+        "usage: {cmd} [--staged|--cached] [--name-only] [--stat] [--functions]{explain} \
+         [<file>|<rev>|<rev>..<rev>]\nunknown flag: {flag}"
+    )
 }
 
 pub fn handle_diff(input: &str) {
@@ -271,17 +294,22 @@ pub fn handle_diff(input: &str) {
 /// ("no uncommitted changes") is deliberately 0 — nothing to show is not a
 /// failure. The REPL calls `handle_diff`, which discards the code.
 pub fn handle_diff_status(input: &str) -> i32 {
-    handle_diff_opts_status(parse_diff_args(input))
+    handle_diff_opts_status(parse_diff_args(input), true)
 }
 
 /// The shell door (`yoyo diff …`): argv elements in (#1008; see
 /// [`diff_options_from_argv`]). `args` is everything after `diff`.
 pub(crate) fn handle_diff_argv_status(args: &[String]) -> i32 {
-    handle_diff_opts_status(diff_options_from_argv(args))
+    handle_diff_opts_status(diff_options_from_argv(args), false)
 }
 
 /// The diff itself, shared by both doors once their arguments are parsed.
-fn handle_diff_opts_status(opts: DiffOptions) -> i32 {
+/// An unknown flag is refused (exit 2) before any git call (#1107).
+fn handle_diff_opts_status(opts: DiffOptions, repl: bool) -> i32 {
+    if let Some(flag) = &opts.unknown_flag {
+        eprintln!("{}", diff_unknown_flag_message(flag, repl));
+        return 2;
+    }
     // When a ref range is specified, compare commits directly
     if let Some(ref range) = opts.ref_range {
         return handle_diff_ref_range(&opts, range);
@@ -984,6 +1012,10 @@ pub async fn handle_diff_explain(
     model: &str,
 ) -> Option<String> {
     let opts = parse_diff_args(input);
+    if let Some(flag) = &opts.unknown_flag {
+        eprintln!("{}", diff_unknown_flag_message(flag, true));
+        return None;
+    }
     let diff_text = gather_diff_text(&opts)?;
 
     let scope = if opts.staged_only { "staged " } else { "" };
@@ -2113,6 +2145,9 @@ pub fn handle_git(input: &str) {
     let subcmd = parse_git_args(arg);
     run_git_subcommand(&subcmd);
 }
+#[cfg(test)]
+#[path = "commands_git_diff_flag_tests.rs"]
+mod commands_git_diff_flag_tests;
 #[cfg(test)]
 #[path = "commands_git_undo_tests.rs"]
 mod commands_git_undo_tests;
@@ -3591,6 +3626,7 @@ mod tests {
             functions: false,
             file: None,
             ref_range: Some("main..dev".to_string()),
+            unknown_flag: None,
         };
         assert_eq!(opts.ref_range, Some("main..dev".to_string()));
     }

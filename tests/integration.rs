@@ -3191,6 +3191,53 @@ fn git_diff_of_a_path_with_a_space_names_that_file() {
 }
 
 #[test]
+fn git_diff_refuses_a_misspelled_flag_instead_of_showing_another_diff() {
+    // #1107: `yoyo diff --cahced` dropped the flag and printed unstaged +
+    // staged with exit 0. Near miss: `--cached` still shows the staged change only.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let git = |args: &[&str]| {
+        let ok = Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c"])
+            .args(["commit.gpgsign=false"])
+            .args(args)
+            .current_dir(dir.path())
+            .env("GIT_CEILING_DIRECTORIES", dir.path().parent().unwrap())
+            .status()
+            .expect("git");
+        assert!(ok.success(), "git {args:?}");
+    };
+    git(&["init", "-q"]);
+    std::fs::write(dir.path().join("f.txt"), "one\n").unwrap();
+    git(&["add", "-A"]);
+    git(&["commit", "-q", "-m", "init"]);
+    std::fs::write(dir.path().join("f.txt"), "one\nstaged_1107\n").unwrap();
+    git(&["add", "-A"]);
+    std::fs::write(
+        dir.path().join("f.txt"),
+        "one\nstaged_1107\nunstaged_1107\n",
+    )
+    .unwrap();
+
+    let out = yoyo_in_dir(dir.path(), &["diff", "--cahced"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "stdout={stdout} stderr={stderr}"
+    );
+    assert!(stdout.is_empty(), "nothing is shown: {stdout}");
+    assert!(stderr.contains("unknown flag: --cahced"), "{stderr}");
+    assert!(stderr.contains("usage: yoyo diff"), "{stderr}");
+
+    let out = yoyo_in_dir(dir.path(), &["diff", "--cached"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "stdout={stdout}");
+    assert!(stdout.contains("staged_1107"), "stdout={stdout}");
+    assert!(!stdout.contains("unstaged_1107"), "stdout={stdout}");
+}
+
+#[test]
 fn git_blame_of_a_committed_file_still_exits_zero() {
     // Near miss for #982 slice 2, blame's twin of the diff test above: the
     // only in-repo blame pin was a usage error (`/blame`, no file), so a real
