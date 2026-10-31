@@ -262,6 +262,22 @@ Only the exact values `1` and `0` are recognised; anything else (including unset
 
 This fences the path argument of `read_file`, `search` and `list_files`, and it is not a sandbox. `bash` can still `cat` the same file, and writes (`write_file`, `edit_file`, `rename_symbol`) are not covered by it. For a hard boundary, use `--allow-dir` or `--restricted`.
 
+### Block writes outside the launch directory (opt-in)
+
+```bash
+YOYO_BLOCK_OUTSIDE_WRITES=1 yoyo --yes
+```
+
+With `YOYO_BLOCK_OUTSIDE_WRITES=1` (exactly `1`), `write_file` and `edit_file` refuse any target outside the directory you launched yoyo in. It never asks, and it applies in **every** mode: `--yes`, auto-edit and an "always" answer do not get past it. It is off by default, because a hard refusal breaks workflows that write elsewhere on purpose (a generated file in a sibling repo, scratch files in `/tmp`).
+
+- "Inside" is measured exactly as for the read fence above: from the launch directory, which `/cd` does not move. A relative path resolves against the current directory at the time of the call, where the file would actually be written.
+- A file that does not exist yet is checked through its nearest existing parent, so `new/dir/file.txt` under the project is allowed, while a path through a symlink inside the project that points outside it is refused.
+- A `..` in the part of the path that does not exist yet, or a dangling symlink, is refused, because yoyo cannot tell where it leads (this also refuses `new/../file.txt`, which would have landed inside).
+- `--allow-dir` counts as consent, as it does for reads.
+- The refusal names the path and the launch directory and goes to the model as the tool result.
+
+**Not covered:** `bash`, which can still write anywhere (`echo x > /anywhere`), and `rename_symbol`, which rewrites git-tracked files listed from the current directory rather than taking a write path. For a boundary that covers more, use `--allow-dir`, `--deny-dir` or `--restricted`.
+
 ### Rules
 
 - If **`--allow-dir`** is set, *only* paths under allowed directories are accessible. Everything else is blocked.

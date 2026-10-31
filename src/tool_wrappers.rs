@@ -138,7 +138,7 @@ impl AgentTool for GuardedTool {
                 return Err(yoagent::types::ToolError::Failed(r));
             }
         }
-        // Ask-once fence on reads outside the launch dir (default on with a tty); no root = the cwd (#879).
+        // Outside-launch-dir fences: ask-once reads (#879), opt-in hard write block (YOYO_BLOCK_OUTSIDE_WRITES).
         let path = params.get("path").and_then(|v| v.as_str());
         if let Some(r) = crate::outside_read::check(self.inner.name(), path, &self.restrictions) {
             return Err(yoagent::types::ToolError::Failed(r));
@@ -256,7 +256,7 @@ impl AgentTool for ArcGuardedTool {
                 return Err(yoagent::types::ToolError::Failed(r));
             }
         }
-        // Ask-once fence on reads outside the launch dir (default on with a tty); no root = the cwd (#879).
+        // Outside-launch-dir fences: ask-once reads (#879), opt-in hard write block (YOYO_BLOCK_OUTSIDE_WRITES).
         let path = params.get("path").and_then(|v| v.as_str());
         if let Some(r) = crate::outside_read::check(self.inner.name(), path, &self.restrictions) {
             return Err(yoagent::types::ToolError::Failed(r));

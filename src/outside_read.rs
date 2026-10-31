@@ -83,10 +83,33 @@
 //! directory and nothing is asked.
 //!
 //! **Not a sandbox.** This fences the three read tools' path argument only.
-//! `bash` can still `cat` the same file, writes (`write_file`, `edit_file`,
-//! `rename_symbol`) are a different fence, and a search rooted inside the launch directory
+//! `bash` can still `cat` the same file, and a search rooted inside the launch directory
 //! still follows whatever its own walker follows. `--restricted` and
 //! `--allow-dir` remain the hard fences.
+//!
+//! **The write fence (Day 245) lives here too, and is a different animal.**
+//! `YOYO_BLOCK_OUTSIDE_WRITES=1` (exactly `1`, read once per process) makes
+//! `write_file` and `edit_file` REFUSE any target outside the launch
+//! directory, in every mode: `--yes`, auto-edit and an "always" answer do not
+//! reach it, and it never asks, because a hard block that a flag can skip is
+//! the confirm prompt again. **Opt-in, for a user-facing reason:** a hard
+//! refusal of every outside write breaks workflows that legitimately write
+//! elsewhere (a generated file in a sibling repo, `/tmp` scratch), and the
+//! reference (Claude Code's `blockWritesOutsideWorkingDirectories`, shipped
+//! 2026-10-30) is opt-in too. An env var matches this file's read switch; a
+//! `.yoyo.toml` key is a possible follow-up. **Anchor:** the same launch dir
+//! ([`record_launch_dir`], recorded once at startup in `main`, never moved by
+//! `/cd`), read at each call; "inside" is the one shared [`is_inside`]. The
+//! TARGET resolves against the cwd at call time, where the tool really writes;
+//! a target that does not exist yet canonicalizes its nearest existing
+//! ancestor and appends the rest (`write_file` creates missing parents), so a
+//! symlink inside pointing out is outside. Fails closed: a `..` or a dangling
+//! symlink in the not-yet-existing part is refused (cost, stated: `new/../f`,
+//! which would land inside, is refused too). `--allow-dir` is consent, as for
+//! reads. **Not covered, plainly:** `bash` (it can still `echo > /anywhere`),
+//! and `rename_symbol`, which takes no write target: it rewrites git-tracked
+//! files listed from the current directory, so it reaches outside the launch
+//! dir only after `/cd` into another tree.
 //!
 //! **Why not `confirm_file_operation`.** That helper's `a`/always answer flips a
 //! session-wide auto-approve flag and offers to write a `[permissions] allow`
@@ -201,15 +224,22 @@ fn resolve_outside(path: &str, cwd: Option<&Path>, anchor: Option<&Path>) -> Opt
         cwd?.join(p)
     };
     let target = std::fs::canonicalize(joined).ok()?;
-    let Some(anchor) = anchor else {
-        return Some(target);
-    };
-    let root = std::fs::canonicalize(anchor).unwrap_or_else(|_| anchor.to_path_buf());
-    if target.starts_with(&root) {
+    if is_inside(&target, anchor) {
         None
     } else {
         Some(target)
     }
+}
+
+/// THE definition of "inside", shared by the read fence and the write fence
+/// so the two can never disagree: the canonical `target` is under the
+/// canonicalized `anchor`. No anchor means nothing is inside (fail closed).
+fn is_inside(target: &Path, anchor: Option<&Path>) -> bool {
+    let Some(anchor) = anchor else {
+        return false;
+    };
+    let root = std::fs::canonicalize(anchor).unwrap_or_else(|_| anchor.to_path_buf());
+    target.starts_with(&root)
 }
 
 /// What a yes for `tool` on the canonical `target` is remembered as.
@@ -344,13 +374,157 @@ fn effective_root<'a>(tool: &str, path: Option<&'a str>) -> Option<&'a str> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// The write fence (Day 245): opt-in, hard refusal, never asks.
+// ---------------------------------------------------------------------------
+
+/// The write fence's opt-in switch. Only the exact value `1` turns it on.
+pub(crate) const WRITE_ENV_VAR: &str = "YOYO_BLOCK_OUTSIDE_WRITES";
+
+/// The tools whose `path` argument the write fence reads.
+const WRITE_FENCED_TOOLS: &[&str] = &["write_file", "edit_file"];
+
+static WRITE_ENABLED: OnceLock<bool> = OnceLock::new();
+
+#[cfg(test)]
+thread_local! {
+    /// Test-only replacement for the write fence's two process-global INPUTS
+    /// (the env switch and the recorded launch dir), so a wiring test can turn
+    /// the fence on for one `#[tokio::test]` (current-thread) without touching
+    /// the process env that every other test shares. The decision itself still
+    /// runs through [`decide_write`]; only where its inputs come from differs.
+    static WRITE_FENCE_TEST_INPUTS: std::cell::RefCell<Option<(bool, PathBuf)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// The write fence's (enabled, recorded launch dir) for this call.
+fn write_fence_inputs() -> (bool, Option<PathBuf>) {
+    #[cfg(test)]
+    if let Some((on, anchor)) = WRITE_FENCE_TEST_INPUTS.with(|c| c.borrow().clone()) {
+        return (on, Some(anchor));
+    }
+    let on =
+        *WRITE_ENABLED.get_or_init(|| enabled_from(std::env::var(WRITE_ENV_VAR).ok().as_deref()));
+    (on, LAUNCH_DIR.get().cloned())
+}
+
+/// Where a write to `path` would really land, canonically, even when the
+/// file (or several of its parent directories) does not exist yet:
+/// `write_file` creates missing parents. A relative `path` is joined to `cwd`
+/// (where the tool resolves it). The nearest EXISTING ancestor is
+/// canonicalized (symlinks followed, so `inside/link_to_tmp/f` resolves into
+/// `/tmp`) and the not-yet-existing tail is appended. `None` = cannot be
+/// resolved safely, which the caller treats as outside: a `..` in the
+/// not-yet-existing tail, or an entry that exists but cannot be
+/// canonicalized (a dangling symlink, which the write would follow).
+fn resolve_write_target(path: &str, cwd: Option<&Path>) -> Option<PathBuf> {
+    let p = Path::new(path);
+    let joined = if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        cwd?.join(p)
+    };
+    let mut existing = joined.as_path();
+    let mut tail = Vec::new();
+    loop {
+        if let Ok(canon) = std::fs::canonicalize(existing) {
+            let mut out = canon;
+            for part in tail.iter().rev() {
+                out.push(part);
+            }
+            return Some(out);
+        }
+        if std::fs::symlink_metadata(existing).is_ok() {
+            return None;
+        }
+        tail.push(existing.file_name()?.to_os_string());
+        existing = existing.parent()?;
+    }
+}
+
+/// The refusal a fenced write gets. Carries `REFUSAL_STEM_MODE_ACTIVE`, like
+/// the read fence's refusal, so the recovery-hint wrapper treats it as a
+/// deliberate refusal rather than a flaky tool (#710).
+fn write_refusal(tool: &str, shown: &str, why: &str) -> String {
+    format!(
+        "{WRITE_ENV_VAR}=1{stem}{tool} refused '{shown}': {why}. This fence applies in every \
+         mode, --yes included, and never asks. To allow it, unset {WRITE_ENV_VAR}, run yoyo \
+         from a directory that contains the target, or list its directory with --allow-dir \
+         (which then limits every file tool to the listed directories).",
+        stem = crate::tool_wrappers::REFUSAL_STEM_MODE_ACTIVE,
+    )
+}
+
+/// The whole write-fence decision, every input injected. `None` = proceed.
+fn decide_write(
+    enabled: bool,
+    tool: &str,
+    path: &str,
+    explicit_allow: bool,
+    cwd: Option<&Path>,
+    anchor: Option<&Path>,
+) -> Option<String> {
+    if !enabled || !WRITE_FENCED_TOOLS.contains(&tool) || explicit_allow {
+        return None;
+    }
+    if cwd.is_none() && Path::new(path).is_relative() {
+        let why = "the current directory cannot be read, so this relative path cannot be \
+                   checked against the launch directory; use an absolute path";
+        return Some(write_refusal(tool, path, why));
+    }
+    match resolve_write_target(path, cwd) {
+        Some(target) if is_inside(&target, anchor) => None,
+        Some(target) => {
+            let why = format!("it is outside {}", anchor_phrase(anchor));
+            Some(write_refusal(tool, &target.display().to_string(), &why))
+        }
+        None => {
+            let why = format!(
+                "it cannot be resolved safely (a '..' or a dangling symlink in a part that does \
+                 not exist yet), so it is treated as outside {}",
+                anchor_phrase(anchor)
+            );
+            Some(write_refusal(tool, path, &why))
+        }
+    }
+}
+
+/// The write fence's entry point, reached through [`check`].
+fn check_write(
+    tool: &str,
+    path: Option<&str>,
+    restrictions: &crate::cli::DirectoryRestrictions,
+) -> Option<String> {
+    let (enabled, recorded) = write_fence_inputs();
+    if !enabled {
+        return None;
+    }
+    // No path: the tool reports the missing argument and writes nothing.
+    let path = path?;
+    let cwd = std::env::current_dir().ok();
+    let anchor = anchor_from(recorded.as_deref(), cwd.as_deref());
+    decide_write(
+        true,
+        tool,
+        path,
+        !restrictions.allow.is_empty(),
+        cwd.as_deref(),
+        anchor.as_deref(),
+    )
+}
+
 /// The wrapper's entry point: `None` = proceed, `Some(refusal)` = refuse.
-/// `path` is the call's `path` argument as a string, if any.
+/// `path` is the call's `path` argument as a string, if any. Write tools go
+/// to the write fence; everything else to the read fence. The two sets are
+/// disjoint, so each fence is byte-identical to running alone.
 pub(crate) fn check(
     tool: &str,
     path: Option<&str>,
     restrictions: &crate::cli::DirectoryRestrictions,
 ) -> Option<String> {
+    if WRITE_FENCED_TOOLS.contains(&tool) {
+        return check_write(tool, path, restrictions);
+    }
     if !is_enabled() {
         return None;
     }
@@ -1294,5 +1468,257 @@ mod tests {
         assert_eq!(anchor_from(Some(l), Some(c)), Some(l.to_path_buf()));
         assert_eq!(anchor_from(None, Some(c)), Some(c.to_path_buf()));
         assert_eq!(anchor_from(Some(l), None), Some(l.to_path_buf()));
+    }
+
+    // --- The write fence (Day 245) ---
+
+    /// `decide_write` with the fence on, the cwd and anchor both `work`.
+    fn w(tool: &str, path: &str, work: &Path) -> Option<String> {
+        decide_write(true, tool, path, false, Some(work), Some(work))
+    }
+
+    /// Every user who never sets the variable: nothing is refused, for any
+    /// tool, inside or out. This is the whole regression surface.
+    #[test]
+    fn write_fence_off_refuses_nothing() {
+        let (_tmp, root, work) = tree();
+        let outside = root.join("outside.txt");
+        for tool in ["write_file", "edit_file"] {
+            for path in [outside.to_str().unwrap(), "../outside.txt", "inside.txt"] {
+                assert_eq!(
+                    decide_write(false, tool, path, false, Some(&work), Some(&work)),
+                    None,
+                    "{tool} {path}"
+                );
+            }
+        }
+    }
+
+    /// The exact text the model receives, written from intent.
+    #[test]
+    fn write_fence_refusal_full_text() {
+        let (_tmp, root, work) = tree();
+        let outside = root.join("outside.txt");
+        let want = format!(
+            "YOYO_BLOCK_OUTSIDE_WRITES=1 is active — write_file refused '{o}': it is outside \
+             the directory yoyo was launched in '{a}'. This fence applies in every mode, --yes \
+             included, and never asks. To allow it, unset YOYO_BLOCK_OUTSIDE_WRITES, run yoyo \
+             from a directory that contains the target, or list its directory with --allow-dir \
+             (which then limits every file tool to the listed directories).",
+            o = outside.display(),
+            a = work.display(),
+        );
+        assert_eq!(
+            w("write_file", outside.to_str().unwrap(), &work),
+            Some(want)
+        );
+        // Classified like the read fence's refusal (#710).
+        let msg = w("edit_file", outside.to_str().unwrap(), &work).unwrap();
+        assert!(
+            crate::tool_wrappers::is_deterministic_refusal(&msg),
+            "{msg}"
+        );
+        assert!(msg.contains("edit_file refused '"), "{msg}");
+    }
+
+    #[test]
+    fn write_fence_inside_new_nested_and_escapes() {
+        let (_tmp, root, work) = tree();
+        for tool in ["write_file", "edit_file"] {
+            // Inside: existing, absolute, and not-yet-existing nested paths.
+            assert_eq!(w(tool, "inside.txt", &work), None);
+            assert_eq!(
+                w(tool, work.join("inside.txt").to_str().unwrap(), &work),
+                None
+            );
+            assert_eq!(w(tool, "new/dir/f.txt", &work), None);
+            assert_eq!(
+                w(tool, "../work/g.txt", &work),
+                None,
+                "an existing '..' is resolved"
+            );
+            // Outside: absolute, a `..` escape, and a nested not-yet-existing one.
+            for p in [
+                root.join("outside.txt").to_str().unwrap().to_string(),
+                "../outside.txt".to_string(),
+                "../fresh/dir/f.txt".to_string(),
+            ] {
+                let out = w(tool, &p, &work).unwrap_or_else(|| panic!("{tool} {p} allowed"));
+                assert!(out.contains("it is outside the directory yoyo"), "{out}");
+            }
+            // A `..` inside a part that does not exist yet cannot be resolved: refused.
+            let out = w(tool, "nope/../../outside.txt", &work).unwrap();
+            assert!(out.contains("cannot be resolved safely"), "{out}");
+            assert!(out.contains("'nope/../../outside.txt'"), "{out}");
+            // The stated cost of failing closed: `new/../g.txt` would land
+            // inside (write_file creates `new`), and is refused anyway.
+            let out = w(tool, "new/../g.txt", &work).unwrap();
+            assert!(out.contains("cannot be resolved safely"), "{out}");
+        }
+        // Anti-vacuous: the escape target really is the sibling of `work`.
+        assert!(root.join("outside.txt").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_fence_symlinks_inside_pointing_outside_are_outside() {
+        let (_tmp, root, work) = tree();
+        std::os::unix::fs::symlink(root.join("a"), work.join("link_to_a")).unwrap();
+        std::os::unix::fs::symlink(root.join("gone"), work.join("dangling")).unwrap();
+        // Anti-vacuous: the link exists and leads out of `work`.
+        assert!(work.join("link_to_a/x").exists());
+        let out = w("write_file", "link_to_a/new.txt", &work).unwrap();
+        assert!(
+            out.contains(&format!("'{}'", root.join("a/new.txt").display())),
+            "{out}"
+        );
+        let out = w("write_file", "dangling", &work).unwrap();
+        assert!(out.contains("cannot be resolved safely"), "{out}");
+    }
+
+    /// The anchor is the launch dir: a moved cwd changes where a relative
+    /// path lands, never what counts as inside.
+    #[test]
+    fn write_fence_anchor_is_the_launch_dir_not_the_cwd() {
+        let (_tmp, root, work) = tree();
+        let moved = root.join("a");
+        // Relative to the moved cwd: lands in `a`, outside the launch dir.
+        let out = decide_write(
+            true,
+            "write_file",
+            "f.txt",
+            false,
+            Some(&moved),
+            Some(&work),
+        );
+        assert!(
+            out.unwrap()
+                .contains(&format!("'{}'", moved.join("f.txt").display())),
+            "the target resolves against the cwd at call time"
+        );
+        // Old rule (cwd-anchored) would have allowed it.
+        assert_eq!(
+            decide_write(
+                true,
+                "write_file",
+                "f.txt",
+                false,
+                Some(&moved),
+                Some(&moved)
+            ),
+            None
+        );
+        // Near miss: the launch dir, reached by absolute path from the moved cwd.
+        let p = work.join("g.txt");
+        assert_eq!(
+            decide_write(
+                true,
+                "write_file",
+                p.to_str().unwrap(),
+                false,
+                Some(&moved),
+                Some(&work)
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn write_fence_other_tools_allow_dir_no_cwd_and_no_anchor() {
+        let (_tmp, root, work) = tree();
+        let out = root.join("outside.txt");
+        let o = out.to_str().unwrap();
+        for tool in ["read_file", "search", "list_files", "bash", "rename_symbol"] {
+            assert_eq!(w(tool, o, &work), None, "{tool} is not a write-fenced tool");
+        }
+        assert_eq!(
+            decide_write(true, "write_file", o, true, Some(&work), Some(&work)),
+            None,
+            "--allow-dir is consent, as for the read fence"
+        );
+        let msg = decide_write(true, "write_file", "x", false, None, Some(&work)).unwrap();
+        assert!(msg.contains("use an absolute path"), "{msg}");
+        // No anchor: nothing is inside (fail closed), even the cwd itself.
+        let msg = decide_write(true, "write_file", "inside.txt", false, Some(&work), None).unwrap();
+        assert!(msg.contains("(which could not be determined)"), "{msg}");
+    }
+
+    /// Sets the write fence's inputs for this (current-thread) test only.
+    struct WriteFenceOn;
+    impl WriteFenceOn {
+        fn set(on: bool, anchor: &Path) -> Self {
+            WRITE_FENCE_TEST_INPUTS.with(|c| *c.borrow_mut() = Some((on, anchor.to_path_buf())));
+            WriteFenceOn
+        }
+    }
+    impl Drop for WriteFenceOn {
+        fn drop(&mut self) {
+            WRITE_FENCE_TEST_INPUTS.with(|c| *c.borrow_mut() = None);
+        }
+    }
+
+    fn tool_ctx() -> yoagent::types::ToolContext {
+        yoagent::types::ToolContext::new("test", "test")
+    }
+
+    /// Through both real wrappers (`maybe_guard` for the main agent,
+    /// `maybe_guard_arc` for sub-agents): deleting either call site of
+    /// `outside_read::check` in src/tool_wrappers.rs reddens this.
+    #[tokio::test]
+    async fn write_fence_is_wired_into_both_guarded_tools() {
+        use yoagent::tools::{EditFileTool, WriteFileTool};
+        let (_tmp, root, work) = tree();
+        let none = crate::cli::DirectoryRestrictions::default();
+        let outside = root.join("blocked.txt");
+        let o = outside.to_str().unwrap().to_string();
+        let _on = WriteFenceOn::set(true, &work);
+
+        let writer = crate::tool_wrappers::maybe_guard(Box::new(WriteFileTool::new()), &none);
+        let err = writer
+            .execute(serde_json::json!({ "path": o, "content": "x" }), tool_ctx())
+            .await
+            .expect_err("outside write must be refused");
+        assert!(
+            format!("{err:?}").contains("write_file refused '"),
+            "{err:?}"
+        );
+        assert!(!outside.exists(), "the refused write must not land");
+        // Near miss: an inside write through the same wrapper lands.
+        let inside = work.join("ok.txt");
+        writer
+            .execute(
+                serde_json::json!({ "path": inside.to_str().unwrap(), "content": "x" }),
+                tool_ctx(),
+            )
+            .await
+            .expect("inside write must proceed");
+        assert_eq!(std::fs::read_to_string(&inside).unwrap(), "x");
+
+        let editor =
+            crate::tool_wrappers::maybe_guard_arc(std::sync::Arc::new(EditFileTool::new()), &none);
+        let target = root.join("outside.txt");
+        let err = editor
+            .execute(
+                serde_json::json!({
+                    "path": target.to_str().unwrap(), "old_text": "out", "new_text": "pwned"
+                }),
+                tool_ctx(),
+            )
+            .await
+            .expect_err("outside edit must be refused");
+        assert!(
+            format!("{err:?}").contains("edit_file refused '"),
+            "{err:?}"
+        );
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "out");
+
+        // Fence off through the same wrapper: the outside write lands.
+        drop(_on);
+        let _off = WriteFenceOn::set(false, &work);
+        writer
+            .execute(serde_json::json!({ "path": o, "content": "x" }), tool_ctx())
+            .await
+            .expect("fence off: outside write proceeds as before");
+        assert_eq!(std::fs::read_to_string(&outside).unwrap(), "x");
     }
 }
