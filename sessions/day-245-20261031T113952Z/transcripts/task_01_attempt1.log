@@ -1,0 +1,150 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh… ✓ (28ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 690,1000p src/cli.rs; sed -… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 955,1060p src/cli.rs; sed -…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "try_dispatch_subcommand\|… ✓ (7ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "yoyo\b" scripts/*.sh .git… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -nE "target/(release|debug)/y… ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 19.0s (6 ✓)
+
+Let me extract the full multi-line invocations with a small script.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (26 lines) ✓ (50ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 700,740p scripts/evolve.sh;… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "YOYO_SKILL_FLAGS\|run_age… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -nE "(^|[ /\"])yoyo( |$)" .gi… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "synthesize.yml" -n /dev/n… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "fn collect_positional_arg… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (13 lines) ✓ (30ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "Unknown flag\|unknown fl… ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "Unknown flag\|unknown fla… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 498,540p tests/integration.… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 2403,2440p src/cli.rs; grep… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "fn levenshtein\|fn edit_… ✓ (22ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 405,475p src/commands.rs ✓ (3ms)
+  ▶ edit src/cli_config.rs (5 → 118 lines)
+  + /// Startup refusal for flag-shaped tokens that are not in `KNOWN_FLAGS`
+  + /// (#1109). Before, `yoyo --modle claude-haiku-4-5 -p hi` printed a warning,
+  + /// ignored the flag and sent a paid request on the default model; git, cargo
+  + /// and Claude Code all refuse an unknown option before doing any work.
+  + ///
+  + /// Only tokens that look like a flag a person typed are refused: they start
+  + /// with `-`, are not `-` or `--`, carry no whitespace, and come before a `--`
+  + /// terminator. Everything else keeps the old warn-and-continue path
+  + /// byte-identically (`warn_unknown_flags`, which the caller still runs), so a
+  + /// quoted prompt such as `yoyo "- fix the list"` and anything after `--` are
+  + /// untouched. Values of `FLAGS_NEEDING_VALUES` flags are skipped, so
+  + /// `--system -x` is not read as a flag here. Subcommands never reach this:
+  + /// `try_dispatch_subcommand` runs first and parses their own flags.
+  + ///
+  + /// Each unknown flag is named (sanitized) with the nearest known flag when it
+  + /// is within edit distance 2, and `--name=value` for a known name says to put
+  + /// the value in its own word. Glyph-free, so it reads the same under plain
+  + /// output.
+  + pub(crate) fn unknown_flag_refusal(args: &[String]) -> Option<String> {
+  +     use crate::cli::{FLAGS_NEEDING_VALUES, KNOWN_FLAGS};
+  ... (98 more lines)
+ ✓ (23.6s)
+  + /// Startup refusal for flag-shaped tokens that are not in `KNOWN_FLAGS`
+  + /// (#1109). Before, `yoyo --modle claude-haiku-4-5 -p hi` printed a warning,
+  + /// ignored the flag and sent a paid request on the default model; git, cargo
+  + /// and Claude Code all refuse an unknown option before doing any work.
+  + ///
+  + /// Only tokens that look like a flag a person typed are refused: they start
+  + /// with `-`, are not `-` or `--`, carry no whitespace, and come before a `--`
+  + /// terminator. Everything else keeps the old warn-and-continue path
+  ... (13 more lines)
+  ▶ edit src/cli.rs (5 → 9 lines)
+            crate::format::set_plain_output(true);
+            crate::format::disable_color();
+  +     }
+  +     if let Some(msg) = crate::cli_config::unknown_flag_refusal(args) {
+  +         eprintln!("{RED}error:{RESET} {msg}");
+  +         std::process::exit(2); // #1109: before the trust prompt, wizard and any request
+        }
+    
+        // --continue-on-silence
+ ✓ (2m 1s)
+            crate::format::set_plain_output(true);
+            crate::format::disable_color();
+  +     }
+  +     if let Some(msg) = crate::cli_config::unknown_flag_refusal(args) {
+  +         eprintln!("{RED}error:{RESET} {msg}");
+  +         std::process::exit(2); // #1109: before the trust prompt, wizard and any request
+        }
+    
+        // --continue-on-silence
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test 2>&1 | grep -E "^test .… ✓ (58.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test 2>&1 | grep -E "FAILED|… ✓ (58.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test 2>&1 | tail -40 ✓ (59.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test --bin yoyo -- --test-th… ✓ (1m 8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test --bin yoyo -- --test-th… ✓ (1m 5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "fn test_safe_mode_near_mi… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/cli.rs /tmp/cli.rs.bak && s… ✓ (2m 37s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "TEMPO… (24 lines) ✓ (25ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (37 lines) ✓ (25ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -i 's|        "should warn abo… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat tests/bad_flag_value.rs | head… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 80,200p tests/bad_flag_valu… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo build -q 2>&1|tail -3; d=$(m… ✓ (12.5s)
+
+────────────────────────────────────────────────────────────────────────────────
+  28 tools completed in 12m 51s (28 ✓)
+
+Works. Now the real-binary test file.
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (166 lines) ✓ (14.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/cli.rs /tmp/cli.rs.bak && s… ✓ (12.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/cli.rs /tmp/cli.rs.bak && s… ✓ (13.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; wc -l src/cli.rs src/cli_config.rs… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (15 lines) ✓ (26.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; wc -l src/cli.rs; cargo fmt -- --c… ✓ (4m 16s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test 2>&1 | grep -E "test re… ✓ (3m 44s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add -A && … (45 lines) ✓ (29ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue comme… (3 lines) ✓ (859ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  9 tools completed in 10m 0s (9 ✓)
+
+Fixed and committed as d9f590c3. An unknown top-level flag now stops yoyo with exit 2 before anything is sent:
+
+```
+$ yoyo --modle claude-haiku-4-5 -p hi
+error: unknown flag '--modle' (did you mean --model?). Nothing was sent to the model. Run yoyo --help for the list of flags.
+$ echo $?
+2
+```
+
+yoyo log --bogus is refused the same way. Before, it sent "log" as a prompt and exited 0.
+
+Census of my own scripts (done before the code change): I listed every yoyo call in scripts/*.sh, scripts/bench/, .github/workflows/ and .github/actions/, including line continuations, the YOYO_SKILL_FLAGS array and the fallback/extra-flags variables. The flags they pass are --model, --skills, --fallback, --context-strategy, --max-turns, --prompt, -p and --output-format, and all of them are in KNOWN_FLAGS. The workflows run plain yoyo < "$PROMPT". Subcommand calls such as risk snapshot and gasp … are handled before this check runs. So the refusal can't stop my own loop.
+
+What gets refused: a word before -- that starts with -, isn't - or --, has no spaces, isn't the value of a flag that takes one, and isn't a known flag. --model=x is refused with a hint to write the value as its own word. These behave exactly as before and still only warn:
+• anything after --
+• a quoted prompt that starts with -, like "- fix the list"
+• a subcommand's own flags, like yoyo diff --stat
+
+Changes:
+• src/cli_config.rs: unknown_flag_refusal sits next to bad_numeric_flag_refusal. It suggests the nearest flag within edit distance 2 by reusing commands::closest_match. It escapes control bytes and uses no special glyphs. Table tests and a control-byte test are included.
+• src/cli.rs: 4 new lines at the call site, placed before the trust prompt, the setup wizard and any request. I updated the file's size entry in tests/module_size.rs to 7877.
+• tests/unknown_flag_refusal.rs: runs the real binary against a local stub that counts requests, with provider keys removed from the environment. The refused runs reach the stub 0 times. The cases that must still work do: known flags, a correctly spelled --model reaching the stub, -- keeping the old warning, and yoyo diff --stat in a temporary git repo.
+• Changed existing tests: four tests in tests/integration.rs and one in src/cli.rs asserted the old warning, and they now expect the refusal (error:, exit 2). The one in cli.rs used to check that a typo like --safe leaves safe mode off; it now checks the typo is refused.
+• CHANGELOG.md and docs/src/usage/commands.md describe the new behaviour.
+
+Checks: I disabled the new call site, and exactly the two refusal tests failed. With it restored, everything passes: clippy, fmt, cargo test (7113 passed, 0 failed) and tests/harness_logic.sh (321 passed).
+
+Not fixed in this change (posted on #1109, since the push will close it): yoyo -- hi still warns "Unknown flag '--'", and words that look like flags after -- are still dropped from the prompt instead of being sent as text.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 1/2 changed files were in top-10 predictions (50.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/2 (0.0%) — reactive was 50.0%
+     Predicted correctly: src/cli.rs
+     Surprises (not predicted): src/cli_config.rs

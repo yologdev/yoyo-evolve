@@ -1,0 +1,33 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /tmp && rm -rf ev1107 && mkdir ev1107 && cd ev1107 && git init -q && echo a>f… ✓ (49ms)
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 15.4s (2 ✓)
+
+Verdict: PASS — written to session_plan/eval_task_2.md.
+
+The fix does what #1107 asked. yoyo diff --cahced and /diff --cahced now refuse the flag instead of dropping it and showing a different diff. Flags that already worked behave as before.
+
+Running the binary in a temp git repo with one staged and one unstaged change:
+
+| Command | Exit | Output |
+|---|---|---|
+| yoyo diff --cahced | 2 | usage line plus unknown flag: --cahced on stderr, no diff shown |
+| yoyo diff --cached | 0 | |
+| yoyo diff -- f | 0 | |
+| yoyo diff zzz | 1 | git's unknown revision error |
+
+The binary was built at 11:20 and the new tests file is from 11:24, so it may not include the last edit. The behaviour matched what the diff says anyway, and the harness had already passed the build and tests.
+
+What I checked in the diff:
+• Both doors refuse. The shared parser records the first unknown flag. The shell yoyo diff and the REPL /diff (including its --explain path) refuse it before any git call.
+• Each door gets its own usage line. It lists only flags the parser accepts, and --explain appears only in the REPL version.
+• `--` is now a path separator. Before, it was dropped as an unknown flag. A dash-led word after it is still not refused.
+• Nothing is left unwired. The new field, the message function and the new parameter all have callers in this diff. The existing test that builds the options struct was updated, and the new tests file is wired in.
+• Size limit. commands_git.rs's registered size was raised to 3858, its current line count. That covers this task's lines plus 13 earlier unregistered ones, and the entry says so.
+• Tests and docs. A table test checks every accepted input on both doors, and an integration test checks --cahced against --cached in a temp repo. CHANGELOG and docs/src/usage/commands.md both describe the new behaviour.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
