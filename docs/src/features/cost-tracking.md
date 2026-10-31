@@ -51,9 +51,16 @@ session's own spend only:
 
 If any delegated run could not be priced, the line says `cost unknown` (with
 its tokens) and the total is reported as unknown — it is never shown as `$0`.
-With no delegation, `/cost` looks exactly as above. The per-turn breakdown,
-`/tokens`, `--output-format json` and the `--cost-warn` tally still count the
-session's own spend only (#1073).
+With no delegation, `/cost` looks exactly as above. `/tokens` prints the same
+sub-agent lines under its session totals.
+
+`--output-format json` keeps `usage` and `cost_usd` as the run's own spend and
+adds a separate `sub_agents` object (`runs`, the four token counts and
+`cost_usd`, which is `null` when delegated spend could not be priced) only when
+the run delegated; without delegation the object is exactly as before. The
+`--cost-warn` tally counts own and delegated spend; unpriced delegated spend is
+reported as an unpriced run, never added as `$0`. The per-turn breakdown in
+`/cost` still shows each turn's own spend only (#1073).
 
 ## Detailed breakdown
 

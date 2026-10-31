@@ -153,8 +153,9 @@ fn start_stub() -> (u16, Arc<Mutex<usize>>) {
     (port, posts)
 }
 
-#[test]
-fn a_run_that_delegates_records_the_childs_spend_in_sub_agents() {
+/// Run yoyo against the stub with `extra` args before `-p`; returns the
+/// output, the audit text and the stub's POST count.
+fn run_delegating(extra: &[&str]) -> (std::process::Output, String, usize) {
     let tmp = tempfile::tempdir().expect("tempdir");
     let proj = tmp.path().join("proj");
     let home = tmp.path().join("home");
@@ -171,9 +172,9 @@ fn a_run_that_delegates_records_the_childs_spend_in_sub_agents() {
             "--base-url",
             &base_url,
             "--audit",
-            "-p",
-            "delegate please",
         ])
+        .args(extra)
+        .args(["-p", "delegate please"])
         .current_dir(&proj)
         .env("HOME", &home)
         .env("XDG_CONFIG_HOME", home.join(".config"))
@@ -201,8 +202,15 @@ fn a_run_that_delegates_records_the_childs_spend_in_sub_agents() {
         thread::sleep(Duration::from_millis(50));
     }
     let out = child.wait_with_output().unwrap();
-    let stderr = String::from_utf8_lossy(&out.stderr);
     let audit = std::fs::read_to_string(proj.join(".yoyo/audit.jsonl")).unwrap_or_default();
+    let n = *posts.lock().unwrap();
+    (out, audit, n)
+}
+
+#[test]
+fn a_run_that_delegates_records_the_childs_spend_in_sub_agents() {
+    let (out, audit, posts) = run_delegating(&[]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
     let usage: Vec<serde_json::Value> = audit
         .lines()
         .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
@@ -210,12 +218,12 @@ fn a_run_that_delegates_records_the_childs_spend_in_sub_agents() {
         .collect();
     let ctx = format!(
         "posts={} exit={:?}\naudit:\n{audit}\nstderr:\n{stderr}",
-        posts.lock().unwrap(),
+        posts,
         out.status.code()
     );
     // Anti-vacuous: the sub-agent really ran (parent, child, parent).
     assert!(
-        *posts.lock().unwrap() >= 3,
+        posts >= 3,
         "the sub_agent call never reached the stub\n{ctx}"
     );
     assert_eq!(usage.len(), 1, "one usage record per run\n{ctx}");
@@ -225,4 +233,45 @@ fn a_run_that_delegates_records_the_childs_spend_in_sub_agents() {
     assert_eq!(sub["input_tokens"], CHILD_INPUT_TOKENS, "{ctx}");
     // Own spend stays the parent's: two parent turns, never the child's.
     assert_eq!(rec["input_tokens"], 2 * PARENT_INPUT_TOKENS, "{ctx}");
+}
+
+/// The `--output-format json` envelope at the real emission point: the same
+/// run's delegated spend is in a `sub_agents` object, the top-level usage stays
+/// the parent's own, and the audit record (drained from the same single
+/// per-run take) still carries it too — proof the json read added no second
+/// drain that would have emptied one of them.
+#[test]
+fn output_format_json_carries_the_childs_spend_in_sub_agents() {
+    let (out, audit, posts) = run_delegating(&["--output-format", "json"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let ctx = format!(
+        "posts={posts} exit={:?}\nstdout:\n{stdout}\nstderr:\n{}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        posts >= 3,
+        "the sub_agent call never reached the stub\n{ctx}"
+    );
+    let env: serde_json::Value = stdout
+        .lines()
+        .rev()
+        .find_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .unwrap_or_else(|| panic!("no json envelope on stdout\n{ctx}"));
+    assert_eq!(env["sub_agents"]["runs"], 1, "{ctx}");
+    assert_eq!(
+        env["sub_agents"]["input_tokens"], CHILD_INPUT_TOKENS,
+        "{ctx}"
+    );
+    assert_eq!(
+        env["usage"]["input_tokens"],
+        2 * PARENT_INPUT_TOKENS,
+        "{ctx}"
+    );
+    let rec = audit
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .find(|v| v["type"] == "usage")
+        .unwrap_or_else(|| panic!("no usage record\naudit:\n{audit}\n{ctx}"));
+    assert_eq!(rec["sub_agents"], env["sub_agents"], "{ctx}");
 }

@@ -235,18 +235,21 @@ pub fn audit_log_usage(
     duration: Duration,
     num_turns: usize,
     is_error: bool,
-) {
-    // FIRST statement, and deliberately ABOVE the `is_audit_enabled()` gate.
+) -> yoagent::SubAgentSpend {
+    // #1073: the run's delegated spend is drained FIRST — exactly once per
+    // run, whether or not audit is on, so the store never outlives the run it
+    // describes — and handed back so `--output-format json` reads the same
+    // value instead of draining a second time. `usage` stays OWN spend.
+    let sub_agents = crate::prompt::take_sub_agent_spend();
+    // Deliberately ABOVE the `is_audit_enabled()` gate.
     // `emit_output` calls this on the first line of its body, ungated by output
     // mode (#848), so the cost budget inherits that reach for free: print_mode,
     // `--output-format json` and the default path all arrive here. Moving this
     // inside `audit_log_usage_when` would count for `--audit` users only, which
     // is #848's "works in json mode" defect wearing a different hat.
     // `estimate_cost` is pure, so the second call is free.
-    record_run_cost(crate::format::estimate_cost(usage, model));
-    // #1073: drained whether or not audit is on, so the store never outlives
-    // the run it describes. `usage` above stays this agent's OWN spend.
-    let sub_agents = crate::prompt::take_sub_agent_spend();
+    // #1073: the tally counts own + delegated spend; see `record_run_costs`.
+    record_run_cost(crate::format::estimate_cost(usage, model), &sub_agents);
 
     audit_log_usage_when(
         is_audit_enabled(),
@@ -257,6 +260,7 @@ pub fn audit_log_usage(
         num_turns,
         is_error,
     );
+    sub_agents
 }
 
 /// [`audit_log_usage`] with the enablement flag passed in rather than read from
@@ -416,6 +420,22 @@ pub(crate) fn record_cost(tally: &mut CostTally, cost: Option<f64>) {
     match cost {
         Some(c) if c.is_finite() && c >= 0.0 => tally.spent_usd += c,
         _ => tally.unpriced_runs += 1,
+    }
+}
+
+/// Fold one run's own cost AND its delegated (sub-agent) cost into `tally`
+/// before any warning is composed, so the crossing check sees the whole run
+/// (#1073). No delegation folds exactly what the own-only tally did. Unpriced
+/// delegated spend (`cost_usd` `None` with something delegated) goes through
+/// [`record_cost`]'s `None` arm — an unpriced run, never $0.
+pub(crate) fn record_run_costs(
+    tally: &mut CostTally,
+    own: Option<f64>,
+    sub_agents: &yoagent::SubAgentSpend,
+) {
+    record_cost(tally, own);
+    if !sub_agents.is_empty() {
+        record_cost(tally, sub_agents.cost_usd);
     }
 }
 
@@ -636,14 +656,14 @@ static COST_TALLY: Mutex<CostTally> = Mutex::new(CostTally {
 /// documented scope is *informational* stderr output, and a spend alarm is not
 /// informational (the trust prompt is the same call, for the same reason). It
 /// *is* gated on `is_plain_output()` for glyphs.
-pub(crate) fn record_run_cost(cost_usd: Option<f64>) {
+pub(crate) fn record_run_cost(cost_usd: Option<f64>, sub_agents: &yoagent::SubAgentSpend) {
     let Some(threshold) = cost_threshold() else {
         return;
     };
 
     let warning = {
         let mut tally = crate::sync_util::lock_or_recover(&COST_TALLY);
-        record_cost(&mut tally, cost_usd);
+        record_run_costs(&mut tally, cost_usd, sub_agents);
         maybe_cost_warning(&mut tally, threshold, crate::format::is_plain_output())
     };
     if let Some(msg) = warning {
@@ -682,6 +702,34 @@ mod cost_budget_tests {
         assert_eq!(parse_cost_threshold(Some("5")), Some(5.0));
         assert_eq!(parse_cost_threshold(Some("5.50")), Some(5.5));
         assert_eq!(parse_cost_threshold(Some("  2.5  ")), Some(2.5));
+    }
+
+    /// #1073: a budget that own spend alone stays under but own + delegated
+    /// crosses must warn; with no delegation the tally is exactly the own-only
+    /// one; unpriced delegated spend counts as an unpriced run, never as $0.
+    #[test]
+    fn run_tally_counts_delegated_spend_and_never_reads_unpriced_as_free() {
+        let mut delegated = yoagent::SubAgentSpend::default();
+        delegated.runs = 1;
+        delegated.usage.input = 10;
+        delegated.cost_usd = Some(0.6);
+
+        let mut t = CostTally::default();
+        record_run_costs(&mut t, Some(0.6), &delegated);
+        assert_eq!(t.spent_usd, 1.2);
+        assert!(maybe_cost_warning(&mut t, 1.0, true).is_some());
+
+        // Near-miss: same own spend, no delegation -> under budget, silent.
+        let mut t = CostTally::default();
+        record_run_costs(&mut t, Some(0.6), &yoagent::SubAgentSpend::default());
+        assert_eq!((t.spent_usd, t.unpriced_runs), (0.6, 0));
+        assert!(maybe_cost_warning(&mut t, 1.0, true).is_none());
+
+        // Unpriced delegation: own spend still counted, the child named unpriced.
+        delegated.cost_usd = None;
+        let mut t = CostTally::default();
+        record_run_costs(&mut t, Some(0.6), &delegated);
+        assert_eq!((t.spent_usd, t.unpriced_runs), (0.6, 1));
     }
 
     #[test]

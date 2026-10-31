@@ -593,6 +593,14 @@ pub fn handle_tokens(agent: &Agent, session_total: &Usage, model: &str, input: &
     if let Some(cost) = estimate_cost(session_total, model) {
         println!("    est. cost:   {}", format_cost(cost));
     }
+    // #1073: the totals above are this agent's own calls; delegated spend gets
+    // the same lines `/cost` prints, and nothing at all without delegation.
+    let delegated = crate::prompt::session_sub_agent_spend();
+    if let Some(lines) =
+        crate::prompt::sub_agent_cost_lines(estimate_cost(session_total, model), &delegated)
+    {
+        println!("{lines}");
+    }
     println!("{RESET}");
 }
 

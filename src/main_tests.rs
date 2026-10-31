@@ -221,6 +221,7 @@ fn test_build_json_output_valid_json_with_expected_keys() {
         &SessionChanges::new(),
         std::time::Duration::from_millis(1234),
         3,
+        &yoagent::SubAgentSpend::default(),
     );
 
     // Must be valid JSON
@@ -266,6 +267,7 @@ fn test_build_json_output_error_mode() {
         &SessionChanges::new(),
         std::time::Duration::from_millis(1234),
         3,
+        &yoagent::SubAgentSpend::default(),
     );
 
     let parsed: serde_json::Value = serde_json::from_str(&result)
@@ -359,6 +361,7 @@ fn test_build_json_output_empty_text() {
         &SessionChanges::new(),
         std::time::Duration::from_millis(1234),
         3,
+        &yoagent::SubAgentSpend::default(),
     );
     let parsed: serde_json::Value =
         serde_json::from_str(&result).expect("empty text should produce valid JSON");
@@ -392,6 +395,7 @@ fn test_build_json_output_special_characters() {
         &SessionChanges::new(),
         std::time::Duration::from_millis(1234),
         3,
+        &yoagent::SubAgentSpend::default(),
     );
     let parsed: serde_json::Value =
         serde_json::from_str(&result).expect("special chars should produce valid JSON");
@@ -427,6 +431,7 @@ fn test_build_json_output_structure_completeness() {
         &SessionChanges::new(),
         std::time::Duration::from_millis(1234),
         3,
+        &yoagent::SubAgentSpend::default(),
     );
     let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
     let obj = parsed.as_object().unwrap();
@@ -482,6 +487,7 @@ fn test_build_json_output_cost_is_non_negative() {
         &SessionChanges::new(),
         std::time::Duration::from_millis(1234),
         3,
+        &yoagent::SubAgentSpend::default(),
     );
     let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
     let cost = parsed["cost_usd"].as_f64().unwrap();
@@ -514,6 +520,7 @@ fn test_build_json_output_unknown_model_still_valid() {
         &SessionChanges::new(),
         std::time::Duration::from_millis(1234),
         3,
+        &yoagent::SubAgentSpend::default(),
     );
     let parsed: serde_json::Value =
         serde_json::from_str(&result).expect("unknown model should still produce valid JSON");
@@ -549,6 +556,7 @@ fn test_build_json_output_includes_session_changes() {
         &changes,
         std::time::Duration::from_millis(1234),
         3,
+        &yoagent::SubAgentSpend::default(),
     );
     let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
 
@@ -594,6 +602,7 @@ fn test_build_json_output_empty_session_changes() {
         &changes,
         std::time::Duration::from_millis(1234),
         3,
+        &yoagent::SubAgentSpend::default(),
     );
     let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
 
@@ -1079,6 +1088,7 @@ fn json_for(external: &crate::agent_builder::ExternalServerReport) -> serde_json
         std::time::Duration::from_millis(1234),
         3,
         external,
+        &yoagent::SubAgentSpend::default(),
     );
     // Round-tripping through the parser is what pins that the string is real
     // JSON escaped exactly once by serde_json, never hand-built with format!.
@@ -1538,6 +1548,7 @@ fn json_response_drops_leading_blank_lines() {
         &SessionChanges::new(),
         std::time::Duration::from_millis(1),
         1,
+        &yoagent::SubAgentSpend::default(),
     );
     let parsed: serde_json::Value = serde_json::from_str(&out).unwrap();
     assert_eq!(parsed["response"], "PONG");
@@ -1626,6 +1637,7 @@ fn json_output_escapes_bidi_override_in_response() {
         std::time::Duration::from_millis(1),
         1,
         &crate::agent_builder::ExternalServerReport::default(),
+        &yoagent::SubAgentSpend::default(),
     );
     assert!(
         !out.as_bytes().windows(3).any(|w| w == [0xe2, 0x80, 0xae]),
@@ -1663,4 +1675,70 @@ fn xai_region_is_decided_after_the_setup_wizard() {
         w < s,
         "the region must be decided after the wizard can set base_url"
     );
+}
+
+fn json_with_spend(sub_agents: &yoagent::SubAgentSpend) -> String {
+    let (response, usage) = json_fixture();
+    build_json_output_with(
+        &response,
+        "m",
+        &usage,
+        false,
+        &SessionChanges::new(),
+        std::time::Duration::from_millis(1234),
+        3,
+        &crate::agent_builder::ExternalServerReport::default(),
+        sub_agents,
+    )
+}
+
+/// #1073 near-miss: no delegation leaves the `--output-format json` envelope
+/// byte-identical — no `sub_agents` key, every other byte unchanged. Compared
+/// against the envelope with the key removed from a delegating run, so the
+/// only difference delegation may make is that one key.
+#[test]
+fn json_output_without_delegation_has_no_sub_agents_key() {
+    let out = json_with_spend(&yoagent::SubAgentSpend::default());
+    let parsed: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert!(parsed.get("sub_agents").is_none(), "{out}");
+
+    let mut spend = yoagent::SubAgentSpend::default();
+    spend.runs = 1;
+    spend.usage.input = 7;
+    spend.cost_usd = Some(0.25);
+    let mut with: serde_json::Value = serde_json::from_str(&json_with_spend(&spend)).unwrap();
+    with.as_object_mut().unwrap().remove("sub_agents");
+    assert_eq!(with, parsed);
+}
+
+/// #1073 at the emission point: delegated spend reaches the json envelope as
+/// its own `sub_agents` object, and the top-level `cost_usd` / `usage` keep
+/// meaning the parent's own spend.
+#[test]
+fn json_output_carries_delegated_spend_apart_from_own() {
+    let mut spend = yoagent::SubAgentSpend::default();
+    spend.runs = 2;
+    spend.usage.input = 100;
+    spend.usage.output = 20;
+    spend.usage.cache_read = 3;
+    spend.usage.cache_write = 4;
+    spend.cost_usd = Some(0.5);
+    let parsed: serde_json::Value = serde_json::from_str(&json_with_spend(&spend)).unwrap();
+    assert_eq!(
+        parsed["sub_agents"],
+        serde_json::json!({
+            "runs": 2,
+            "input_tokens": 100,
+            "output_tokens": 20,
+            "cache_read_input_tokens": 3,
+            "cache_creation_input_tokens": 4,
+            "cost_usd": 0.5,
+        })
+    );
+    assert_eq!(parsed["usage"]["input_tokens"], serde_json::json!(1));
+
+    // Unpriced delegation reads as null, never 0.
+    spend.cost_usd = None;
+    let parsed: serde_json::Value = serde_json::from_str(&json_with_spend(&spend)).unwrap();
+    assert_eq!(parsed["sub_agents"]["cost_usd"], serde_json::Value::Null);
 }

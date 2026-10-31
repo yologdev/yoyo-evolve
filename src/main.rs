@@ -239,6 +239,7 @@ static CHECKPOINT_TRIGGERED: AtomicBool = AtomicBool::new(false);
 /// the process-global external-server report, so tests drive the core with an
 /// explicit value and touch no global (the `context_budget_warning_with` seam,
 /// which `tests/global_state_races.rs` names as its best remedy).
+#[allow(clippy::too_many_arguments)]
 fn build_json_output(
     response: &PromptOutcome,
     model: &str,
@@ -247,6 +248,7 @@ fn build_json_output(
     session_changes: &SessionChanges,
     duration: std::time::Duration,
     num_turns: usize,
+    sub_agents: &yoagent::SubAgentSpend,
 ) -> String {
     build_json_output_with(
         response,
@@ -257,6 +259,7 @@ fn build_json_output(
         duration,
         num_turns,
         &crate::agent_builder::external_server_report(),
+        sub_agents,
     )
 }
 
@@ -271,6 +274,7 @@ fn build_json_output_with(
     duration: std::time::Duration,
     num_turns: usize,
     external: &crate::agent_builder::ExternalServerReport,
+    sub_agents: &yoagent::SubAgentSpend,
 ) -> String {
     let cost_usd = estimate_cost(usage, model);
     let json_obj = serde_json::json!({
@@ -295,6 +299,10 @@ fn build_json_output_with(
         // error, and flipping that flag would break every script branching on it.
         "external_servers": crate::agent_builder::external_servers_json(external),
     });
+    // #1073: `usage` / `cost_usd` stay OWN spend; delegated spend rides in a
+    // separate `sub_agents` object (absent with no delegation, so that output
+    // is byte-identical), the same shape the audit usage record carries.
+    let json_obj = prompt::attach_sub_agent_spend(json_obj, sub_agents);
     // #1092: bidi overrides, zero-width, C1 and DEL leave as \uXXXX, so a
     // human who cats the log sees escapes, not reordered text.
     serde_json::to_string(&json_obj)
@@ -378,7 +386,9 @@ fn emit_output(
     // flag this repo's own harness does not pass — and the human-facing route,
     // `print_usage`, is suppressed by quiet mode, which `cli.rs` auto-enables
     // for every piped run. A file write is the one channel neither can close.
-    prompt_budget::audit_log_usage(usage, model, duration, num_turns, is_error);
+    // #1073: the one per-run drain of delegated spend happens in there; the
+    // json envelope reads the value it hands back, never a second drain.
+    let sub_agents = prompt_budget::audit_log_usage(usage, model, duration, num_turns, is_error);
     if print_mode {
         print!("{}", answer_payload(&response.text));
     } else if json_output {
@@ -392,6 +402,7 @@ fn emit_output(
                 session_changes,
                 duration,
                 num_turns,
+                &sub_agents,
             )
         );
     }

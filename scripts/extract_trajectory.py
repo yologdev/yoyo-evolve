@@ -2552,9 +2552,10 @@ def render_usage_coverage(cov: UsageCoverage, state: str = AUDIT_DIR_OK) -> str:
 # NO usage record — counted on its own, never summed as $0, so every total is
 # a floor. Sub-agent spend: since Day 237 (#1073) yoyo writes it into each
 # usage record as a separate `sub_agents` object (own spend stays in the
-# top-level fields), but this reader sums top-level `cost_usd` only, so the
-# totals are still a floor even when every run recorded. Reading
-# `sub_agents.cost_usd` here is the owed reader-side half of #1073.
+# top-level fields). Since Day 245 this reader adds `sub_agents.cost_usd` to
+# the sum and reports that share separately; a `sub_agents` object with
+# tokens but a null cost is delegated spend with no price, counted on its own
+# (never as $0), exactly like a top-level record without cost_usd.
 #
 # synthesize (Day 244, #1071): its rows carry a `steps` dict (learnings /
 # social / dreams: ran|skipped) where social and dream carry day/exit. The
@@ -2566,8 +2567,15 @@ PHASE_SPEND_ROWS = "phase-spend-rows"
 PHASE_SPEND_NO_ROWS = "phase-spend-no-rows"
 PHASE_SPEND_COULD_NOT_CHECK = "phase-spend-could-not-check"
 PHASE_SPEND_FLOOR_LINE = (
-    "Totals are a floor: these sums omit sub-agent spend (#1073)."
+    "Sums include sub-agent spend; any gap listed above makes a sum a floor."
 )
+_SUB_AGENT_TOKEN_KEYS = (
+    "input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens",
+)
+
+
+def _is_number(v) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
 
 
 def phase_spend_rel_path(phase: str) -> str:
@@ -2587,6 +2595,8 @@ class PhaseSpend:
     unreadable: int = 0        # lines that are not a JSON row with a datable ts
     older: int = 0             # readable rows outside the window
     uncosted: int = 0          # usage records in window with no numeric cost_usd
+    sub_cost_usd: float = 0.0  # the part of cost_usd that is sub_agents.cost_usd
+    sub_unpriced: int = 0      # sub_agents objects with tokens but no numeric cost
     reason: str = ""           # why it could not be checked
 
 
@@ -2635,10 +2645,20 @@ def classify_phase_spend(phase: str, text, absent: bool, now: datetime) -> Phase
             continue
         for rec in recs:
             cost = rec.get("cost_usd") if isinstance(rec, dict) else None
-            if isinstance(cost, (int, float)) and not isinstance(cost, bool):
+            if _is_number(cost):
                 out.cost_usd += float(cost)
             else:
                 out.uncosted += 1
+            sub = rec.get("sub_agents") if isinstance(rec, dict) else None
+            if not isinstance(sub, dict):
+                continue
+            sub_cost = sub.get("cost_usd")
+            if _is_number(sub_cost):
+                out.cost_usd += float(sub_cost)
+                out.sub_cost_usd += float(sub_cost)
+            elif any(_is_number(sub.get(k)) and sub.get(k) > 0 for k in _SUB_AGENT_TOKEN_KEYS):
+                # Tokens with no price: unpriced, never free.
+                out.sub_unpriced += 1
     return out
 
 
@@ -2682,8 +2702,14 @@ def render_phase_spend(spends: list) -> str:
                 f"{sp.no_usage} run(s) left no usage record — NOT counted as "
                 f"zero, total is a floor"
             )
+        if sp.sub_cost_usd:
+            parts.append(f"${sp.sub_cost_usd:.2f} of it sub-agent spend")
         if sp.uncosted:
             parts.append(f"{sp.uncosted} usage record(s) without cost_usd")
+        if sp.sub_unpriced:
+            parts.append(
+                f"{sp.sub_unpriced} record(s) with sub-agent spend that has no price"
+            )
         if sp.unreadable:
             parts.append(f"{sp.unreadable} unreadable row(s)")
         if sp.runs == 0:
@@ -8675,6 +8701,23 @@ src/commands_config.rs
     assert_eq("phase-spend: unset worktree renders could-not-check", three[3],
               "- social: could not check (no audit-log worktree (YOYO_AUDIT_DIR)) — NOT zero spend.")
     assert_eq("phase-spend: floor line always present", three[-1], PHASE_SPEND_FLOOR_LINE)
+    # #1073: a sub_agents object with tokens but a null cost is unpriced
+    # delegated spend -> counted on its own, adds nothing; an empty one
+    # (no tokens, null cost) is nothing to price and is not flagged.
+    sub_rows = (
+        '{"ts":"2026-10-22T19:00:00Z","usage_records":['
+        '{"cost_usd":1.0,"type":"usage","sub_agents":{"runs":1,"input_tokens":50,"cost_usd":null}},'
+        '{"cost_usd":1.0,"type":"usage","sub_agents":{"runs":1,"input_tokens":0,"cost_usd":null}},'
+        '{"cost_usd":1.0,"type":"usage","sub_agents":{"runs":2,"input_tokens":9,"cost_usd":0.25}}]}'
+    )
+    sub = classify_phase_spend("social", sub_rows + "\n", False, ps_now)
+    assert_eq("phase-spend: own + priced sub summed, unpriced sub adds nothing",
+              f"{sub.cost_usd:.2f}/{sub.sub_cost_usd:.2f}/{sub.sub_unpriced}/{sub.uncosted}",
+              "3.25/0.25/1/0")
+    assert_eq("phase-spend: unpriced sub-agent spend named, never read as $0",
+              render_phase_spend([sub]).splitlines()[1],
+              "- social: 1 run(s), $3.25 summed cost_usd; $0.25 of it sub-agent spend; "
+              "1 record(s) with sub-agent spend that has no price.")
     junk = classify_phase_spend("social", "not json\n" + ps_real + "\n", False, ps_now)
     assert_eq("phase-spend: junk line counted unreadable, real row still read",
               f"{junk.unreadable}/{junk.runs}", "1/1")
@@ -8718,11 +8761,14 @@ src/commands_config.rs
         assert_eq("phase-spend io: synthesize rows (one with steps skipped) both count",
                   f"{syn.state}/{syn.runs}/{syn.uncosted}/{syn.no_usage}",
                   f"{PHASE_SPEND_ROWS}/2/0/0")
-        assert_eq("phase-spend io: synthesize sums top-level cost_usd only",
-                  f"{syn.cost_usd:.7f}", "3.4542476")
-        assert_eq("phase-spend io: synthesize renders with its sum, no uncosted calls",
+        # #1073: own 3.4542476 + the first record's sub_agents 2.441457.
+        assert_eq("phase-spend io: synthesize sum includes sub_agents.cost_usd",
+                  f"{syn.cost_usd:.7f}", "5.8957046")
+        assert_eq("phase-spend io: sub-agent share kept attributable",
+                  f"{syn.sub_cost_usd:.7f}", "2.4414570")
+        assert_eq("phase-spend io: synthesize renders own+sub sum and the sub share",
                   render_phase_spend([syn]).splitlines()[1],
-                  "- synthesize: 2 run(s), $3.45 summed cost_usd.")
+                  "- synthesize: 2 run(s), $5.90 summed cost_usd; $2.44 of it sub-agent spend.")
     got = collect_phase_spend(None, ps_now)
     assert_eq("phase-spend io: no worktree -> could not check for every phase",
               ",".join(sp.state for sp in got),
