@@ -224,11 +224,13 @@ fn unknown_flag_produces_warning_on_stderr() {
         .output()
         .expect("failed to run yoyo");
 
+    // #1109 (Day 245): an unknown flag now refuses with exit 2 instead of a warning.
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("warning:") && stderr.contains("--nonexistent-flag-xyz"),
-        "should warn about unknown flag on stderr: {stderr}"
+        stderr.contains("error:") && stderr.contains("--nonexistent-flag-xyz"),
+        "should refuse the unknown flag on stderr: {stderr}"
     );
+    assert_eq!(output.status.code(), Some(2), "stderr: {stderr}");
 }
 
 // ── --no-color suppresses ANSI codes ────────────────────────────────
@@ -524,15 +526,12 @@ fn multiple_unknown_flags_each_produce_warnings() {
         "should warn about --fake-flag-gamma: {stderr}"
     );
 
-    // Count how many warning lines appear — should be at least 3
-    let warning_count = stderr
-        .lines()
-        .filter(|l| l.contains("warning:") && l.contains("Unknown flag"))
-        .count();
+    // #1109 (Day 245): one refusal names all three, exit 2, nothing sent.
     assert!(
-        warning_count >= 3,
-        "should have at least 3 warning lines, got {warning_count}: {stderr}"
+        stderr.contains("error:") && stderr.contains("unknown flags"),
+        "should refuse all three in one error: {stderr}"
     );
+    assert_eq!(output.status.code(), Some(2), "stderr: {stderr}");
 }
 
 // ── --system-file with nonexistent file shows useful error ──────────
@@ -762,8 +761,8 @@ fn unknown_flag_does_not_panic() {
         "unknown flag should not panic: {stderr}"
     );
     assert!(
-        stderr.contains("warning:") && stderr.contains("--foobar"),
-        "should warn about --foobar: {stderr}"
+        stderr.contains("error:") && stderr.contains("--foobar"),
+        "should refuse --foobar (#1109): {stderr}"
     );
 }
 

@@ -2414,6 +2414,10 @@ pub(crate) fn parse_args_with_config(
         crate::format::set_plain_output(true);
         crate::format::disable_color();
     }
+    if let Some(msg) = crate::cli_config::unknown_flag_refusal(args) {
+        eprintln!("{RED}error:{RESET} {msg}");
+        std::process::exit(2); // #1109: before the trust prompt, wizard and any request
+    }
 
     // --continue-on-silence: opt-in (issue #631). Treat a tool-using turn that
     // ends with no closing text as "stopped mid-work" and auto-continue it.
@@ -5828,14 +5832,14 @@ command = "server-two"
     fn test_safe_mode_near_miss_not_accepted() {
         // Day 122: near-miss flags must NOT prefix-match --safe-mode.
         // `--safe` and `--safemode` are typos, not the real flag — they should
-        // leave safe_mode false (and be surfaced as unknown flags elsewhere).
-        std::env::set_var("ANTHROPIC_API_KEY", "test-key");
+        // never activate safe mode. Since #1109 (Day 245) they are refused at
+        // startup (exit 2) instead of ignored, which is stronger: no run at all.
         for typo in ["--safe", "--safemode", "--safe_mode"] {
             let args = vec!["yoyo".to_string(), typo.to_string()];
-            let config = parse_args(&args).expect("should parse");
+            let msg = crate::cli_config::unknown_flag_refusal(&args);
             assert!(
-                !config.safe_mode,
-                "typo `{typo}` must not activate safe mode"
+                msg.as_deref().is_some_and(|m| m.contains(typo)),
+                "typo `{typo}` must be refused, not run: {msg:?}"
             );
         }
     }

@@ -349,9 +349,122 @@ pub(crate) fn bad_numeric_flag_refusal(args: &[String]) -> Option<String> {
     })
 }
 
+/// Startup refusal for flag-shaped tokens that are not in `KNOWN_FLAGS`
+/// (#1109). Before, `yoyo --modle claude-haiku-4-5 -p hi` printed a warning,
+/// ignored the flag and sent a paid request on the default model; git, cargo
+/// and Claude Code all refuse an unknown option before doing any work.
+///
+/// Only tokens that look like a flag a person typed are refused: they start
+/// with `-`, are not `-` or `--`, carry no whitespace, and come before a `--`
+/// terminator. Everything else keeps the old warn-and-continue path
+/// byte-identically (`warn_unknown_flags`, which the caller still runs), so a
+/// quoted prompt such as `yoyo "- fix the list"` and anything after `--` are
+/// untouched. Values of `FLAGS_NEEDING_VALUES` flags are skipped, so
+/// `--system -x` is not read as a flag here. Subcommands never reach this:
+/// `try_dispatch_subcommand` runs first and parses their own flags.
+///
+/// Each unknown flag is named (sanitized) with the nearest known flag when it
+/// is within edit distance 2, and `--name=value` for a known name says to put
+/// the value in its own word. Glyph-free, so it reads the same under plain
+/// output.
+pub(crate) fn unknown_flag_refusal(args: &[String]) -> Option<String> {
+    use crate::cli::{FLAGS_NEEDING_VALUES, KNOWN_FLAGS};
+    let mut parts = Vec::new();
+    let mut skip_next = false;
+    for arg in args.iter().skip(1) {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+        if arg == "--" {
+            break;
+        }
+        if !arg.starts_with('-') || arg == "-" || arg.chars().any(char::is_whitespace) {
+            continue;
+        }
+        if FLAGS_NEEDING_VALUES.contains(&arg.as_str()) {
+            skip_next = true;
+            continue;
+        }
+        if KNOWN_FLAGS.contains(&arg.as_str()) {
+            continue;
+        }
+        let shown = crate::cli::sanitize_for_display(arg);
+        let hint = match arg.split_once('=') {
+            Some((name, _)) if KNOWN_FLAGS.contains(&name) => {
+                format!(" (write the value as its own word: {name} <value>)")
+            }
+            _ => crate::commands::closest_match(arg, KNOWN_FLAGS, 2)
+                .map(|m| format!(" (did you mean {m}?)"))
+                .unwrap_or_default(),
+        };
+        parts.push(format!("'{shown}'{hint}"));
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    let noun = if parts.len() == 1 { "flag" } else { "flags" };
+    Some(format!(
+        "unknown {noun} {}. Nothing was sent to the model. \
+Run yoyo --help for the list of flags.",
+        parts.join(", ")
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #1109: the refusal names each unknown flag, suggests the nearest
+    /// known one, and is None for every input the old path accepted.
+    #[test]
+    fn unknown_flag_refusal_table() {
+        let refused: &[(&[&str], &str)] = &[
+            (
+                &["--modle", "claude-haiku-4-5", "-p", "hi"],
+                "unknown flag '--modle' (did you mean --model?). Nothing was sent to the model. \
+Run yoyo --help for the list of flags.",
+            ),
+            (
+                &["log", "--bogus"],
+                "unknown flag '--bogus'. Nothing was sent to the model. \
+Run yoyo --help for the list of flags.",
+            ),
+            (
+                &["--model=x", "--yse"],
+                "unknown flags '--model=x' (write the value as its own word: --model <value>), \
+'--yse' (did you mean --yes?). Nothing was sent to the model. \
+Run yoyo --help for the list of flags.",
+            ),
+        ];
+        for (rest, want) in refused {
+            assert_eq!(
+                unknown_flag_refusal(&argv(rest)).as_deref(),
+                Some(*want),
+                "{rest:?}"
+            );
+        }
+        let passed: &[&[&str]] = &[
+            &[],
+            &["--model", "x", "--yes", "--print-system-prompt"],
+            &["-p", "hi"],
+            &["--system", "-x"], // a value, even when flag-shaped
+            &["--", "--modle"],  // after the terminator: old warning path
+            &["-", "hi"],        // bare dash
+            &["- fix the list"], // a quoted prompt that starts with '-'
+            &["hello", "world"],
+        ];
+        for rest in passed {
+            assert_eq!(unknown_flag_refusal(&argv(rest)), None, "{rest:?}");
+        }
+    }
+
+    #[test]
+    fn unknown_flag_refusal_escapes_control_bytes() {
+        let out = unknown_flag_refusal(&argv(&["--x\u{1b}[31m"])).unwrap();
+        assert!("--x\u{1b}[31m".as_bytes().contains(&0x1b)); // anti-vacuous
+        assert!(!out.as_bytes().contains(&0x1b), "{out:?}");
+    }
 
     fn cfg(key: &str, value: &str) -> std::collections::HashMap<String, String> {
         std::collections::HashMap::from([(key.to_string(), value.to_string())])
