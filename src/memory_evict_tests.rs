@@ -212,3 +212,93 @@ fn non_header_assertion_messages_are_unchanged() {
         format!("[bug] Test expectation in `cargo test`: {plain}")
     );
 }
+
+// ── Read side: content-free auto entries already in a store (pre-#1106 stock) ──
+
+const BARE_HEADER: &str = "[bug] Test expectation in `cargo test`: thread 'ctx::tests::t' \
+                           (122573) panicked at src/context.rs:467:17:";
+/// The pre-#1106 builder cut every note body at 120 chars, so long headers were
+/// stored cut inside their own location: no assertion text survived either.
+const CUT_HEADER: &str = "[bug] Test expectation in `cargo test`: thread 'commands_risk::tests::\
+                          test_failure_day_red_branch_fires_end_to_end' (80659) panicked at src/comma…";
+const REAL_NOTE: &str = "[bug] Test expectation in `cargo test`: assertion `left == right` failed \
+                         (t at src/a.rs:1:1)";
+
+fn legacy_entry(note: &str) -> MemoryEntry {
+    // Legacy stores carry no `auto` field; is_auto_entry recognises them by prefix.
+    MemoryEntry {
+        note: note.to_string(),
+        timestamp: "2026-08-12 07:49".to_string(),
+        category: "general".to_string(),
+        auto: false,
+    }
+}
+
+fn store(entries: Vec<MemoryEntry>) -> ProjectMemory {
+    ProjectMemory { entries }
+}
+
+#[test]
+fn content_free_auto_headers_in_the_store_do_not_reach_the_prompt() {
+    let m = store(vec![
+        legacy_entry(BARE_HEADER),
+        legacy_entry(CUT_HEADER),
+        legacy_entry(REAL_NOTE),
+        user_entry("use pnpm, not npm"),
+    ]);
+    let out = format_memories_for_prompt(&m).unwrap();
+    assert!(!out.contains(BARE_HEADER), "bare header leaked:\n{out}");
+    assert!(!out.contains(CUT_HEADER), "truncated header leaked:\n{out}");
+    // Anti-vacuous: the block still rendered the entries with content.
+    assert!(out.contains(REAL_NOTE), "real auto note dropped:\n{out}");
+    assert!(
+        out.contains("use pnpm, not npm"),
+        "manual entry dropped:\n{out}"
+    );
+    // Two survivors: the flat (<3) layout, counted on what is shown.
+    assert_eq!(
+        out,
+        format!(
+            "## Project Memories\n\n- {REAL_NOTE} (2026-08-12 07:49)\n\
+             - use pnpm, not npm (2026-01-01 00:00)"
+        )
+    );
+}
+
+#[test]
+fn a_manual_entry_that_looks_like_a_header_is_kept() {
+    // /remember is the user's choice: never filtered, whatever it looks like.
+    // (A note opening with the builder's exact `[bug] Test expectation in \`` counts as a
+    // legacy auto entry, the limit is_auto_entry documents, so these use other openings.)
+    let header = "thread 'x' panicked at src/a.rs:1:1:";
+    let cut = "thread 'commands_risk::tests::t' (80659) panicked at src/comma…";
+    let m = store(vec![user_entry(header), user_entry(cut)]);
+    assert!(!m.entries.iter().any(is_auto_entry));
+    let out = format_memories_for_prompt(&m).unwrap();
+    assert!(out.contains(header) && out.contains(cut), "{out}");
+}
+
+#[test]
+fn a_store_of_only_content_free_auto_headers_injects_nothing() {
+    let m = store(vec![legacy_entry(BARE_HEADER), legacy_entry(CUT_HEADER)]);
+    assert_eq!(format_memories_for_prompt(&m), None);
+}
+
+#[test]
+fn a_store_with_no_content_free_entries_renders_as_before() {
+    let mut auto_note = legacy_entry(REAL_NOTE);
+    auto_note.category = "bug".to_string();
+    let m = store(vec![
+        user_entry("use pnpm, not npm"),
+        auto_note,
+        legacy_entry("Watch fix: 'cargo test' failed, fixed on attempt 1"),
+    ]);
+    // Three entries: grouped, in MEMORY_CATEGORIES order (general, ..., bug).
+    let expected = format!(
+        "## Project Memories\n\n\
+         ### General\n- Watch fix: 'cargo test' failed, fixed on attempt 1 (2026-08-12 07:49)\n\n\
+         ### Convention\n- use pnpm, not npm (2026-01-01 00:00)\n\n\
+         ### Bug\n- {REAL_NOTE} (2026-08-12 07:49)\n"
+    );
+    assert_eq!(format_memories_for_prompt(&m).unwrap(), expected);
+}

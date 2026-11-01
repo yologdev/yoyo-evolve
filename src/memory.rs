@@ -233,6 +233,17 @@ fn assertion_note_body(msg: &str) -> Option<String> {
     })
 }
 
+/// An auto entry whose panic note carries no content, so the prompt skips it (stock written
+/// before #1106 stopped saving these). Uses the writer's own test, plus the one shape the writer
+/// never sees: a header the old 120-char cut ended inside its location (`…`, no space after
+/// `panicked at `). `/remember` entries are never content-free by this test.
+fn is_content_free_auto(e: &MemoryEntry) -> bool {
+    let cut = e.note.split_once("panicked at ").is_some_and(|(_, t)| {
+        t.ends_with('…') && !t.starts_with('\'') && !t.contains(char::is_whitespace)
+    });
+    is_auto_entry(e) && (cut || assertion_note_body(&e.note).is_none())
+}
+
 /// Build a learning note from a watch-mode fix, capturing the *project fact* discovered.
 ///
 /// Takes the watch command and the error hint (from `error_category_hint`) and
@@ -561,27 +572,28 @@ pub fn search_memories<'a>(
 /// When there are 3 or more memories, groups them by category with headers.
 /// Below 3, keeps the flat list for simplicity.
 pub fn format_memories_for_prompt(memory: &ProjectMemory) -> Option<String> {
-    if memory.entries.is_empty() {
+    let entries: Vec<_> = memory
+        .entries
+        .iter()
+        .filter(|e| !is_content_free_auto(e))
+        .collect();
+    if entries.is_empty() {
         return None;
     }
     let mut lines = Vec::new();
     lines.push("## Project Memories".to_string());
     lines.push(String::new());
 
-    if memory.entries.len() < 3 {
+    if entries.len() < 3 {
         // Flat list for small counts
-        for entry in &memory.entries {
+        for entry in &entries {
             lines.push(format!("- {} ({})", entry.note, entry.timestamp));
         }
     } else {
         // Group by category
         let category_order = MEMORY_CATEGORIES;
         for &cat in category_order {
-            let cat_entries: Vec<_> = memory
-                .entries
-                .iter()
-                .filter(|e| e.category == cat)
-                .collect();
+            let cat_entries: Vec<_> = entries.iter().filter(|e| e.category == cat).collect();
             if cat_entries.is_empty() {
                 continue;
             }
