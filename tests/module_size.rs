@@ -272,7 +272,9 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // unregistered; +36 is the unknown-flag refusal on both /diff doors (field,
     // parser arm, message fn, three refusal sites). Tests went to
     // commands_git_diff_flag_tests.rs.
-    ("src/commands_git.rs", 3858),
+    // Day 246 (#1111): 3858 -> 3923 (+65): commit refuses an unknown dash-led flag;
+    // tests went to the sibling commands_git_commit_args_tests.rs.
+    ("src/commands_git.rs", 3923),
     // Day 174: +25 absorbed since Day 166.
     // +103 (Day 179, #832): the `/evolution` cargo shell-out was split into a
     // thin wrapper + injected resolvers so no `#[test]` spawns `cargo`, plus a

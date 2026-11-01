@@ -494,6 +494,7 @@ The `/commit` command helps you commit staged changes quickly:
 - `/commit --amend`: amend with staged changes — shows current message and asks to keep or edit
 - `/commit -a --amend`: auto-stage tracked files and amend the last commit
 - If nothing is staged, it reminds you to `git add` first
+- An unknown flag (e.g. a typo like `--ammend`) is refused with a did-you-mean and nothing is committed (`yoyo commit` exits 2); `-m`/`--message` before the message are accepted like git's; put `--` before a message that starts with `-`
 
 The `/undo` command shows you what will be reverted before doing it. If `/undo --all` cannot remove some untracked files (a read-only directory, say), it ends with `⚠ partially reverted: …` naming each file that is still on disk, instead of `✓ reverted all uncommitted changes`, and the note the model receives lists those files as not removed.
 

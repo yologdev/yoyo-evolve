@@ -1502,6 +1502,8 @@ pub(crate) struct CommitArgs {
     pub dry_run: bool,
     /// The remaining commit message (if any) after stripping flags.
     pub message: String,
+    /// #1111: the first dash-led token commit does not know (or a bare `-m`); refused.
+    pub bad_flag: Option<String>,
 }
 
 /// Parse the raw argument string after `/commit` into structured [`CommitArgs`].
@@ -1539,23 +1541,73 @@ fn commit_args_from_tokens<'a>(tokens: impl IntoIterator<Item = &'a str>) -> Com
     let mut dry_run = false;
     let mut message_parts: Vec<&str> = Vec::new();
 
+    // #1111: `-m`/`--message` are git's habit and are accepted; `--` ends flags; any
+    // other dash-led word (no whitespace, so a message element never matches) is refused.
+    let (mut bad_flag, mut m_flag, mut after_separator) = (None, None, false);
     for token in tokens {
         match token {
+            _ if after_separator => message_parts.push(token),
+            "--" => after_separator = true,
             "-a" | "--all" => auto_stage = true,
             "--ai" | "--generate" => ai = true,
             "--amend" => amend = true,
             "--dry-run" => dry_run = true,
+            "-m" | "--message" => m_flag = Some(token),
+            t if is_flag_like(t) => bad_flag = bad_flag.or(Some(t.to_string())),
             other => message_parts.push(other),
         }
     }
-
+    let message = message_parts.join(" ");
+    if message.is_empty() {
+        bad_flag = bad_flag.or(m_flag.map(str::to_string));
+    }
     CommitArgs {
         auto_stage,
         ai,
         amend,
         dry_run,
-        message: message_parts.join(" "),
+        message,
+        bad_flag,
     }
+}
+
+/// `-x` / `--xy` with a letter after the dashes and no whitespace: `->`, `-5` and a
+/// spaced shell element like `"-a thing"` stay message text.
+fn is_flag_like(t: &str) -> bool {
+    let rest = t.strip_prefix("--").or_else(|| t.strip_prefix('-'));
+    let letter = rest
+        .and_then(|r| r.chars().next())
+        .is_some_and(|c| c.is_ascii_alphabetic());
+    letter && !t.contains(char::is_whitespace)
+}
+
+/// #1111: the refusal for an unknown commit flag (or a bare `-m`), in the door's terms.
+pub(crate) fn commit_bad_flag_message(flag: &str, repl: bool) -> String {
+    let (cmd, ai) = if repl {
+        ("/commit", " [--ai]")
+    } else {
+        ("yoyo commit", "")
+    };
+    let why = if flag == "-m" || flag == "--message" {
+        format!("{flag} needs a message")
+    } else {
+        let known = [
+            "--all",
+            "--amend",
+            "--dry-run",
+            "--message",
+            "--ai",
+            "--generate",
+        ];
+        match crate::commands::closest_match(flag, &known, 2) {
+            Some(s) => format!("unknown flag: {flag} (did you mean {s}?)"),
+            None => format!("unknown flag: {flag}"),
+        }
+    };
+    format!(
+        "usage: {cmd} [-a|--all] [--amend] [--dry-run]{ai} [-m] [--] [<message>]\n{why}\n\
+         nothing was committed (use -- before a message that starts with -)"
+    )
 }
 
 /// Run `git add -u` to stage all tracked modified/deleted files.
@@ -1720,17 +1772,22 @@ pub fn handle_commit(input: &str) {
 /// staged (only a hint prints, no `git commit` runs). The REPL's `handle_commit` discards it.
 pub fn handle_commit_status(input: &str) -> i32 {
     let arg = input.strip_prefix("/commit").unwrap_or("").trim();
-    handle_commit_parsed_status(parse_commit_args(arg))
+    handle_commit_parsed_status(parse_commit_args(arg), true)
 }
 
 /// The shell door (`yoyo commit …`): argv elements in, message kept verbatim (#1008;
 /// see [`commit_args_from_argv`]). `args` is everything after `commit`.
 pub(crate) fn handle_commit_argv_status(args: &[String]) -> i32 {
-    handle_commit_parsed_status(commit_args_from_argv(args))
+    handle_commit_parsed_status(commit_args_from_argv(args), false)
 }
 
 /// The commit itself, shared by both doors once their arguments are parsed.
-fn handle_commit_parsed_status(parsed: CommitArgs) -> i32 {
+/// A bad flag is refused (exit 2) before any git call (#1111).
+fn handle_commit_parsed_status(parsed: CommitArgs, repl: bool) -> i32 {
+    if let Some(flag) = &parsed.bad_flag {
+        eprintln!("{}", commit_bad_flag_message(flag, repl));
+        return 2;
+    }
     // Auto-stage tracked files when `-a`/`--all` is present
     if parsed.auto_stage && !auto_stage_tracked() {
         return 1;
@@ -1971,6 +2028,10 @@ fn clean_ai_commit_message(raw: &str) -> String {
 pub async fn handle_commit_ai(input: &str, agent_config: &AgentConfig) {
     let arg = input.strip_prefix("/commit").unwrap_or("").trim();
     let parsed = parse_commit_args(arg);
+    if let Some(flag) = &parsed.bad_flag {
+        eprintln!("{}", commit_bad_flag_message(flag, true));
+        return;
+    }
 
     // Auto-stage tracked files when `-a`/`--all` is present
     if parsed.auto_stage && !auto_stage_tracked() {
@@ -2145,6 +2206,9 @@ pub fn handle_git(input: &str) {
     let subcmd = parse_git_args(arg);
     run_git_subcommand(&subcmd);
 }
+#[cfg(test)]
+#[path = "commands_git_commit_args_tests.rs"]
+mod commands_git_commit_args_tests;
 #[cfg(test)]
 #[path = "commands_git_diff_flag_tests.rs"]
 mod commands_git_diff_flag_tests;
@@ -3316,6 +3380,7 @@ mod tests {
                 amend: true,
                 dry_run: false,
                 message: "fix -a thing".into(),
+                bad_flag: None,
             }
         );
     }

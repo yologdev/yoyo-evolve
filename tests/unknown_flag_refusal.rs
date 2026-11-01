@@ -272,3 +272,58 @@ fn subcommand_flags_are_untouched() {
     assert!(!err.contains("unknown flag"), "{err}");
     assert!(String::from_utf8_lossy(&out.stdout).contains("1 file changed"));
 }
+
+/// #1111: `yoyo commit --ammend` with a staged change used to make a NEW commit
+/// titled `--ammend`. It must now exit 2 and leave HEAD where it was; the
+/// near-miss `-m "fix x"` (git's habit) still commits with message `fix x`.
+#[test]
+fn commit_with_a_misspelled_flag_refuses_and_creates_no_commit() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let home = tmp.path().join("home");
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&repo).unwrap();
+    let git = |args: &[&str]| {
+        let out = Command::new("git")
+            .args(["-c", "user.email=a@b", "-c", "user.name=a"])
+            .args(args)
+            .current_dir(&repo)
+            .env("HOME", &home)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .expect("git");
+        assert!(out.status.success(), "git {args:?}");
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    };
+    git(&["init", "-q"]);
+    std::fs::write(repo.join("f"), "a\n").unwrap();
+    git(&["add", "f"]);
+    git(&["commit", "-qm", "i"]);
+    std::fs::write(repo.join("f"), "a\nb\n").unwrap();
+    git(&["add", "f"]);
+    let head = git(&["rev-parse", "HEAD"]);
+    let yoyo = |args: &[&str]| {
+        scrubbed(&home)
+            .args(args)
+            .current_dir(&repo)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_AUTHOR_NAME", "a")
+            .env("GIT_AUTHOR_EMAIL", "a@b")
+            .env("GIT_COMMITTER_NAME", "a")
+            .env("GIT_COMMITTER_EMAIL", "a@b")
+            .output()
+            .expect("spawn yoyo")
+    };
+
+    let out = yoyo(&["commit", "--ammend"]);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "stderr: {err}");
+    assert!(err.contains("did you mean --amend?"), "{err}");
+    assert_eq!(git(&["rev-parse", "HEAD"]), head, "a commit was made");
+
+    let out = yoyo(&["commit", "-m", "fix x"]);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "stderr: {err}");
+    assert_ne!(git(&["rev-parse", "HEAD"]), head);
+    assert_eq!(git(&["log", "-1", "--format=%s"]), "fix x");
+}
