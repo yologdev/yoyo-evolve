@@ -2336,8 +2336,7 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
     // Enable quiet mode early so config/context loading can check it.
     // Also auto-enable when both stdin and stdout are non-terminal (fully piped).
     // --print implies quiet mode (suppress all chrome).
-    if args.iter().any(|a| a == "--quiet" || a == "-q")
-        || args.iter().any(|a| a == "--print")
+    if crate::cli_config::has_option(args, &["--quiet", "-q", "--print"]) // #1112: not after `--`
         || std::env::var("YOYO_QUIET")
             .map(|v| v == "1")
             .unwrap_or(false)

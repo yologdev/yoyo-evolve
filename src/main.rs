@@ -1021,23 +1021,24 @@ async fn run_piped_mode(
 }
 
 /// Apply early CLI flags that must take effect before `parse_args()` produces
-/// any output.  Handles `--no-color`, `--no-bell`, `--no-notify`, and `--no-rtk`.
+/// any output.  Handles `--no-color`, `--no-bell`, `--no-notify`, and `--no-rtk`,
+/// read from the options half only: after `--` they are prompt text (#1112).
 fn apply_cli_flags(args: &[String]) {
     // Auto-disable color when stdout is not a terminal (piped output)
-    if args.iter().any(|a| a == "--no-color") || !io::stdout().is_terminal() {
+    if cli_config::has_option(args, &["--no-color"]) || !io::stdout().is_terminal() {
         disable_color();
     }
 
-    if args.iter().any(|a| a == "--no-bell") {
+    if cli_config::has_option(args, &["--no-bell"]) {
         disable_bell();
     }
 
-    if args.iter().any(|a| a == "--no-notify") {
+    if cli_config::has_option(args, &["--no-notify"]) {
         disable_notify();
     }
 
     // Also respects YOYO_NO_RTK env var
-    if args.iter().any(|a| a == "--no-rtk")
+    if cli_config::has_option(args, &["--no-rtk"])
         || std::env::var("YOYO_NO_RTK")
             .map(|v| v == "1")
             .unwrap_or(false)

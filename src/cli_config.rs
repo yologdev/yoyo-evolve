@@ -385,6 +385,14 @@ pub(crate) fn option_args(args: &[String]) -> &[String] {
     &args[..option_split(args).0.min(args.len())]
 }
 
+/// Is any of `names` among the options (#1112)? For the scans that run
+/// before `parse_args_with_config`: a flag written after `--` is not applied.
+pub(crate) fn has_option(args: &[String], names: &[&str]) -> bool {
+    option_args(args)
+        .iter()
+        .any(|a| names.contains(&a.as_str()))
+}
+
 /// The words after `--`: prompt text, verbatim, never parsed as flags.
 pub(crate) fn operand_args(args: &[String]) -> &[String] {
     &args[option_split(args).1.min(args.len())..]
@@ -585,6 +593,33 @@ Run yoyo --help for the list of flags.",
         // Unknown flags before `--` are still refused; after it, never.
         assert!(unknown_flag_refusal(&argv(&["--bogus", "--", "hi"])).is_some());
         assert!(unknown_flag_refusal(&argv(&["--", "--bogus"])).is_none());
+    }
+
+    /// #1112: the early scans (apply_cli_flags in main.rs, the quiet/print
+    /// check in parse_args) read only the options half, so a flag written
+    /// after `--` is prompt text and is not applied.
+    #[test]
+    fn has_option_ignores_words_after_double_dash() {
+        let rows: &[(&[&str], &[&str], bool)] = &[
+            (&["--no-color", "hi"], &["--no-color"], true), // near-miss: unchanged
+            (&["--no-color", "--", "hi"], &["--no-color"], true),
+            (&["--", "--no-color", "hi"], &["--no-color"], false),
+            (&["-p", "--", "--no-bell"], &["--no-bell"], false),
+            (&["-q", "hi"], &["--quiet", "-q", "--print"], true),
+            (&["--", "--quiet"], &["--quiet", "-q", "--print"], false),
+            (
+                &["--", "-q", "--print"],
+                &["--quiet", "-q", "--print"],
+                false,
+            ),
+            (&["hi"], &["--no-rtk"], false),
+        ];
+        for (rest, names, want) in rows {
+            assert_eq!(has_option(&argv(rest), names), *want, "{rest:?} {names:?}");
+        }
+        // The word still reaches the prompt verbatim.
+        let a = argv(&["--", "--no-color", "hi"]);
+        assert_eq!(prompt_text(&a, None).as_deref(), Some("--no-color hi"));
     }
 
     #[test]

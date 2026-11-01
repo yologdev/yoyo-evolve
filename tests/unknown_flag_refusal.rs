@@ -206,6 +206,21 @@ fn words_after_double_dash_reach_the_prompt_verbatim() {
     );
 }
 
+/// #1112 at the request: `yoyo -- --no-color --quiet hi` sends all three
+/// words; the early scans no longer also apply them as flags (that half is
+/// pinned in cli_config's has_option table, since a piped stdout already
+/// turns colour off and quiet on, so a pipe cannot observe it).
+#[test]
+fn early_flags_after_double_dash_reach_the_prompt_verbatim() {
+    let (_, _, err, hits, bodies) = run_with_bodies(&["--", "--no-color", "--quiet", "hi"]);
+    assert!(hits >= 1, "must reach the stub; stderr: {err}");
+    assert!(
+        bodies[0].contains(r#""text":"--no-color --quiet hi""#),
+        "{}",
+        bodies[0]
+    );
+}
+
 /// #1110: `--help` after `--` is a prompt, not the help page; before `--` it
 /// is still the help page (near-miss: exit 0, nothing sent).
 #[test]

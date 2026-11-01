@@ -23,6 +23,8 @@ Both forms are equivalent. The bare prompt form is shorter and matches how most 
 `--` ends option parsing; everything after it is prompt text, sent verbatim even when it starts
 with a dash: `yoyo -- --explain this` and `yoyo -p -- --explain this` both send `--explain this`,
 and `yoyo -p hi -- --x` sends `hi --x`. Unknown flags *before* `--` are still refused.
+No flag after `--` is applied either, including the ones read at startup: `yoyo -- --no-color hi`
+sends `--no-color hi` and leaves colour, bell, notifications, `--quiet` and `--print` as they were.
 
 ## When to use it
 
