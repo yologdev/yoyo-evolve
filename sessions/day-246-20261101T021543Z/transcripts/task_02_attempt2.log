@@ -1,0 +1,38 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+The commit is already in. I'll check the state and run the full gate before I call it done.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | head && git… ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Every #1110 hit is a code comment, not text a user sees, so closing the issue leaves nothing pointing at a dead ticket. Next, the full gate:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo FMT… ✓ (3m 47s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (3m 36s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7m 33s (2 ✓)
+
+Fixed #1110: -- on the yoyo command line now ends option parsing. Everything after it is sent to the model as prompt text, word for word. The fix was already committed as e40d9e1d before the interruption, so I only re-ran the checks and didn't change anything.
+
+What changed:
+• yoyo -- hi no longer prints "Unknown flag '--' — ignored".
+• Words after --, including ones that start with a dash like yoyo -p -- --explain this, now reach the prompt instead of being dropped. The -- itself is not sent.
+• Flags before -- behave exactly as #1109 left them: yoyo --bogus -- hi still refuses with exit 2.
+• One function in src/cli_config.rs decides where flags end. The unknown-flag refusal, the old warning path and the prompt builder in src/cli.rs all use it, so they can't disagree. src/dispatch_sub.rs also stops treating a --help after -- as a request for help.
+• docs/src/usage/single-prompt.md now says -- ends option parsing.
+
+Checks: cargo fmt --check, cargo clippy --all-targets -- -D warnings, cargo build and cargo test all pass with no failures. I also ran the built binary: yoyo -- hi prints no "Unknown flag" line, and yoyo --bogus -- hi exits 2.
+
+Before the push: the only #1110 mentions in src, docs and skills are code comments, so closing the issue leaves no user-facing text pointing at a closed ticket.
+
+Still open: some top-level flags are read before the main parser runs, and those still take effect even when written after --. The interrupted attempt filed this as #1112, so I didn't file it again. It is outside #1110's done-when, so the "Fixes #1110" title still holds. GitHub closes #1110 when this is pushed.
+  watch: no files changed this turn — skipping

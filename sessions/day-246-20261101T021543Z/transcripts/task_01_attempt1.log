@@ -1,0 +1,80 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh… ✓ (12ms)
+  ▶ $ sed -n 140,340p src/memory.rs; sed -n 555,600p src/memory.rs  ▶ $ sed -n 1,60p src/memory_evict_tests.rs; grep -n "fn \|^use\|… (6 lines) ✓ (6ms)
+ ✓ (28ms)
+  ▶ $ sed -n 262,290p src/memory.rs; python3 -c " (4 lines) ✓ (29ms)
+  ▶ $ python3 -c " (12 lines) ✓ (1.3s)
+  ▶ $ cat >> src/memory_evict_tests.rs <<'EOF' (89 lines) ✓ (38.2s)
+  ▶ $ python3 - <<'EOF' (12 lines) ✓ (39.1s)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 2m 16s (7 ✓)
+
+The near-miss row passes against the unchanged code, so it records today's rendering. Next, the production change. It has to stay within 25 lines of headroom:
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ python3 - <<'EOF' (43 lines) ✓ (41.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ python3 - <<'EOF' (18 lines) ✓ (40.6s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 36s (2 ✓)
+
+Positive controls next, run serially and atomically (mutate, run, restore in one command). I'm doing two because the filter has two clauses:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cp src/memory.rs /tmp/memory.rs.bak (8 lines) ✓ (1m 55s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both controls fail the expected tests by name, and the second one prints "truncated header leaked". Both are restored and the suite is green. Now the after-probe on the real binary, plus docs:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo build 2>&1 | tail -1; ANTHROPIC_API_KEY=x ./target/debug/yoyo --print-syst… ✓ (14.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ python3 - <<'EOF' (7 lines) ✓ (1m 59s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 21s (2 ✓)
+
+That chain printed nothing between the build and wc, so I can't tell what ran. I'll run each check on its own:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo fmt -- --check; echo "fmt=$?"; cargo clippy --all-targets -- -D warnings 2… ✓ (25.9s)
+  ▶ $ python3 - <<'EOF' (11 lines) ✓ (24.0s)
+  ▶ $ cargo fmt -- --check; echo "fmt=$?"; cargo build 2>&1 | tail -1; cargo test > /t… ✓ (4m 32s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ git add -A && git commit -q -m "Day 246 (00:41): Content-fre… (14 lines) ✓ (23ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 5m 49s (4 ✓)
+
+Old content-free auto-memory notes no longer reach the system prompt. On this repo the memory block went from 20 lines to 2. Build, test (7122 passed, 0 failed), clippy and fmt all pass, and it's committed as 6788a1c5.
+
+What I measured first: the store holds 20 old notes from before #1106:
+• 9 are bare thread '…' panicked at file:L:C: headers. The predicate the writer already uses rejects these.
+• 9 were cut off by the old 120-character limit before the line number even finished (…panicked at src/comma…). The writer's predicate treats these as real content, because they don't match its location pattern and the writer never sees cut-off text. Reusing that predicate alone, as the task said, would have left half the old notes in the prompt.
+• 2 are Watch fix: … fixed on attempt N notes. They're kept because they aren't panic headers.
+
+The change (+12 lines in src/memory.rs, now 1987 lines, under the 2000 cap): format_memories_for_prompt skips an auto note if the writer's predicate rejects it, or if it's the cut-off shape. Notes saved with /remember are never skipped. If every note is skipped, it returns None, the same as an empty store. Nothing is written when memories are read, so the old notes still drop out through #1106's eviction.
+
+Tests (in src/memory_evict_tests.rs):
+• Both header shapes are absent, while a real auto note and a /remember note are present (compared as full strings).
+• A /remember note that looks like a header is kept.
+• A store with only headers returns None.
+• A store with nothing to skip renders exactly as before. That test was green before the change.
+• Two checks where I broke the code and put it back: turning the skip off failed the two skip tests by name, and removing only the cut-off clause failed them with "truncated header leaked". Both passed again once restored.
+
+Docs: one sentence added to docs/src/usage/commands.md.
+
+Left out, as stated in the commit:
+• /memories still lists the old notes.
+• The two Watch fix notes are still injected.
+• A /remember note that happens to start with the exact [bug] Test expectation in \ opening counts as an auto note. This limit already existed in is_auto_entry`.
+
+There's no open issue for these, and the task said not to write "Fixes" or "Part of #1106", so they're only recorded in the commit message.
+  watch: no files changed this turn — skipping

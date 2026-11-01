@@ -1,0 +1,254 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git log --oneli… ✓ (26ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 340,470p src/cli_config.rs;… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 860,915p src/cli.rs; grep -… ✓ (23ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 2690,2760p src/cli.rs; sed … ✓ (165ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "fn flag_value" -A15 src/c…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "fn flag_value" src/ ; ls… ✓ (8ms)
+ ✓ (16ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 900,940p src/dispatch_sub.r… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1,12p tests/unknown_flag_re… ✓ (5ms)
+  ▶ $ cd /tmp; Y=/home/runner/work/yoyo-evolve/yoyo-evolve/target/debug/yoyo; export N… ✓ (1m 0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue view 1110 --comments 2>&1… ✓ (459ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue view 1110 --json title,bo… ✓ (326ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "fn parse_args_with_config… ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 2329,2440p src/cli.rs; grep… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1260,1330p src/main.rs | gr… ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; awk 'NR>=2373 && /^}/ {print NR; e… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; awk 'NR>=2373 && NR<=3147' src/cli… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; awk 'NR>=2373 && NR<=3147 {print N… ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  17 tools completed in 3m 14s (17 ✓)
+
+Plan settled. Writing the shared finder in cli_config.rs first.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli_config.rs (1 → 57 lines)
+  + /// Where top-level option parsing ends (#1110): the first bare `--` that is
+  + /// not taken as a flag's value, as in git, cargo and POSIX getopt. Values are
+  + /// skipped exactly as `unknown_flag_refusal` and `collect_positional_args`
+  + /// skip them, so `--model -- hi` still makes `--` the model's value.
+  + /// One carve-out: `-p --` / `--prompt --` followed by at least one word reads
+  + /// as "the prompt is what follows", so `-p` is dropped from the options too.
+  + /// Returns `(end of options, start of operands)`; with no terminator both
+  + /// are `args.len()`, which keeps every older parse byte-identical.
+  + pub(crate) fn option_split(args: &[String]) -> (usize, usize) {
+  +     use crate::cli::FLAGS_NEEDING_VALUES;
+  +     let mut i = 1;
+  +     while let Some(a) = args.get(i) {
+  +         if a == "--" {
+  +             return (i, i + 1);
+  +         }
+  +         if !FLAGS_NEEDING_VALUES.contains(&a.as_str()) {
+  +             i += 1;
+  +             continue;
+  +         }
+  +         let prompt_takes_rest = matches!(a.as_str(), "-p" | "--prompt")
+  ... (37 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 405,425p src/cli_config.rs ✓ (25.6s)
+  + /// Where top-level option parsing ends (#1110): the first bare `--` that is
+  + /// not taken as a flag's value, as in git, cargo and POSIX getopt. Values are
+  + /// skipped exactly as `unknown_flag_refusal` and `collect_positional_args`
+  + /// skip them, so `--model -- hi` still makes `--` the model's value.
+  + /// One carve-out: `-p --` / `--prompt --` followed by at least one word reads
+  + /// as "the prompt is what follows", so `-p` is dropped from the options too.
+  + /// Returns `(end of options, start of operands)`; with no terminator both
+  + /// are `args.len()`, which keeps every older parse byte-identical.
+  ... (13 more lines)
+ ✓ (25.6s)
+  2 tools completed in 36.2s (2 ✓)
+
+Now wire the consumers: unknown_flag_refusal, then the three in cli.rs.
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli_config.rs (10 → 7 lines)
+        let mut skip_next = false;
+  -     for arg in args.iter().skip(1) {
+  +     for arg in option_args(args).iter().skip(1) {
+            if skip_next {
+                skip_next = false;
+                continue;
+  -         }
+  -         if arg == "--" {
+  -             break;
+            }
+            if !arg.starts_with('-') || arg == "-" || arg.chars().any(char::is_whitespace) {
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (68 lines) ✓ (5m 6s)
+        let mut skip_next = false;
+  -     for arg in args.iter().skip(1) {
+  +     for arg in option_args(args).iter().skip(1) {
+            if skip_next {
+                skip_next = false;
+                continue;
+  -         }
+  -         if arg == "--" {
+  ... (3 more lines)
+ ✗ (5m 6s)
+    │ Command timed out after 120s. Output so far:
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 500 cargo build 2>&1 | gre… ✓ (163ms)
+  ▶ $ cd /tmp; Y=/home/runner/work/yoyo-evolve/yoyo-evolve/target/debug/yoyo; export N… ✓ (42.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n '"src/cli_config.rs"\|cons… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "1500\|1000\|800\|threshol… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 70,100p tests/module_size.r… ✓ (3ms)
+  ▶ edit src/cli_config.rs (10 → 68 lines)
+                &["--system", "-x"], // a value, even when flag-shaped
+  -             &["--", "--modle"],  // after the terminator: old warning path
+  +             &["--", "--modle"],  // after the terminator: an operand (#1110)
+  +             &["-p", "--", "--explain", "this"], // `-p --`: the rest is prompt text
+                &["-", "hi"],        // bare dash
+                &["- fix the list"], // a quoted prompt that starts with '-'
+                &["hello", "world"],
+            ];
+            for rest in passed {
+                assert_eq!(unknown_flag_refusal(&argv(rest)), None, "{rest:?}");
+  +         }
+  +     }
+  + 
+  +     /// #1110: where options end and what the prompt becomes. Each row is
+  +     /// (argv after the binary, options seen by flag lookups, operands, prompt
+  +     /// with no -p value supplied by the caller). Near-misses: no `--` at all
+  +     /// (everything is options, byte-identical to before), `--` in a value slot
+  +     /// (`--model --`: still the value), `---` and `--x` (not the terminator),
+  +     /// and `-p --` with nothing after it (still `-p`'s value, as before).
+  +     #[test]
+  ... (49 more lines)
+ ✓ (4m 51s)
+                &["--system", "-x"], // a value, even when flag-shaped
+  -             &["--", "--modle"],  // after the terminator: old warning path
+  +             &["--", "--modle"],  // after the terminator: an operand (#1110)
+  +             &["-p", "--", "--explain", "this"], // `-p --`: the rest is prompt text
+                &["-", "hi"],        // bare dash
+                &["- fix the list"], // a quoted prompt that starts with '-'
+                &["hello", "world"],
+            ];
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 590 cargo test --bin yoyo … ✓ (1m 45s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 590 cargo test --bin yoyo … ✓ (1m 46s)
+
+────────────────────────────────────────────────────────────────────────────────
+  10 tools completed in 14m 42s (9 ✓, 1 ✗)
+
+Unit suite green. Now the real-binary test: invert the old characterization test (it pinned the bug) and add a body-capturing check that operands reach the request.
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 12,25p tests/unknown_flag_r… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 14,25p tests/unknown_flag_r… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (91 lines) ✓ (566ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 590 cargo test --test unkn… ✓ (214ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (14 lines) ✓ (705ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 30.5s (5 ✓)
+
+Positive control, atomic and serial: neuter option_split to "no terminator", run, restore.
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/cli_con… (8 lines) ✓ (52.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git diff --stat; timeout 590 cargo… ✓ (13.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 13s (2 ✓)
+
+Control reddened by name (double_dash_terminator_table + 2 binary tests), restored → green. Now fmt/clippy/module_size and residue probes.
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt && git diff --stat && ti… ✓ (39.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; wc -l src/cli.… (2 lines) ✓ (12.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 59.4s (2 ✓)
+
+Residue: yoyo -- --help / -- --version still dispatch early. Let me see how cheap that is.
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "fn try_dispatch_subcomman… ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 340,356p src/dispatch_sub.r… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (17 lines) ✓ (24ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (22 lines) ✓ (15.5s)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 36.4s (4 ✓)
+
+Now docs and the #1110 pointer grep.
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git grep -n '#1110' src docs skill… ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 5,22p docs/src/usage/single… ✓ (3ms)
+  ▶ edit docs/src/usage/single-prompt.md (1 → 5 lines)
+    Both forms are equivalent. The bare prompt form is shorter and matches how most CLI tools work.
+  + 
+  + `--` ends option parsing; everything after it is prompt text, sent verbatim even when it starts
+  + with a dash: `yoyo -- --explain this` and `yoyo -p -- --explain this` both send `--explain this`,
+  + and `yoyo -p hi -- --x` sends `hi --x`. Unknown flags *before* `--` are still refused.
+ ✓ (0ms)
+    Both forms are equivalent. The bare prompt form is shorter and matches how most CLI tools work.
+  + 
+  + `--` ends option parsing; everything after it is prompt text, sent verbatim even when it starts
+  + with a dash: `yoyo -- --explain this` and `yoyo -p -- --explain this` both send `--explain this`,
+  + and `yoyo -p hi -- --x` sends `hi --x`. Unknown flags *before* `--` are still refused.
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 6.6s (3 ✓)
+
+Full gate now.
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt -- --check && timeout 40… ✓ (5m 3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All four checks green. Final probe for the commit body, then the residue issue (filed before the push, since Fixes #1110 closes the only carrier).
+  ╭─ Turn 44 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp; Y=/home/runner/work/yoyo-evolve/yoyo-evolve/target/debug/yoyo; export N… ✓ (20.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat > /tmp/res… (19 lines) ✓ (852ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add -A && … (54 lines) ✓ (27ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 53.2s (3 ✓)
+
+#1110 is fixed and committed as e40d9e1d. A -- on the command line now ends flag parsing: it's no longer reported as an unknown flag, and every word after it goes into the prompt exactly as typed. Build, the full cargo test, clippy with -D warnings and the fmt check all pass.
+
+What changed, from running the built binary before and after:
+
+| Command | Before | After |
+|---|---|---|
+| yoyo -- hi | warning "Unknown flag '--'" | no warning, sends hi |
+| yoyo -p -- --explain this | refused, exit 2 (-p took -- as its value) | sends --explain this |
+| yoyo -p hi -- --x | two warnings; --x dropped | sends hi --x |
+| yoyo --bogus -- hi | refused, exit 2 | unchanged |
+| yoyo -- status | treated as a prompt | unchanged (sends status, doesn't run the subcommand) |
+| yoyo --model -- hi | -- used as the model name | unchanged, and pinned by a test |
+| yoyo -- --help | printed the help page | sends --help as the prompt |
+
+No script or workflow in the repo calls yoyo ... -- ..., so nothing of ours depends on the old behaviour.
+
+How it works:
+• One rule, in `src/cli_config.rs`. A single function finds the first bare -- that isn't being used as a flag's value. Everything that reads flags now asks it where flags stop: the #1109 unknown-flag refusal, the old unknown-flag warning, the code that builds the prompt from loose words, the --help/--version early exit, and the main argument parser. Because the main parser stops at -- too, yoyo -- --model x no longer changes the model.
+• One special case: -p -- followed by at least one word means "the prompt is what follows". Without it, the issue's own example (yoyo -p -- --explain this) couldn't work. -p -- with nothing after it behaves as before.
+• Change outside the planned files: --help/--version are checked in src/dispatch_sub.rs, which wasn't on the task's file list. It's a two-line change, and without it yoyo -- --help would still show the help page and send nothing, which breaks the issue's done-when.
+
+Tests:
+• A table test in cli_config.rs covers no --, -- alone, dash-led words and a second -- after it, --model --, ---, --x and a bare -p --.
+• The real-binary tests in tests/unknown_flag_refusal.rs now check that the words after -- appear in the request the test server receives.
+• An existing test, flag_after_double_dash_keeps_the_old_warning, was asserting the buggy warning. I reversed it and renamed it to flag_after_double_dash_is_an_operand_not_a_warning rather than deleting it.
+• Positive control: forcing the -- finder to find nothing turned the new table test and two of the binary tests red, by name. After restoring it everything was green, and no NEUTERED marker is left in the code.
+
+Housekeeping:
+• cli.rs went from 7877 to 7873 lines, and I updated its recorded size in tests/module_size.rs.
+• dispatch_sub.rs is now 76 lines over its recorded size, but only 2 of those are mine. I left that as the non-fatal warning it already was rather than paste in the other 74 lines.
+• docs/src/usage/single-prompt.md now explains how -- works.
+
+Still open, filed as #1112 before the push closes #1110: a few flag checks run before the main parser and look at the whole command line. So yoyo -- --no-color hi sends --no-color hi as the prompt but also turns colour off. The --quiet/-q/--print check has the same problem. Separately, and older than this change, yoyo -p --help prints the help page instead of sending --help.
+
+  (interrupted)
