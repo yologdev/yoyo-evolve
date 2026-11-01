@@ -1,0 +1,201 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "has_option\|option_args\… ✓ (12ms)
+ ✓ (21ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 340,380p src/dispatch_sub.r… ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo build 2>&1 | tail -1; B=./ta… ✓ (175ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n 'iter().any(|a| a ==\|cont… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue view 1113 --comments 2>&1… ✓ (521ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue view 1113 --json title,bo… ✓ (776ms)
+  ▶ edit src/cli_config.rs (2 → 23 lines)
+  +     /// #1113: the word after a value-taking flag is its value, not a flag.
+  +     #[test]
+  +     fn has_option_skips_the_value_slot_of_a_value_taking_flag() {
+  +         let help: &[&str] = &["--help", "-h"];
+  +         let rows: &[(&[&str], &[&str], bool)] = &[
+  +             (&["-p", "--help"], help, false),
+  +             (&["--prompt", "-h"], help, false),
+  +             (&["--help"], help, true), // near-miss: bare help still prints
+  +             (&["-p", "hi", "--help"], help, true), // `hi` is -p's value; --help is a flag
+  +             (&["--", "--help"], help, false),
+  +             (&["--model", "x", "--no-color"], &["--no-color"], true),
+  +             (&["--model", "--no-color"], &["--no-color"], false),
+  +             (&["--model", "--no-color", "--no-color"], &["--no-color"], true),
+  +             (&["--system", "-q", "hi"], &["--quiet", "-q", "--print"], false),
+  +             (&["--no-color", "--model", "x"], &["--no-color"], true),
+  +         ];
+  +         for (rest, names, want) in rows {
+  +             assert_eq!(has_option(&argv(rest), names), *want, "{rest:?} {names:?}");
+  +         }
+  +     }
+  ... (3 more lines)
+  ▶ edit src/cli_config.rs (7 → 17 lines)
+    /// Is any of `names` among the options (#1112)? For the scans that run
+  - /// before `parse_args_with_config`: a flag written after `--` is not applied.
+  + /// before `parse_args_with_config`: a flag written after `--` is not applied,
+  + /// and neither is one in the value slot of a `FLAGS_NEEDING_VALUES` flag
+  + /// (#1113), so `yoyo -p --help` sends `--help` and `--model --no-color`
+  + /// leaves colour on. Same walk as `option_split`.
+    pub(crate) fn has_option(args: &[String], names: &[&str]) -> bool {
+  -     option_args(args)
+  -         .iter()
+  -         .any(|a| names.contains(&a.as_str()))
+  +     let opts = option_args(args);
+  +     let mut i = 1;
+  +     while let Some(a) = opts.get(i) {
+  +         if names.contains(&a.as_str()) {
+  +             return true;
+  +         }
+  +         let takes_value = crate::cli::FLAGS_NEEDING_VALUES.contains(&a.as_str());
+  +         i += if takes_value { 2 } else { 1 };
+  +     }
+  +     false
+  ... (1 more lines)
+  ▶ edit src/dispatch_sub.rs (7 → 8 lines)
+  -     // #1110: a `--help` after `--` is prompt text, not a request for help.
+  -     let opts = crate::cli_config::option_args(args);
+  -     if opts.iter().any(|a| a == "--help" || a == "-h") {
+  +     // #1110/#1113: a `--help` after `--` or in a value slot (`-p --help`) is
+  +     // prompt text, not a request for help.
+  +     use crate::cli_config::has_option;
+  +     if has_option(args, &["--help", "-h"]) {
+            print_help();
+            return Some(None);
+        }
+  -     if opts.iter().any(|a| a == "--version" || a == "-V") {
+  +     if has_option(args, &["--version", "-V"]) {
+ ✓ (1.7s)
+  +     /// #1113: the word after a value-taking flag is its value, not a flag.
+  +     #[test]
+  +     fn has_option_skips_the_value_slot_of_a_value_taking_flag() {
+  +         let help: &[&str] = &["--help", "-h"];
+  +         let rows: &[(&[&str], &[&str], bool)] = &[
+  +             (&["-p", "--help"], help, false),
+  +             (&["--prompt", "-h"], help, false),
+  +             (&["--help"], help, true), // near-miss: bare help still prints
+  ... (13 more lines)
+ ✓ (2.8s)
+    /// Is any of `names` among the options (#1112)? For the scans that run
+  - /// before `parse_args_with_config`: a flag written after `--` is not applied.
+  + /// before `parse_args_with_config`: a flag written after `--` is not applied,
+  + /// and neither is one in the value slot of a `FLAGS_NEEDING_VALUES` flag
+  + /// (#1113), so `yoyo -p --help` sends `--help` and `--model --no-color`
+  + /// leaves colour on. Same walk as `option_split`.
+    pub(crate) fn has_option(args: &[String], names: &[&str]) -> bool {
+  -     option_args(args)
+  ... (13 more lines)
+ ✓ (4.0s)
+  -     // #1110: a `--help` after `--` is prompt text, not a request for help.
+  -     let opts = crate::cli_config::option_args(args);
+  -     if opts.iter().any(|a| a == "--help" || a == "-h") {
+  +     // #1110/#1113: a `--help` after `--` or in a value slot (`-p --help`) is
+  +     // prompt text, not a request for help.
+  +     use crate::cli_config::has_option;
+  +     if has_option(args, &["--help", "-h"]) {
+            print_help();
+  ... (4 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git diff --stat; grep -n "unknown_… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git diff src/cli_config.rs | head … ✓ (9ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  12 tools completed in 1m 15s (12 ✓)
+
+The first edit landed as garbage at end-of-file. Removing it and inserting the test properly.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 962,967p src/cli_config.rs;… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (31 lines) ✓ (39.3s)
+  2 tools completed in 51.1s (2 ✓)
+
+Now the real-binary rows. Let me see the spawn helpers in the test file.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "^fn \|^/// \|env_remove" … ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (34 lines) ✓ (14.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 27.4s (2 ✓)
+
+Positive controls, serially and atomically: (1) restore the old has_option body, (2) restore the old dispatch_sub scan.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/cli_con… (8 lines) ✓ (49.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/cli_con… (7 lines) ✓ (37.4s)
+  2 tools completed in 1m 37s (2 ✓)
+
+Control 1 reddens both new tests by name; restored. Control 2: old scan in dispatch_sub only.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/dispatc… (8 lines) ✓ (13.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both controls reddened by name and were restored. Now the victim census of the residue: boolean scans inside parse_args_with_config that read option_args without skipping value slots.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo build 2>&1|tail -1; H=$(mkte… ✓ (13.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue list --label agent-self -… ✓ (448ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue creat… (7 lines) ✓ (1.1s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 36.8s (3 ✓)
+
+Docs check and full gate.
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "\-\- --help\|after \`--\… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 20,30p docs/src/usage/singl… ✓ (3ms)
+  ▶ edit docs/src/usage/single-prompt.md (1 → 5 lines)
+    sends `--no-color hi` and leaves colour, bell, notifications, `--quiet` and `--print` as they were.
+  + The same holds for the word right after a flag that takes a value: `yoyo -p --help` sends
+  + `--help` (with a warning that the value looks like a flag) instead of printing the help page.
+  + Some later-read flags (`--yes`, `--print-system-prompt`, ...) are still applied from that slot;
+  + that is tracked in #1114.
+ ✓ (0ms)
+    sends `--no-color hi` and leaves colour, bell, notifications, `--quiet` and `--print` as they were.
+  + The same holds for the word right after a flag that takes a value: `yoyo -p --help` sends
+  + `--help` (with a warning that the value looks like a flag) instead of printing the help page.
+  + Some later-read flags (`--yes`, `--print-system-prompt`, ...) are still applied from that slot;
+  + that is tracked in #1114.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt -- --check && cargo clip… ✓ (4m 50s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 5m 17s (4 ✓)
+
+fmt, clippy and the full cargo test all pass, and the module-size gate is included in that. Committing.
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add -A && … (28 lines) ✓ (20ms)
+
+#1113 is fixed and committed as 6dad2f78. yoyo -p --help now sends --help as the prompt instead of printing the help page. -p --version behaves the same way, and bare --help / --version still print and send nothing.
+
+Before the fix: on the built binary, yoyo -p --help printed the help page and exited 0, and -p --version printed the version line.
+
+What changed:
+• `cli_config::has_option` now steps over the word after any flag in FLAGS_NEEDING_VALUES, the same way option_split walks argv. So --model --no-color no longer turns colour off.
+• The help/version check in `dispatch_sub` used to scan argv itself; it now goes through has_option. That covers all three early checks named in the issue: help/version, main.rs apply_cli_flags and the quiet/print check in parse_args.
+• `option_args` is unchanged, because parse_args_with_config needs the flag values it returns.
+
+Tests:
+• A table test for has_option:
+  • -p --help → false
+  • --help → true
+  • -p hi --help → true (hi is -p's value and --help is a real flag)
+  • -- --help → false
+  • --model x --no-color → true
+  • --model --no-color → false
+  • --system -q → false
+• A real-binary test against the stub server: -p --help and -p --version reach it with the word as the prompt.
+• Two sabotage checks, run one at a time and both restored: putting back the old has_option body makes the table test fail, and putting back the old dispatch_sub check makes the binary test fail.
+• fmt, clippy (-D warnings) and the full cargo test all pass.
+
+What's still broken, now #1114: about 31 other flag checks in cli.rs (parse_args_with_config and the model-config parse) still treat the word after -p as a flag. For example, yoyo -p --print-system-prompt prints the system prompt instead of sending it; I ran that one. The other flags listed in #1114 (--yes, --json and so on) are from a grep and were not each run. That was outside #1113's scope, but this push closes #1113, so I filed #1114 for it first. docs/src/usage/single-prompt.md now describes the fix and points to #1114.
+
+One problem along the way: my first edit_file call pasted a fragment of old text at the end of cli_config.rs. I removed it and re-inserted the test before anything was committed.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 2/2 changed files were in top-10 predictions (100.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/2 (0.0%) — reactive was 100.0%
+     Predicted correctly: src/cli_config.rs, src/dispatch_sub.rs

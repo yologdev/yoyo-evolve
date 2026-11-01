@@ -1,0 +1,77 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --short | head;… ✓ (11ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 120,185p src/dispatch_sub.rs; sed -n 3…  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -n "unknown_flag_refusal\|fn suggest\|di… ✓ (7ms)
+ ✓ (24ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 340,480p src/cli_config.rs; sed -n 400… ✓ (7ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -n "fn count\|cfg(test)\|fn production" … ✓ (12.4s)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 827,870p src/cli.rs; grep -n "lines()\… ✓ (5ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; B=$PWD/target/debug/yoyo; T=$(mktemp -d); cd … ✓ (613ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; cat /tmp/o.health /tmp/o.def /tmp/o.find /tmp… ✓ (7ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; for f in -v --verbose --yes --trust-project -… ✓ (32ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 1,80p tests/unknown_flag_refusal.rs; w… ✓ (6ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 74,100p tests/unknown_flag_refusal.rs;… ✓ (5ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n '/const KNOWN_FLAGS/,/^];/p' src/cli.r… ✓ (6ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; cat >> tests/unknown_flag… (98 lines) ✓ (800ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; python3 - <<'EOF' (65 lines) ✓ (12.7s)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; cargo build 2>&1 | tail -2; cargo test --test… ✓ (621ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; B=$PWD/target/debug/yoyo; T=$(mktemp -d); cd … ✓ (563ms)
+  ▶ $ cd /tmp; T=$(mktemp -d); cd $T; git init -q; for v in blame changelog docs grep … ✓ (183ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; cp src/dispatch_sub.rs /tmp/ds.bak && sed -i … ✓ (26.0s)
+
+────────────────────────────────────────────────────────────────────────────────
+  18 tools completed in 3m 1s (18 ✓)
+
+Control: the three refusal tests go red by name, the near-miss stays green, restored → green. Now docs, then the full gate.
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -n "exit 2\|unknown flag\|1109\|unexpect… ✓ (4ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; python3 - <<'EOF' (7 lines) ✗ (2m 0s)
+    │ Command timed out after 120s. Output so far:
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; cargo test 2>&1 | grep -E "test result|FAILED… ✓ (3m 52s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; cargo test 2>&1 | grep -cE "test result: ok";… ✓ (3m 31s)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 9m 54s (3 ✓, 1 ✗)
+
+All 31 test binaries green, clippy and fmt clean. Committing.
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; git add -A && git commit … (34 lines) ✓ (20ms)
+
+Now the ticket comment, scope first in the opening 200 characters.
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; gh issue comment 1111 --b… (10 lines) ✓ (1.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Done and committed as 0fd18821. cargo build, cargo test (all 31 test binaries), clippy -D warnings and fmt --check all pass.
+
+What was wrong: positional_after_verb in src/dispatch_sub.rs treated any word starting with - as a flag without checking it was a real one. So yoyo init --froce exited 0 and wrote YOYO.md, and status, version, doctor, evolution, help, security and permissions silently ignored --bogus. (health ignored it too and exited 1 for its usual "no project" reason.)
+
+The fix: that one function now checks every word before -- against KNOWN_FLAGS. An unknown flag exits 2 before the command runs, and the error names the command and suggests a close real flag:
+error: unknown flag '--verbos' (did you mean --verbose?) for \yoyo status\. Nothing ran.
+That covers all 10 commands that use the function: doctor, health, help, version, init, security, update, status, evolution and permissions. The suggestion logic isn't a copy: I split the existing top-level refusal (#1109) into a shared cli_config::unknown_flags_in, which both places now call. The #1109 tests weren't changed and still pass.
+
+Census: I ran <verb> --bogus for 38 of the 39 commands in KNOWN_SUBCOMMANDS, using the built binary in a fresh temp repo. I skipped update beforehand because it would really try to self-update; after the fix I ran it by hand, and it refuses before any network call.
+• Before: 12 commands exited 0.
+• After: 4 still exit 0. def, find, memories and outline take --bogus as the thing to search for rather than ignoring it, so they're a different class and not in this slice.
+
+Tests (4 new ones in tests/unknown_flag_refusal.rs, using that file's existing helper that strips API keys from the environment):
+• init --froce exits 2 and YOYO.md does not exist afterwards. As a check that the test can fail, plain init in the same kind of directory does write it.
+• All 8 commands from the census that ignored --bogus now exit 2 with nothing on stdout.
+• The did-you-mean suggestion appears.
+• These keep their current behaviour: status, status --no-color, status --model foo (foo is still taken as the flag's value), version -v/--verbose, and status stray, which still gets the old "unexpected argument" message with exit 2.
+
+As a control, I disabled the new check, ran the tests and put it back in one command. Exactly the three refusal tests failed, the behaviour-preserving test stayed green, and everything passed again once it was restored.
+
+I didn't add the Codex-style hint about using -- before a value that starts with -, because none of these commands takes such a value.
+
+Docs: docs/src/usage/commands.md now says these commands refuse an unknown flag with exit 2.
+
+Issue #1111: I posted one comment ([link](https://github.com/yologdev/yoyo-evolve/issues/1111#issuecomment-6563513609)). It opens with what's still open and covers the census numbers, the 4 search commands left for a separate decision, and the commands that exit 1 for other reasons. I didn't check whether exit 1 is the right code for a flag typo in each of those.
+  watch: no files changed this turn — skipping

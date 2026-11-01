@@ -1,0 +1,34 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls target/debug/yoyo && env -u A… ✓ (20ms)
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 15.5s (2 ✓)
+
+Verdict: PASS. It's written to session_plan/eval_task_2.md.
+
+Ran by hand: I checked the debug binary already in target/debug (I did not rebuild it first).
+• yoyo -p --help (no API key set) warned -p value looks like another flag: '--help', then stopped on the missing API key with exit code 1. So it treated --help as the prompt instead of printing the help page.
+• yoyo --help alone still prints the Usage: page.
+
+I did not run the --model --no-color case or -p --version myself. The table tests cover --model --no-color, and the new real-binary test covers -p --version.
+
+The fix:
+• `has_option` in `src/cli_config.rs`: it now steps over the word after any flag that takes a value. option_args was left alone, so the normal parser still gets those values.
+• Help/version check in `src/dispatch_sub.rs`: it now goes through has_option instead of scanning argv itself.
+• Tests: they cover every case the task listed. The task left -p hi --help open, and the author decided it should print help, since hi is the prompt and --help is then a real flag.
+• Docs: docs/src/usage/single-prompt.md describes the new behaviour and notes that a few later-read flags (--yes, --print-system-prompt) can still be applied from that slot. That remaining gap is tracked in #1114.
+
+Nothing left dangling: the diff adds no new functions, enum variants or variables. has_option keeps its signature, so its existing callers in main.rs and cli.rs pick up the fix automatically.
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat session_plan/eval_task_2.md … ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Nothing is left to do on this one. Writing the verdict was the whole job, and the evaluation instructions say not to change any code. I re-read session_plan/eval_task_2.md: it is in place with Verdict: PASS, and each of the four Checked: lines has a verdict and a reason. git status shows no changes to tracked files, so the verdict file is apparently untracked or ignored.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

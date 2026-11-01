@@ -1,0 +1,32 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls target/debug/yoyo && T=$(mkte… ✓ (67ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > sessio… (8 lines) ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 18.7s (2 ✓)
+
+Verdict: PASS. It's written to session_plan/eval_task_1.md.
+
+The fix is in the one place the task asked for, positional_after_verb. It now checks any dash-led word before -- against KNOWN_FLAGS and exits 2 before the verb does anything. The did-you-mean hint comes from the same code the top-level --modle-style refusal already uses: that code was split out into a shared function rather than copied. All 10 verbs that go through positional_after_verb changed at once, and the docs got their sentence.
+
+I ran the built binary in a fresh git repo, with the Anthropic key unset:
+
+| Command | Exit | Result |
+|---|---|---|
+| init --froce | 2 | no YOYO.md written |
+| status --verbos | 2 | suggests --verbose |
+| help --bogus | 2 | refused, nothing ran |
+| evolution --bogus | 2 | refused, nothing ran |
+| status --model foo | 0 | value-taking flag still accepted |
+| version -v | 0 | still works |
+| status stray | 2 | same "unexpected argument" message as before |
+
+Two notes, neither enough to fail it:
+• Stray file: an unrelated change to .yoyo/risk_weights.json got swept into the diff and should be cleaned up.
+• Gap after `--`: status -- --bogus still exits 0, because a dash-led word after -- is still dropped silently.
+
+I didn't check the task's process steps: the census of every verb, the positive-control run, or the comment on #1111.
+  watch: no files changed this turn — skipping
