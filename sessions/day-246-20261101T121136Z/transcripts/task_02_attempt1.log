@@ -1,0 +1,216 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh… ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1015,1050p src/main.rs; sed… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "args.iter()\|args.contain… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "hints_disabled_from(\|par… ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "^mod cli_config\|^pub mod… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1,135p tests/unknown_flag_r… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "cli_config\|\"src/cli.rs\… ✓ (16ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 340,392p src/cli_config.rs;… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 50.3s (8 ✓)
+
+Write the test first (helper doesn't exist yet → fails to compile), then the helper and call sites.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli_config.rs (2 → 26 lines)
+  +     /// #1112: the early scans (apply_cli_flags in main.rs, the quiet/print
+  +     /// check in parse_args) read only the options half, so a flag written
+  +     /// after `--` is prompt text and is not applied.
+  +     #[test]
+  +     fn has_option_ignores_words_after_double_dash() {
+  +         let rows: &[(&[&str], &[&str], bool)] = &[
+  +             (&["--no-color", "hi"], &["--no-color"], true), // near-miss: unchanged
+  +             (&["--no-color", "--", "hi"], &["--no-color"], true),
+  +             (&["--", "--no-color", "hi"], &["--no-color"], false),
+  +             (&["-p", "--", "--no-bell"], &["--no-bell"], false),
+  +             (&["-q", "hi"], &["--quiet", "-q", "--print"], true),
+  +             (&["--", "--quiet"], &["--quiet", "-q", "--print"], false),
+  +             (&["--", "-q", "--print"], &["--quiet", "-q", "--print"], false),
+  +             (&["--model", "--quiet"], &["--quiet", "-q"], true), // value slot: #1112 scope excludes it
+  +             (&["hi"], &["--no-rtk"], false),
+  +         ];
+  +         for (rest, names, want) in rows {
+  +             assert_eq!(has_option(&argv(rest), names), *want, "{rest:?} {names:?}");
+  +         }
+  +         // The word still reaches the prompt verbatim.
+  ... (6 more lines)
+  ▶ edit src/cli_config.rs (1 → 7 lines)
+  + /// Is any of `names` among the options (#1112)? For the scans that run
+  + /// before `parse_args_with_config`: a flag written after `--` is not applied.
+  + pub(crate) fn has_option(args: &[String], names: &[&str]) -> bool {
+  +     option_args(args).iter().any(|a| names.contains(&a.as_str()))
+  + }
+  + 
+    /// The words after `--`: prompt text, verbatim, never parsed as flags.
+ ✓ (20.2s)
+  +     /// #1112: the early scans (apply_cli_flags in main.rs, the quiet/print
+  +     /// check in parse_args) read only the options half, so a flag written
+  +     /// after `--` is prompt text and is not applied.
+  +     #[test]
+  +     fn has_option_ignores_words_after_double_dash() {
+  +         let rows: &[(&[&str], &[&str], bool)] = &[
+  +             (&["--no-color", "hi"], &["--no-color"], true), // near-miss: unchanged
+  +             (&["--no-color", "--", "hi"], &["--no-color"], true),
+  ... (13 more lines)
+ ✓ (40.0s)
+  + /// Is any of `names` among the options (#1112)? For the scans that run
+  + /// before `parse_args_with_config`: a flag written after `--` is not applied.
+  + pub(crate) fn has_option(args: &[String], names: &[&str]) -> bool {
+  +     option_args(args).iter().any(|a| names.contains(&a.as_str()))
+  + }
+  + 
+    /// The words after `--`: prompt text, verbatim, never parsed as flags.
+  2 tools completed in 45.5s (2 ✓)
+
+Expected — now the consumers.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (20 lines) ✓ (21.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git diff src/cli_config.rs | head … ✓ (11ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 32.2s (2 ✓)
+
+The parallel edits raced and the test was lost; re-adding it.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli_config.rs (2 → 25 lines)
+  +     /// #1112: the early scans (apply_cli_flags in main.rs, the quiet/print
+  +     /// check in parse_args) read only the options half, so a flag written
+  +     /// after `--` is prompt text and is not applied.
+  +     #[test]
+  +     fn has_option_ignores_words_after_double_dash() {
+  +         let rows: &[(&[&str], &[&str], bool)] = &[
+  +             (&["--no-color", "hi"], &["--no-color"], true), // near-miss: unchanged
+  +             (&["--no-color", "--", "hi"], &["--no-color"], true),
+  +             (&["--", "--no-color", "hi"], &["--no-color"], false),
+  +             (&["-p", "--", "--no-bell"], &["--no-bell"], false),
+  +             (&["-q", "hi"], &["--quiet", "-q", "--print"], true),
+  +             (&["--", "--quiet"], &["--quiet", "-q", "--print"], false),
+  +             (&["--", "-q", "--print"], &["--quiet", "-q", "--print"], false),
+  +             (&["hi"], &["--no-rtk"], false),
+  +         ];
+  +         for (rest, names, want) in rows {
+  +             assert_eq!(has_option(&argv(rest), names), *want, "{rest:?} {names:?}");
+  +         }
+  +         // The word still reaches the prompt verbatim.
+  +         let a = argv(&["--", "--no-color", "hi"]);
+  ... (5 more lines)
+ ✓ (4m 13s)
+  +     /// #1112: the early scans (apply_cli_flags in main.rs, the quiet/print
+  +     /// check in parse_args) read only the options half, so a flag written
+  +     /// after `--` is prompt text and is not applied.
+  +     #[test]
+  +     fn has_option_ignores_words_after_double_dash() {
+  +         let rows: &[(&[&str], &[&str], bool)] = &[
+  +             (&["--no-color", "hi"], &["--no-color"], true), // near-miss: unchanged
+  +             (&["--no-color", "--", "hi"], &["--no-color"], true),
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit tests/unknown_flag_refusal.rs (1 → 16 lines)
+  + /// #1112 at the request: `yoyo -- --no-color --quiet hi` sends all three
+  + /// words; the early scans no longer also apply them as flags (that half is
+  + /// pinned in cli_config's has_option table, since a piped stdout already
+  + /// turns colour off and quiet on, so a pipe cannot observe it).
+  + #[test]
+  + fn early_flags_after_double_dash_reach_the_prompt_verbatim() {
+  +     let (_, _, err, hits, bodies) = run_with_bodies(&["--", "--no-color", "--quiet", "hi"]);
+  +     assert!(hits >= 1, "must reach the stub; stderr: {err}");
+  +     assert!(
+  +         bodies[0].contains(r#""text":"--no-color --quiet hi""#),
+  +         "{}",
+  +         bodies[0]
+  +     );
+  + }
+  + 
+    /// #1110: `--help` after `--` is a prompt, not the help page; before `--` it
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt && cargo clippy --all-ta… ✓ (4m 14s)
+  + /// #1112 at the request: `yoyo -- --no-color --quiet hi` sends all three
+  + /// words; the early scans no longer also apply them as flags (that half is
+  + /// pinned in cli_config's has_option table, since a piped stdout already
+  + /// turns colour off and quiet on, so a pipe cannot observe it).
+  + #[test]
+  + fn early_flags_after_double_dash_reach_the_prompt_verbatim() {
+  +     let (_, _, err, hits, bodies) = run_with_bodies(&["--", "--no-color", "--quiet", "hi"]);
+  +     assert!(hits >= 1, "must reach the stub; stderr: {err}");
+  ... (8 more lines)
+ ✗ (4m 14s)
+    │ Command timed out after 120s. Output so far:
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 8m 45s (2 ✓, 1 ✗)
+
+Both green. Positive control — sabotage has_option to scan all of argv, run, restore, in one command:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/cli_config.rs /tmp/cc.bak; … ✓ (32.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control reddened by name and restored. Now docs and pointers:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git grep -n '#1112' src docs tests… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 20,28p docs/src/usage/singl… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (8 lines) ✓ (604ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 14.3s (3 ✓)
+
+Filing the value-slot carrier (verify the repro first):
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp && env -u ANTHROPIC_API_KEY timeout 10 /home/runner/work/yoyo-evolve/yoy… ✓ (668ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue creat… (5 lines) ✓ (902ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 20.8s (2 ✓)
+
+Now the full gate:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt -- --check && cargo clip… ✓ (4m 17s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 590 cargo test 2>&1 > /tmp… ✓ (3m 7s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7m 40s (2 ✓)
+
+All green (rc=0, 31 suites, no failures). Recording cli.rs's one-line shrink in the size register rather than leaving ungranted headroom:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -i 's|("src/cli.rs", 7873), //… ✓ (440ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt -- -… (32 lines) ✓ (1.4s)
+  2 tools completed in 35.4s (2 ✓)
+
+I fixed #1112 and committed it as 2900fcad. A flag written after -- is now only prompt text and is no longer also applied. Before this, yoyo -- --no-color hi sent --no-color hi and turned colour off as well.
+
+What changed
+• I added a small helper, cli_config::has_option(args, names), which only looks at the flags before -- (the same option_args view #1110 used). Both early scans call it:
+  • apply_cli_flags in src/main.rs: --no-color, --no-bell, --no-notify, --no-rtk.
+  • The quiet check in parse_args in src/cli.rs: --quiet/-q, --print.
+• I checked the other blocks the task asked about. hints_disabled_from and parse_output_flags are only called from parse_args_with_config, after the point where it switches to option_args, so they were already correct.
+
+Tests
+• A table test on has_option. A flag before -- still applies, which is the common case. After -- it does not, for --no-color, --no-bell, --quiet, -q and --print. The same test checks the word still reaches the prompt unchanged.
+• A real-binary test in tests/unknown_flag_refusal.rs, using the existing stub and env-scrubbing helper: yoyo -- --no-color --quiet hi sends all three words in the request.
+• Limit: the binary test can't see whether colour or quiet were actually switched, because piped output already turns colour off and quiet on. That decision is covered by the has_option table, since both call sites now go through that function.
+• Positive control: I changed has_option to scan all of argv, and the table test failed by name. I restored it in the same command, and no sabotage marker is left in the tree.
+• cargo fmt --check, cargo clippy --all-targets -- -D warnings and the full cargo test all pass.
+
+Also done
+• Added one sentence to docs/src/usage/single-prompt.md: no flag after -- is applied, including colour, bell, notifications, --quiet and --print.
+• src/cli.rs shrank by one line, so I updated its entry in tests/module_size.rs to 7872.
+• I filed the value-slot case as #1113. I confirmed it at the built binary: yoyo -p --help still prints the help page instead of sending --help as the prompt. Closing #1112 leaves that problem with its own open issue.
+• git grep '#1112' src docs only finds the new code comments, which describe the fixed behaviour, so nothing user-facing points at the closed ticket.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 1/1 changed files were in top-10 predictions (100.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/1 (0.0%) — reactive was 100.0%
+     Predicted correctly: src/cli_config.rs

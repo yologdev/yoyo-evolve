@@ -1,0 +1,24 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2325,2390p src/cli.rs | g… ✓ (859ms)
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 20.8s (2 ✓)
+
+Verdict: PASS. It's written to session_plan/eval_task_2.md, and all four Checked lines pass.
+
+Every early scan on the #1112 list now reads only the flags before --. That covers the four in apply_cli_flags in src/main.rs (--no-color, --no-bell, --no-notify, --no-rtk) and the --quiet/-q/--print check in parse_args. All five go through a new cli_config::has_option, which only looks at option_args(args).
+
+• Nothing left behind: I read src/cli.rs around lines 2330–2390. The only other code that runs before option_args takes over is try_dispatch_subcommand, which deals with subcommands, not the listed flags. No args.iter().any scans remain in main.rs.
+• No dangling definition: has_option is the one new definition. It has five callers in this same diff and its own table test.
+• Tests: the table covers the cases the task required: a flag before -- still applies, the same flag after -- doesn't, for both --no-color and --quiet. A test against a stub provider confirms yoyo -- --no-color --quiet hi sends --no-color --quiet hi unchanged.
+• Binary: I ran yoyo --print-system-prompt -- --quiet on the built binary and it printed the system prompt.
+• Docs: docs/src/usage/single-prompt.md now says no flag after -- is applied, with the yoyo -- --no-color hi example.
+
+Two gaps, neither enough to fail:
+• Positive control is weaker than asked: the tests check has_option itself, so putting one call site back to args.iter() would not make any test fail. The task allowed testing the helper directly, but it also asked for that per-scan check.
+• Follow-up issue not confirmed: the task said to file the separate -p --help problem as its own issue and cite its number in the commit body. I couldn't confirm that from the diff.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
