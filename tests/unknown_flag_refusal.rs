@@ -342,3 +342,98 @@ fn commit_with_a_misspelled_flag_refuses_and_creates_no_commit() {
     assert_ne!(git(&["rev-parse", "HEAD"]), head);
     assert_eq!(git(&["log", "-1", "--format=%s"]), "fix x");
 }
+
+/// Run `yoyo <args>` in a fresh empty project dir (no stub: these verbs never
+/// reach a provider). Returns (exit code, stdout, stderr, project dir).
+fn run_verb(args: &[&str]) -> (Option<i32>, String, String, tempfile::TempDir) {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let home = tmp.path().join("home");
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&repo).unwrap();
+    let out = scrubbed(&home)
+        .args(args)
+        .current_dir(&repo)
+        .output()
+        .expect("spawn yoyo");
+    (
+        out.status.code(),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+        tmp,
+    )
+}
+
+/// #1111: `yoyo init --froce` used to exit 0 and WRITE YOYO.md, dropping the
+/// dash-led word as "a flag" without checking it was one. It now refuses
+/// with exit 2 before the handler, so nothing is written.
+#[test]
+fn init_with_an_unknown_flag_exits_2_and_writes_no_yoyo_md() {
+    let (code, out, err, tmp) = run_verb(&["init", "--froce"]);
+    assert_eq!(code, Some(2), "stdout: {out}\nstderr: {err}");
+    assert!(err.contains("unknown flag '--froce'"), "{err}");
+    assert!(err.contains("yoyo init"), "{err}");
+    assert!(
+        !tmp.path().join("repo/YOYO.md").exists(),
+        "init wrote YOYO.md despite the refusal"
+    );
+    // Anti-vacuous: bare `init` in the same kind of dir does write it.
+    let (code, _, err, tmp) = run_verb(&["init"]);
+    assert_eq!(code, Some(0), "{err}");
+    assert!(tmp.path().join("repo/YOYO.md").exists());
+}
+
+/// #1111: every no-flag verb that reads its words through
+/// `positional_after_verb` refuses an unknown flag with exit 2 and prints
+/// nothing on stdout (the refusal runs before the handler).
+#[test]
+fn no_flag_verbs_refuse_an_unknown_flag_with_exit_2() {
+    for verb in [
+        "status",
+        "version",
+        "doctor",
+        "evolution",
+        "health",
+        "help",
+        "security",
+        "permissions",
+    ] {
+        let (code, out, err, _tmp) = run_verb(&[verb, "--bogus"]);
+        assert_eq!(code, Some(2), "{verb}: stdout: {out}\nstderr: {err}");
+        assert!(err.contains("unknown flag '--bogus'"), "{verb}: {err}");
+        assert!(out.is_empty(), "{verb} ran its handler: {out}");
+    }
+}
+
+/// The hint comes from the same `closest_match` over `KNOWN_FLAGS` the
+/// top-level refusal (#1109) uses.
+#[test]
+fn unknown_flag_after_a_verb_suggests_the_nearest_known_flag() {
+    let (code, _, err, _tmp) = run_verb(&["status", "--verbos"]);
+    assert_eq!(code, Some(2), "{err}");
+    assert!(err.contains("did you mean --verbose?"), "{err}");
+}
+
+/// Near-misses that must keep today's behaviour: known flags (with and
+/// without a value) after a verb are accepted, the value of a value-taking
+/// flag is not a stray word, bare verbs run, and a stray plain word is
+/// still the old `unexpected argument` refusal.
+#[test]
+fn known_flags_after_a_verb_still_run_and_stray_words_still_refuse() {
+    for args in [
+        &["status"][..],
+        &["status", "--no-color"],
+        &["status", "--model", "foo"],
+        &["version", "-v"],
+        &["version", "--verbose"],
+    ] {
+        let (code, out, err, _tmp) = run_verb(args);
+        assert_eq!(code, Some(0), "{args:?}: stderr: {err}");
+        assert!(!err.contains("unknown flag"), "{args:?}: {err}");
+        assert!(out.contains("yoyo"), "{args:?}: {out}");
+    }
+    let (code, _, err, _tmp) = run_verb(&["status", "stray"]);
+    assert_eq!(code, Some(2), "{err}");
+    assert!(err.contains("unexpected argument 'stray'"), "{err}");
+    assert!(!err.contains("unknown flag"), "{err}");
+}

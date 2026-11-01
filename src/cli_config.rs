@@ -432,10 +432,22 @@ pub(crate) fn prompt_text(args: &[String], p_value: Option<String>) -> Option<St
 /// the value in its own word. Glyph-free, so it reads the same under plain
 /// output.
 pub(crate) fn unknown_flag_refusal(args: &[String]) -> Option<String> {
+    let parts = unknown_flags_in(option_args(args).get(1..).unwrap_or_default())?;
+    Some(format!(
+        "{parts}. Nothing was sent to the model. \
+Run yoyo --help for the list of flags."
+    ))
+}
+
+/// The "unknown flag '--x' (did you mean --y?)" clause for `words`, or None
+/// when every dash-led word is a known flag (a value-taking flag's value is
+/// skipped). Shared by the top-level refusal (#1109) and the shell verbs'
+/// `positional_after_verb` (#1111), so both doors give one hint.
+pub(crate) fn unknown_flags_in(words: &[String]) -> Option<String> {
     use crate::cli::{FLAGS_NEEDING_VALUES, KNOWN_FLAGS};
     let mut parts = Vec::new();
     let mut skip_next = false;
-    for arg in option_args(args).iter().skip(1) {
+    for arg in words {
         if skip_next {
             skip_next = false;
             continue;
@@ -465,11 +477,7 @@ pub(crate) fn unknown_flag_refusal(args: &[String]) -> Option<String> {
         return None;
     }
     let noun = if parts.len() == 1 { "flag" } else { "flags" };
-    Some(format!(
-        "unknown {noun} {}. Nothing was sent to the model. \
-Run yoyo --help for the list of flags.",
-        parts.join(", ")
-    ))
+    Some(format!("unknown {noun} {}", parts.join(", ")))
 }
 
 #[cfg(test)]

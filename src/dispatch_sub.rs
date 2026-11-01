@@ -135,10 +135,20 @@ fn exit_if_nonzero(code: i32) {
     }
 }
 
-/// Positional arguments after a verb (#982): flags, and the value a
-/// value-taking flag consumes (same `FLAGS_NEEDING_VALUES` parse_args uses),
-/// are not positional, so `version -v --model m` has none.
-fn positional_after_verb(rest: &[String]) -> Vec<&String> {
+/// Positional arguments after the verb in `args` (#982): flags, and the
+/// value a value-taking flag consumes (same `FLAGS_NEEDING_VALUES` parse_args
+/// uses), are not positional, so `version -v --model m` has none. A dash-led
+/// word that is NOT in `KNOWN_FLAGS` exits 2 here, before the arm's handler
+/// runs (#1111: `init --froce` used to write YOYO.md); words after `--` are
+/// left alone.
+fn positional_after_verb(args: &[String]) -> Vec<&String> {
+    let rest = args.get(2..).unwrap_or_default();
+    let flags = &rest[..rest.iter().position(|a| a == "--").unwrap_or(rest.len())];
+    if let Some(msg) = crate::cli_config::unknown_flags_in(flags) {
+        let verb = crate::cli::sanitize_for_display(&args[1]);
+        eprintln!("{RED}error:{RESET} {msg} for `yoyo {verb}`. Nothing ran.");
+        exit_if_nonzero(2);
+    }
     let mut skip = false;
     let mut out = Vec::new();
     for a in rest {
@@ -388,7 +398,7 @@ pub(crate) fn try_dispatch_subcommand_in(
                     .unwrap_or_else(|| default_model_for_provider(&provider));
                 refuse_stray_arg(
                     "doctor [--provider P] [--model M]",
-                    positional_after_verb(&args[2..]).first().copied(),
+                    positional_after_verb(args).first().copied(),
                 );
                 // #1045: the startup fence a session would build, so a
                 // refused instruction file is reported as refused.
@@ -401,14 +411,14 @@ pub(crate) fn try_dispatch_subcommand_in(
                 // handle_health takes no arguments — it auto-detects project type
                 // from the current directory and runs the appropriate checks.
                 // #982: exits 1 when no recognized project was found.
-                refuse_stray_arg("health", positional_after_verb(&args[2..]).first().copied());
+                refuse_stray_arg("health", positional_after_verb(args).first().copied());
                 exit_if_nonzero(crate::commands_dev::handle_health_status());
                 return Some(None);
             }
             "help" => {
                 // `help <command>` is the shell twin of REPL `/help <command>`;
                 // an unknown topic exits 2 (#982), like `git`/`cargo help zzz`.
-                let pos = positional_after_verb(&args[2..]);
+                let pos = positional_after_verb(args);
                 refuse_stray_arg("help [command]", pos.get(1).copied());
                 match pos.first().map(|t| t.trim_start_matches('/')) {
                     None => print_help(),
@@ -420,10 +430,7 @@ pub(crate) fn try_dispatch_subcommand_in(
                 return Some(None);
             }
             "version" => {
-                refuse_stray_arg(
-                    "version [-v]",
-                    positional_after_verb(&args[2..]).first().copied(),
-                );
+                refuse_stray_arg("version [-v]", positional_after_verb(args).first().copied());
                 let verbose = args.iter().any(|a| a == "-v" || a == "--verbose");
                 if verbose {
                     let (file_config, _) = load_config_file();
@@ -463,7 +470,7 @@ pub(crate) fn try_dispatch_subcommand_in(
             }
             "init" => {
                 // Refused BEFORE any write: `init zzz` used to create YOYO.md (#982).
-                refuse_stray_arg("init", positional_after_verb(&args[2..]).first().copied());
+                refuse_stray_arg("init", positional_after_verb(args).first().copied());
                 match project {
                     None => crate::commands_project::handle_init(),
                     Some(p) => crate::commands_project::handle_init_in(p.dir),
@@ -486,10 +493,7 @@ pub(crate) fn try_dispatch_subcommand_in(
                 // non-interactively — but it had no CLI door, so `yoyo security`
                 // reached only the bare-word near-miss guard telling the caller to
                 // start a REPL. It takes no arguments, so nothing is forwarded.
-                refuse_stray_arg(
-                    "security",
-                    positional_after_verb(&args[2..]).first().copied(),
-                );
+                refuse_stray_arg("security", positional_after_verb(args).first().copied());
                 crate::commands_lint::handle_security();
                 return Some(None);
             }
@@ -665,7 +669,7 @@ pub(crate) fn try_dispatch_subcommand_in(
             }
             "update" => {
                 // Refused before any network call (#982).
-                refuse_stray_arg("update", positional_after_verb(&args[2..]).first().copied());
+                refuse_stray_arg("update", positional_after_verb(args).first().copied());
                 if let Err(e) = crate::commands_update::handle_update() {
                     eprintln!("{RED}  {e}{RESET}");
                 }
@@ -718,7 +722,7 @@ pub(crate) fn try_dispatch_subcommand_in(
             "status" => {
                 // Bare subcommand: no active session, so show what we can
                 // without agent state (version, git branch, cwd).
-                refuse_stray_arg("status", positional_after_verb(&args[2..]).first().copied());
+                refuse_stray_arg("status", positional_after_verb(args).first().copied());
                 let cwd = std::env::current_dir()
                     .map_or_else(|_| "?".into(), |p| p.display().to_string());
                 println!("{DIM}  yoyo v{VERSION}");
@@ -749,7 +753,7 @@ pub(crate) fn try_dispatch_subcommand_in(
             }
             "evolution" => {
                 // One optional numeric count; a non-number or a second one is stray.
-                let pos = positional_after_verb(&args[2..]);
+                let pos = positional_after_verb(args);
                 let numeric = pos.first().is_some_and(|a| a.parse::<usize>().is_ok());
                 refuse_stray_arg("evolution [N]", pos.get(usize::from(numeric)).copied());
                 let input = quote_args_as_command(args);
@@ -786,7 +790,7 @@ pub(crate) fn try_dispatch_subcommand_in(
             "permissions" => {
                 // Load permission config from config file (same as parse_args does)
                 // so the user can inspect their effective permissions from the shell.
-                let stray = positional_after_verb(&args[2..]).first().copied();
+                let stray = positional_after_verb(args).first().copied();
                 refuse_stray_arg("permissions [--trust-project] [--yes]", stray);
                 let (_, raw_config) = load_config_file();
                 let raw_permissions = crate::config::parse_permissions_from_config(&raw_config);
