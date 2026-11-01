@@ -349,6 +349,62 @@ pub(crate) fn bad_numeric_flag_refusal(args: &[String]) -> Option<String> {
     })
 }
 
+/// Where top-level option parsing ends (#1110): the first bare `--` that is
+/// not taken as a flag's value, as in git, cargo and POSIX getopt. Values are
+/// skipped exactly as `unknown_flag_refusal` and `collect_positional_args`
+/// skip them, so `--model -- hi` still makes `--` the model's value.
+/// One carve-out: `-p --` / `--prompt --` followed by at least one word reads
+/// as "the prompt is what follows", so `-p` is dropped from the options too.
+/// Returns `(end of options, start of operands)`; with no terminator both
+/// are `args.len()`, which keeps every older parse byte-identical.
+pub(crate) fn option_split(args: &[String]) -> (usize, usize) {
+    use crate::cli::FLAGS_NEEDING_VALUES;
+    let mut i = 1;
+    while let Some(a) = args.get(i) {
+        if a == "--" {
+            return (i, i + 1);
+        }
+        if !FLAGS_NEEDING_VALUES.contains(&a.as_str()) {
+            i += 1;
+            continue;
+        }
+        let prompt_takes_rest = matches!(a.as_str(), "-p" | "--prompt")
+            && args.get(i + 1).is_some_and(|n| n == "--")
+            && args.len() > i + 2;
+        if prompt_takes_rest {
+            return (i, i + 2);
+        }
+        i += 2;
+    }
+    (args.len(), args.len())
+}
+
+/// The options half of argv (binary name included): what every flag
+/// lookup may see. Equal to `args` when there is no `--`.
+pub(crate) fn option_args(args: &[String]) -> &[String] {
+    &args[..option_split(args).0.min(args.len())]
+}
+
+/// The words after `--`: prompt text, verbatim, never parsed as flags.
+pub(crate) fn operand_args(args: &[String]) -> &[String] {
+    &args[option_split(args).1.min(args.len())..]
+}
+
+/// The prompt for a one-shot run, from the full argv and `-p`'s value as
+/// read from the options half. Words after `--` are appended verbatim; with
+/// no `-p` the bare positional words (which already include them) are used.
+pub(crate) fn prompt_text(args: &[String], p_value: Option<String>) -> Option<String> {
+    let operands = operand_args(args);
+    match p_value {
+        Some(p) if operands.is_empty() => Some(p),
+        Some(p) => Some(format!("{p} {}", operands.join(" "))),
+        None => {
+            let pos = crate::cli::collect_positional_args(args, crate::cli::FLAGS_NEEDING_VALUES);
+            (!pos.is_empty()).then(|| pos.join(" "))
+        }
+    }
+}
+
 /// Startup refusal for flag-shaped tokens that are not in `KNOWN_FLAGS`
 /// (#1109). Before, `yoyo --modle claude-haiku-4-5 -p hi` printed a warning,
 /// ignored the flag and sent a paid request on the default model; git, cargo
@@ -371,13 +427,10 @@ pub(crate) fn unknown_flag_refusal(args: &[String]) -> Option<String> {
     use crate::cli::{FLAGS_NEEDING_VALUES, KNOWN_FLAGS};
     let mut parts = Vec::new();
     let mut skip_next = false;
-    for arg in args.iter().skip(1) {
+    for arg in option_args(args).iter().skip(1) {
         if skip_next {
             skip_next = false;
             continue;
-        }
-        if arg == "--" {
-            break;
         }
         if !arg.starts_with('-') || arg == "-" || arg.chars().any(char::is_whitespace) {
             continue;
@@ -448,15 +501,90 @@ Run yoyo --help for the list of flags.",
             &[],
             &["--model", "x", "--yes", "--print-system-prompt"],
             &["-p", "hi"],
-            &["--system", "-x"], // a value, even when flag-shaped
-            &["--", "--modle"],  // after the terminator: old warning path
-            &["-", "hi"],        // bare dash
-            &["- fix the list"], // a quoted prompt that starts with '-'
+            &["--system", "-x"],                // a value, even when flag-shaped
+            &["--", "--modle"],                 // after the terminator: an operand (#1110)
+            &["-p", "--", "--explain", "this"], // `-p --`: the rest is prompt text
+            &["-", "hi"],                       // bare dash
+            &["- fix the list"],                // a quoted prompt that starts with '-'
             &["hello", "world"],
         ];
         for rest in passed {
             assert_eq!(unknown_flag_refusal(&argv(rest)), None, "{rest:?}");
         }
+    }
+
+    /// #1110: where options end and what the prompt becomes. Each row is
+    /// (argv after the binary, options seen by flag lookups, operands, prompt
+    /// with no -p value supplied by the caller). Near-misses: no `--` at all
+    /// (everything is options, byte-identical to before), `--` in a value slot
+    /// (`--model --`: still the value), `---` and `--x` (not the terminator),
+    /// and `-p --` with nothing after it (still `-p`'s value, as before).
+    #[test]
+    fn double_dash_terminator_table() {
+        type Row<'a> = (&'a [&'a str], &'a [&'a str], &'a [&'a str], Option<&'a str>);
+        let rows: &[Row] = &[
+            (&["hi", "there"], &["hi", "there"], &[], Some("hi there")),
+            (&["--yes", "hi"], &["--yes", "hi"], &[], Some("hi")),
+            (&["--"], &[], &[], None),
+            (&["--", "hi"], &[], &["hi"], Some("hi")),
+            (
+                &["--", "--explain", "this", "--", "-x"],
+                &[],
+                &["--explain", "this", "--", "-x"],
+                Some("--explain this -- -x"),
+            ),
+            (
+                &["--yes", "fix", "--", "--model", "x"],
+                &["--yes", "fix"],
+                &["--model", "x"],
+                Some("fix --model x"),
+            ),
+            (&["--", "status"], &[], &["status"], Some("status")),
+            (
+                &["--model", "--", "hi"],
+                &["--model", "--", "hi"],
+                &[],
+                Some("hi"),
+            ),
+            (&["---", "hi"], &["---", "hi"], &[], Some("hi")),
+            (&["--x", "hi"], &["--x", "hi"], &[], Some("hi")),
+            (
+                &["-p", "--", "--explain", "this"],
+                &[],
+                &["--explain", "this"],
+                Some("--explain this"),
+            ),
+            (&["--yes", "-p", "--", "x"], &["--yes"], &["x"], Some("x")),
+            (&["-p", "--"], &["-p", "--"], &[], None),
+            (
+                &["--model", "-p", "--", "hi"],
+                &["--model", "-p"],
+                &["hi"],
+                Some("hi"),
+            ),
+        ];
+        for (rest, opts, ops, prompt) in rows {
+            let a = argv(rest);
+            let want_opts: Vec<String> = argv(opts);
+            assert_eq!(option_args(&a), &want_opts[..], "options of {rest:?}");
+            assert_eq!(operand_args(&a), &argv(ops)[1..], "operands of {rest:?}");
+            assert_eq!(
+                prompt_text(&a, None).as_deref(),
+                *prompt,
+                "prompt of {rest:?}"
+            );
+        }
+        // -p's own value comes first, operands follow verbatim.
+        let a = argv(&["-p", "hi", "--", "--x"]);
+        assert_eq!(
+            prompt_text(&a, Some("hi".into())).as_deref(),
+            Some("hi --x")
+        );
+        let a = argv(&["-p", "hi"]);
+        assert_eq!(prompt_text(&a, Some("hi".into())).as_deref(), Some("hi"));
+        // Unknown flags before `--` are still refused; after it, never.
+        assert!(unknown_flag_refusal(&argv(&["--bogus", "--", "hi"])).is_some());
+        assert!(unknown_flag_refusal(&argv(&["--", "--bogus"])).is_none());
     }
 
     #[test]

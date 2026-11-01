@@ -20,6 +20,10 @@ yoyo -p "find all TODO comments"
 
 Both forms are equivalent. The bare prompt form is shorter and matches how most CLI tools work.
 
+`--` ends option parsing; everything after it is prompt text, sent verbatim even when it starts
+with a dash: `yoyo -- --explain this` and `yoyo -p -- --explain this` both send `--explain this`,
+and `yoyo -p hi -- --x` sends `hi --x`. Unknown flags *before* `--` are still refused.
+
 ## When to use it
 
 Single-prompt mode is useful for:

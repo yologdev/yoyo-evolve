@@ -881,7 +881,7 @@ pub(crate) fn collect_positional_args(
     let mut positional = Vec::new();
     let mut skip_next = false;
 
-    for (i, arg) in args.iter().enumerate() {
+    for (i, arg) in crate::cli_config::option_args(args).iter().enumerate() {
         // Skip the binary name
         if i == 0 {
             continue;
@@ -904,6 +904,7 @@ pub(crate) fn collect_positional_args(
         }
         positional.push(arg.clone());
     }
+    positional.extend_from_slice(crate::cli_config::operand_args(args)); // #1110: verbatim
     positional
 }
 
@@ -963,7 +964,7 @@ pub(crate) fn misplaced_subcommand_refusal(args: &[String], idx: usize, plain: b
 /// Skips args[0] (binary name) and values that follow flags expecting values.
 pub fn warn_unknown_flags(args: &[String], flags_needing_values: &[&str]) {
     let mut skip_next = false;
-    for arg in args.iter().skip(1) {
+    for arg in crate::cli_config::option_args(args).iter().skip(1) {
         if skip_next {
             skip_next = false;
             continue;
@@ -2375,8 +2376,9 @@ pub(crate) fn parse_args_with_config(
     file_config: HashMap<String, String>,
     raw_config_content: String,
 ) -> Option<Config> {
-    // Apply config-file defaults for display/audio settings.
-    // CLI flags (handled earlier in apply_cli_flags / parse_args) take priority.
+    let (full_args, args) = (args, crate::cli_config::option_args(args)); // #1110: flags end at `--`
+                                                                          // Apply config-file defaults for display/audio settings.
+                                                                          // CLI flags (handled earlier in apply_cli_flags / parse_args) take priority.
     if !args.iter().any(|a| a == "--quiet" || a == "-q")
         && !args.iter().any(|a| a == "--print")
         && !std::env::var("YOYO_QUIET")
@@ -2713,16 +2715,10 @@ directory ({e}); this run is trusted, later runs will not be."
     }
 
     // Parse prompt and image flags early so we can validate --image before API key check
-    let mut prompt_arg = flag_value(args, &["--prompt", "-p"]);
-
-    // Support bare positional prompts: `yoyo "fix this bug"` without --prompt.
-    // Only if --prompt/-p wasn't explicitly provided.
-    if prompt_arg.is_none() {
-        let positional = collect_positional_args(args, flags_needing_values);
-        if !positional.is_empty() {
-            prompt_arg = Some(positional.join(" "));
-        }
-    }
+    // Bare positional prompts (`yoyo "fix this bug"`) when -p is absent; words
+    // after `--` are appended verbatim either way (#1110).
+    let prompt_arg =
+        crate::cli_config::prompt_text(full_args, flag_value(args, &["--prompt", "-p"]));
 
     let image_path_raw = flag_value(args, &["--image"]);
 

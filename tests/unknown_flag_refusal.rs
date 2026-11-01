@@ -11,20 +11,26 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-/// A stub that counts each request and answers it with a 400.
-fn start_counting_stub() -> (u16, Arc<AtomicUsize>) {
+/// Request bodies the stub has read, in arrival order (#1110: the prompt).
+type Bodies = Arc<Mutex<Vec<String>>>;
+
+/// A stub that counts each request, keeps its body, and answers with a 400.
+/// The count goes up only once the body is read, so a caller that stops at
+/// the first hit has the body in hand.
+fn start_counting_stub() -> (u16, Arc<AtomicUsize>, Bodies) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind stub");
     let port = listener.local_addr().unwrap().port();
     let hits = Arc::new(AtomicUsize::new(0));
     let count = Arc::clone(&hits);
+    let bodies: Bodies = Arc::default();
+    let kept = Arc::clone(&bodies);
     thread::spawn(move || {
         for stream in listener.incoming() {
             let Ok(mut stream) = stream else { continue };
-            count.fetch_add(1, Ordering::SeqCst);
             let Ok(clone) = stream.try_clone() else {
                 continue;
             };
@@ -47,6 +53,10 @@ fn start_counting_stub() -> (u16, Arc<AtomicUsize>) {
             }
             let mut body = vec![0u8; content_length];
             let _ = reader.read_exact(&mut body);
+            kept.lock()
+                .unwrap()
+                .push(String::from_utf8_lossy(&body).into_owned());
+            count.fetch_add(1, Ordering::SeqCst);
             let payload =
                 r#"{"type":"error","error":{"type":"invalid_request_error","message":"stub"}}"#;
             let resp = format!(
@@ -58,7 +68,7 @@ fn start_counting_stub() -> (u16, Arc<AtomicUsize>) {
             let _ = stream.flush();
         }
     });
-    (port, hits)
+    (port, hits, bodies)
 }
 
 fn scrubbed(home: &std::path::Path) -> Command {
@@ -86,12 +96,18 @@ fn scrubbed(home: &std::path::Path) -> Command {
 /// (exit code, stdout, stderr, requests the stub saw). A run that reaches the
 /// stub is killed once it has.
 fn run(args: &[&str]) -> (Option<i32>, String, String, usize) {
+    let (code, out, err, hits, _) = run_with_bodies(args);
+    (code, out, err, hits)
+}
+
+/// [`run`], plus the request bodies the stub read.
+fn run_with_bodies(args: &[&str]) -> (Option<i32>, String, String, usize, Vec<String>) {
     let tmp = tempfile::tempdir().expect("tempdir");
     let home = tmp.path().join("home");
     let proj = tmp.path().join("proj");
     std::fs::create_dir_all(&home).unwrap();
     std::fs::create_dir_all(&proj).unwrap();
-    let (port, hits) = start_counting_stub();
+    let (port, hits, bodies) = start_counting_stub();
     let base_url = format!("http://127.0.0.1:{port}");
     let mut child = scrubbed(&home)
         .args(["--base-url", &base_url])
@@ -110,11 +126,13 @@ fn run(args: &[&str]) -> (Option<i32>, String, String, usize) {
         thread::sleep(Duration::from_millis(50));
     }
     let out = child.wait_with_output().expect("wait");
+    let seen = bodies.lock().unwrap().clone();
     (
         out.status.code(),
         String::from_utf8_lossy(&out.stdout).into_owned(),
         String::from_utf8_lossy(&out.stderr).into_owned(),
         hits.load(Ordering::SeqCst),
+        seen,
     )
 }
 
@@ -158,15 +176,58 @@ fn correctly_spelled_model_flag_sends_the_request() {
     assert!(!err.contains("unknown flag"), "{err}");
 }
 
-/// Near-miss: after `--` the old warn-and-continue path is unchanged.
+/// #1110 (this test pinned the old warning until Day 246): after `--` a
+/// flag-shaped word is an operand, so neither `--` nor `--modle` is reported.
 #[test]
-fn flag_after_double_dash_keeps_the_old_warning() {
+fn flag_after_double_dash_is_an_operand_not_a_warning() {
     let (code, _, err, _) = run(&["--print-system-prompt", "--", "--modle"]);
     assert_eq!(code, Some(0), "stderr: {err}");
+    assert!(!err.contains("Unknown flag"), "{err}");
+    assert!(!err.contains("unknown flag"), "{err}");
+}
+
+/// #1110 at the request: `yoyo -- hi` warns about nothing and sends "hi";
+/// `yoyo -p -- --explain this` sends the dash-led words verbatim. Anti-vacuous:
+/// each run must reach the stub, so the body checks are about a real request.
+#[test]
+fn words_after_double_dash_reach_the_prompt_verbatim() {
+    let (_, _, err, hits, bodies) = run_with_bodies(&["--", "hi"]);
+    assert!(hits >= 1, "must reach the stub; stderr: {err}");
+    assert!(!err.contains("Unknown flag"), "{err}");
+    assert!(bodies[0].contains(r#""text":"hi""#), "{}", bodies[0]);
+
+    let (_, _, err, hits, bodies) = run_with_bodies(&["-p", "--", "--explain", "this"]);
+    assert!(hits >= 1, "must reach the stub; stderr: {err}");
+    assert!(!err.contains("unknown flag"), "{err}");
     assert!(
-        err.contains("warning: Unknown flag '--modle'"),
-        "the old warning path should still run: {err}"
+        bodies[0].contains(r#""text":"--explain this""#),
+        "{}",
+        bodies[0]
     );
+}
+
+/// #1110: `--help` after `--` is a prompt, not the help page; before `--` it
+/// is still the help page (near-miss: exit 0, nothing sent).
+#[test]
+fn help_after_double_dash_is_sent_as_the_prompt() {
+    let (_, out, err, hits, bodies) = run_with_bodies(&["--", "--help"]);
+    assert!(hits >= 1, "must reach the stub; stderr: {err}");
+    assert!(!out.contains("Usage:"), "{out}");
+    assert!(bodies[0].contains(r#""text":"--help""#), "{}", bodies[0]);
+
+    let (code, out, _, hits) = run(&["--help", "--", "x"]);
+    assert_eq!(code, Some(0));
+    assert!(out.contains("Usage:"), "{out}");
+    assert_eq!(hits, 0);
+}
+
+/// Near-miss: an unknown flag BEFORE `--` is still #1109's refusal.
+#[test]
+fn unknown_flag_before_double_dash_still_refuses() {
+    let (code, _, err, hits) = run(&["--bogus", "--", "hi"]);
+    assert_eq!(code, Some(2), "stderr: {err}");
+    assert!(err.contains("'--bogus'"), "{err}");
+    assert_eq!(hits, 0);
 }
 
 /// Near-miss: a subcommand parses its own flags and never reaches the refusal.
