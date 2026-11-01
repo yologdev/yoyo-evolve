@@ -25,6 +25,10 @@ with a dash: `yoyo -- --explain this` and `yoyo -p -- --explain this` both send 
 and `yoyo -p hi -- --x` sends `hi --x`. Unknown flags *before* `--` are still refused.
 No flag after `--` is applied either, including the ones read at startup: `yoyo -- --no-color hi`
 sends `--no-color hi` and leaves colour, bell, notifications, `--quiet` and `--print` as they were.
+The same holds for the word right after a flag that takes a value: `yoyo -p --help` sends
+`--help` (with a warning that the value looks like a flag) instead of printing the help page.
+Some later-read flags (`--yes`, `--print-system-prompt`, ...) are still applied from that slot;
+that is tracked in #1114.
 
 ## When to use it
 

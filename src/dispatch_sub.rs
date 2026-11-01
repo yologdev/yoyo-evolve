@@ -354,13 +354,14 @@ pub(crate) fn try_dispatch_subcommand_in(
     args: &[String],
     project: Option<ProjectIo>,
 ) -> Option<Option<Config>> {
-    // #1110: a `--help` after `--` is prompt text, not a request for help.
-    let opts = crate::cli_config::option_args(args);
-    if opts.iter().any(|a| a == "--help" || a == "-h") {
+    // #1110/#1113: a `--help` after `--` or in a value slot (`-p --help`) is
+    // prompt text, not a request for help.
+    use crate::cli_config::has_option;
+    if has_option(args, &["--help", "-h"]) {
         print_help();
         return Some(None);
     }
-    if opts.iter().any(|a| a == "--version" || a == "-V") {
+    if has_option(args, &["--version", "-V"]) {
         println!("{}", crate::commands_info::version_line());
         return Some(None);
     }

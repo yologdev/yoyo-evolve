@@ -386,11 +386,21 @@ pub(crate) fn option_args(args: &[String]) -> &[String] {
 }
 
 /// Is any of `names` among the options (#1112)? For the scans that run
-/// before `parse_args_with_config`: a flag written after `--` is not applied.
+/// before `parse_args_with_config`: a flag written after `--` is not applied,
+/// and neither is one in the value slot of a `FLAGS_NEEDING_VALUES` flag
+/// (#1113), so `yoyo -p --help` sends `--help` and `--model --no-color`
+/// leaves colour on. Same walk as `option_split`.
 pub(crate) fn has_option(args: &[String], names: &[&str]) -> bool {
-    option_args(args)
-        .iter()
-        .any(|a| names.contains(&a.as_str()))
+    let opts = option_args(args);
+    let mut i = 1;
+    while let Some(a) = opts.get(i) {
+        if names.contains(&a.as_str()) {
+            return true;
+        }
+        let takes_value = crate::cli::FLAGS_NEEDING_VALUES.contains(&a.as_str());
+        i += if takes_value { 2 } else { 1 };
+    }
+    false
 }
 
 /// The words after `--`: prompt text, verbatim, never parsed as flags.
@@ -628,6 +638,35 @@ Run yoyo --help for the list of flags.",
         // The word still reaches the prompt verbatim.
         let a = argv(&["--", "--no-color", "hi"]);
         assert_eq!(prompt_text(&a, None).as_deref(), Some("--no-color hi"));
+    }
+
+    /// #1113: the word after a value-taking flag is its value, not a flag.
+    #[test]
+    fn has_option_skips_the_value_slot_of_a_value_taking_flag() {
+        let help: &[&str] = &["--help", "-h"];
+        let rows: &[(&[&str], &[&str], bool)] = &[
+            (&["-p", "--help"], help, false),
+            (&["--prompt", "-h"], help, false),
+            (&["--help"], help, true), // near-miss: bare help still prints
+            (&["-p", "hi", "--help"], help, true), // `hi` is -p's value; --help is a flag
+            (&["--", "--help"], help, false),
+            (&["--model", "x", "--no-color"], &["--no-color"], true),
+            (&["--model", "--no-color"], &["--no-color"], false),
+            (
+                &["--model", "--no-color", "--no-color"],
+                &["--no-color"],
+                true,
+            ),
+            (
+                &["--system", "-q", "hi"],
+                &["--quiet", "-q", "--print"],
+                false,
+            ),
+            (&["--no-color", "--model", "x"], &["--no-color"], true),
+        ];
+        for (rest, names, want) in rows {
+            assert_eq!(has_option(&argv(rest), names), *want, "{rest:?} {names:?}");
+        }
     }
 
     #[test]

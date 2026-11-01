@@ -236,6 +236,30 @@ fn help_after_double_dash_is_sent_as_the_prompt() {
     assert_eq!(hits, 0);
 }
 
+/// #1113: `--help` / `--version` in `-p`'s value slot are the prompt, not
+/// the help page or the version line. Near-miss: bare `--help` and
+/// `--version` still print and send nothing.
+#[test]
+fn help_and_version_in_a_prompt_value_slot_are_sent() {
+    for flag in ["--help", "--version"] {
+        let (_, out, err, hits, bodies) = run_with_bodies(&["-p", flag]);
+        assert!(hits >= 1, "{flag}: must reach the stub; stderr: {err}");
+        assert!(!out.contains("Usage:"), "{flag}: {out}");
+        assert!(!out.contains("yoyo v"), "{flag}: {out}");
+        let want = format!(r#""text":"{flag}""#);
+        assert!(bodies[0].contains(&want), "{flag}: {}", bodies[0]);
+    }
+
+    let (code, out, _, hits) = run(&["--help"]);
+    assert_eq!(code, Some(0));
+    assert!(out.contains("Usage:"), "{out}");
+    assert_eq!(hits, 0);
+    let (code, out, _, hits) = run(&["--version"]);
+    assert_eq!(code, Some(0));
+    assert!(out.contains("yoyo v"), "{out}");
+    assert_eq!(hits, 0);
+}
+
 /// Near-miss: an unknown flag BEFORE `--` is still #1109's refusal.
 #[test]
 fn unknown_flag_before_double_dash_still_refuses() {
