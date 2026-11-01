@@ -2,16 +2,18 @@
 
 What I've learned about people from talking with them.
 
-<!-- Synthesized 2026-10-31T16:58Z (day 245) from memory/social_learnings.jsonl: 225 entries, days 11-245
-     (2026-03-11 -> 2026-10-31), 225/225 parsed. Tiers by age from 2026-10-31T16:58Z: recent (<=14d, since
-     2026-10-17T16:58Z; days 233-245) = 8; medium (14d-8wk, 2026-09-05 -> 2026-10-17; days 200-230) = 23;
-     old (>8wk; days 11-175) = 194. Since the 2026-10-28 run: one new day-245 entry added to Recent; two
-     entries (day 228 21:55Z, day 230) aged from Recent into Medium; no entry crossed into Old, so the Old
-     tier is carried over unchanged (not re-derived this run). Gaps, stated not smoothed: nothing recorded
-     between day 175 (2026-08-22) and day 200 (2026-09-16), between day 208 and day 216, or on days 217,
-     219, 222, 224, 229, 231, 232, 234, 237, 238, 239, 241, 243 and 244. -->
+<!-- Synthesized 2026-11-01T17:46Z (day 246) from memory/social_learnings.jsonl: 226 entries, days 11-246
+     (2026-03-11 -> 2026-11-01), 226/226 parsed. Tiers by age from 2026-11-01T17:46Z: recent (<=14d, since
+     2026-10-18T17:46Z; days 233-246) = 9; medium (14d-8wk, 2026-09-06 -> 2026-10-18; days 200-230) = 23;
+     old (>8wk; days 11-175) = 194. Since the 2026-10-31 run: one new day-246 entry added to Recent; no
+     entry changed tier (day 233 is 13.7d old and stays Recent), so the Medium and Old tiers are carried
+     over unchanged (not re-derived this run). The day-246 entry corrects the day-242/245 "readership is one
+     person" claim (those counted discussions only); the older bullets are kept as written and marked.
+     Gaps, stated not smoothed: nothing recorded between day 175 (2026-08-22) and day 200 (2026-09-16),
+     between day 208 and day 216, or on days 217, 219, 222, 224, 229, 231, 232, 234, 237, 238, 239, 241,
+     243 and 244. -->
 
-## Recent (last 2 weeks): days 233-245 (2026-10-19 → 2026-10-31)
+## Recent (last 2 weeks): days 233-246 (2026-10-19 → 2026-11-01)
 
 - **Day 233 · 2026-10-19T01:45Z · @yuanhao · discussion #1048.** I asked the decision's owner an either/or with my default, and my hourly loop shipped the other branch ~23h later, before he answered, inside his normal reply window. An ask to someone on a day-long cycle gets pre-empted by an hour-long loop unless the tracker says "waiting on @owner, do not ship"; otherwise my question becomes a notice, and two corrections in a row make him read my reversals instead of the question.
 - **Day 233 · 2026-10-19T18:05Z · @yuanhao · discussion #1048 / issue #879.** Same event, stated as a rule: an ask to a human is only honest if I hold the decision for at least their usual reply time. Otherwise the ask is decoration and teaches the person their answer arrives after the fact.
@@ -19,8 +21,9 @@ What I've learned about people from talking with them.
 - **Day 236 · 2026-10-22T02:10Z · @yuanhao · issue #1064 (and #1048/#1055).** He answered two either/ors in the same minute, differently: a verdict on #1055 ("on at a terminal") and a returned question on #1064 ("a default to weigh, with a reason, not a decision made for you"), after showing my reason covered only some doors. Within the hour my journal filed both as decided. He splits product policy he owns from trade-offs he wants me to own; when reading his reply, first ask "verdict, or returned question?", and when asking, say which I think it is.
 - **Day 240 · 2026-10-26T08:05Z · @yuanhao · discussion #1079 / issue #1071.** He picked A, did the protected-file half himself in one commit, handed me my half by name, and added skip-when-unchanged with "read it before you trust the row counts". One line in the discussion, details on the ticket. Spread now ~2h/22h/37h/78h/92h. When the owner does his half and warns me how to read it, the useful reply checks his artifact: its first row held four null-cost test-model records my reader would miscount, and that went on the ticket, not in the thread.
 - **Day 242 · 2026-10-28T02:15Z · @yuanhao · issue #1078.** My A/B said "then I'd edit rule 6", a file protected from me; he picked A (~85h) and silently made my edit, with one line noting why. He corrects an unexecutable promise by doing it, so the mistake leaves no trace unless I look. Before writing "then I'd do X", check X is mine to do; when he does my half, check his version against my numbers and report on the ticket he answered.
-- **Day 242 · 2026-10-28T16:55Z · the room (@yuanhao; no other human) · census of #1017-#1095.** Eight Journal Club reflections ending on a question to "anyone" drew 0 human comments; four General asks to a named owner with my default (#1017, #1027, #1048, #1079) drew 4/4, all from @yuanhao; the only other human reply came in @barneysspeedshop's own thread. My readership is one person answering questions addressed to him. At 8/0 a fired "journal breakthrough" trigger is no reason to post: the story goes in a reply on a relevant named thread, or nowhere.
+- **Day 242 · 2026-10-28T16:55Z · the room (@yuanhao; no other human) · census of #1017-#1095.** Eight Journal Club reflections ending on a question to "anyone" drew 0 human comments; four General asks to a named owner with my default (#1017, #1027, #1048, #1079) drew 4/4, all from @yuanhao; the only other human reply came in @barneysspeedshop's own thread. My readership is one person answering questions addressed to him (discussions only; corrected on Day 246). At 8/0 a fired "journal breakthrough" trigger is no reason to post: the story goes in a reply on a relevant named thread, or nowhere.
 - **Day 245 · 2026-10-31T15:52Z · the room (@yuanhao; no other human) · follow-up to the Day 242 census (#1079-#1095).** No new discussion since #1095 (2026-10-28T02:04Z), two breakthrough triggers declined, and 0 human comments in 3.5 days (last: @yuanhao on #1079, 2026-10-26T06:31Z). Broadcasting drew 0 and stopping drew 0, so my volume neither crowds the room nor fills it. Replies come to open asks addressed to a named person, and this week I had none. The quiet is the honest state of a room with no question in it, not a cost of holding back; don't invent an ask to break it. One data point.
+- **Day 246 · 2026-11-01T16:58Z · @JC351 (new), @yuanhao · issues #1089 / #1096.** My Day 242/245 "the room is one person" counted only discussions. In the same window a stranger, @JC351, filed a growth challenge (#1089), then re-filed it in my Challenge template (#1096) with a baseline, guardrails and a noise-tolerant fallback: a newcomer reshaped his ask to fit my intake form, through a channel my census never read. My reply took ~55h (issues go through the evolve loop); I handed the identity question to @yuanhao, who answered in ~34h with a verdict plus a redirect: yoyo already posts on X from a separate harness (memory in yologdev/gasp), the risk is a spam ban (it happened once), and here I stay focused on evolving. Count every channel (issues, challenges, discussions) before describing who reads me; my public self is bigger than this repo's memory. Thanking a stranger and adopting his idea was the owner's move, correctly not mine.
 
 ## Medium (2-8 weeks old): days 200-230 (2026-09-16 → 2026-10-16). 23 entries, insight only; entries from one exchange are merged.
 
