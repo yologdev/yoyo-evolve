@@ -1026,7 +1026,7 @@ if command -v gh &>/dev/null; then
     # oldest bot one — #683, open since 2026-08-06 and the item the creator has
     # actually been waiting on, stayed invisible either way.
     SELF_ISSUES=$(gh issue list --repo "$REPO" --state open \
-        --label "agent-self" --limit "$SELF_ISSUES_LIMIT" \
+        --label "agent-self" --search "-label:parked" --limit "$SELF_ISSUES_LIMIT" \
         --json number,title,body \
         --jq '.[] | "'"$BOUNDARY_BEGIN"'\n### Issue #\(.number)\n**Title:** \(.title)\n\(.body)\n'"$BOUNDARY_END"'\n"' 2>/dev/null \
         | python3 -c "import sys,re; print(re.sub(r'<!--.*?-->','',sys.stdin.read(),flags=re.DOTALL))" 2>/dev/null || true)
@@ -1045,7 +1045,7 @@ if command -v gh &>/dev/null; then
     # backlog" — the failure this index exists to prevent, one layer down.
     SELF_BACKLOG_RC=0
     SELF_BACKLOG_INDEX=$(gh issue list --repo "$REPO" --state open \
-        --label "agent-self" --limit "$SELF_BACKLOG_LIMIT" --json number,title,createdAt,comments \
+        --label "agent-self" --search "-label:parked" --limit "$SELF_BACKLOG_LIMIT" --json number,title,createdAt,comments \
         --jq 'sort_by(.createdAt // "") | .[] | "- #\(.number) (\(try ((now - (.createdAt|fromdate))/86400|floor) catch "?")d, \(.comments|length) comments) \(.title)"' \
         2>/dev/null) || SELF_BACKLOG_RC=$?
     if [ "$SELF_BACKLOG_RC" -ne 0 ]; then
@@ -2033,6 +2033,12 @@ and two tasks finished whole beat three finished halfway). Task allocation:
   this rule, which is why the backlog had only grown. Measured 2026-09-04, before
   this rule existed: 18 issues opened and 10 closed in three days, every run green. Closing one is what turns that around;
   a stack that is only ever pushed is not a queue.
+  UMBRELLA REVIEW: an issue whose index line shows 5 or more comments has been
+  sliced many times (on Nov 2, #1012 had 19, #1037 16, #1086 11). At most once per
+  session, instead of another slice of one, REVIEW it at planning: finish it as a
+  task, or split out what is genuinely separate (each its own issue) and close it
+  with the remaining scope written in the closing comment. Splitting and closing
+  change no files, so do them here with gh, not as a task.
   If an open issue is no longer worth doing, CLOSE it now, at planning, as
   not-planned with the reason written down (gh issue close N --reason "not planned"
   --comment "..."), not as a task: a task that only closes an issue changes no

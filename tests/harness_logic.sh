@@ -1303,6 +1303,12 @@ check "evolve.sh: the backlog index shows each issue's comment count (leftovers 
     "$(grep -cF '\(.comments|length) comments)' "$SCRIPT")" "1"
 check "evolve.sh: closing a backlog item as not-planned happens at planning, not as a task" \
     "$(grep -c 'CLOSE it now, at planning, as' "$SCRIPT")" "1"
+check "evolve.sh: both planner backlog fetches leave out parked issues" \
+    "$(grep -c -- '--label "agent-self" --search "-label:parked"' "$SCRIPT")" "2"
+check "evolve skill: the over-20 backlog count leaves out parked issues" \
+    "$(grep -c -- '--label agent-self --search "-label:parked" --limit 200' "$ROOT/skills/evolve/SKILL.md")" "1"
+check "evolve.sh: an issue with 5+ comments gets an umbrella review at planning, not another slice" \
+    "$(grep -c 'UMBRELLA REVIEW: an issue whose index line shows 5 or more comments' "$SCRIPT")" "1"
 check "evolve skill: residue cannot go on a parent the same task closes" \
     "$(grep -c 'its residue cannot go there' "$ROOT/skills/evolve/SKILL.md")" "1"
 check "evolve.sh: the backlog drain closes the issue with the least work left, not the oldest" \
