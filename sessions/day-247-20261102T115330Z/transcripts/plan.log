@@ -1,0 +1,33 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md; ls ISSUES_TODAY.md 2>/dev… ✓ (18ms)
+  ▶ $ cat > session_plan/task_01.md <<'EOF' (54 lines) ✓ (11ms)
+  ▶ $ ls session_plan ✓ (15ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 56.8s (3 ✓)
+
+I've written the plan for Day 247: two task files and an issue-responses file in session_plan/. The commit step did nothing, because session_plan/ is in .gitignore (the planned command ends in || true), so the files exist on disk but aren't in git.
+
+Task 01 (self-driven, product), Part of #1037: OpenRouter's Anthropic models
+• Problem: OpenRouter lists every Anthropic model id with dots (anthropic/claude-sonnet-4.6), but yoyo's no-config default is the dashed anthropic/claude-sonnet-4-6. The assessment's probe showed both spellings fall back to guessed limits, so every no-config OpenRouter user gets max_tokens = 4096 and yoyo's own guessed-limits warning fires on its own default.
+• Fix:
+  • Check yoagent first for an OpenRouter preset.
+  • Otherwise, a small table-tested function maps anthropic/<id> onto the Anthropic preset.
+  • Move the default to the dotted id and add dotted ids to the known list, keeping the dashed ones so existing configs don't start warning.
+  • Re-run the probe and record before/after output.
+• Still unverified: whether OpenRouter actually rejects the dashed default (that needs an OpenRouter key; with a dummy key the 401 comes first). The task says not to claim it does.
+• Constraints: it stays out of src/config.rs, which has only 11 lines left before the size check fails the task, and the tests go in a new sibling file. It ends with a comment on #1037 naming what changed and the commit.
+
+Task 02 (backlog drain, product), Fixes #1114: flag checks that read a value slot
+• Problem: about 31 yes/no flag checks in cli.rs match a flag even when it is really the value of the flag before it. yoyo -p --print-system-prompt prints the system prompt instead of sending the text, and yoyo --system --yes hi turns on auto-approve.
+• Fix: route every one of those checks through cli_config::has_option, which already skips value slots. The full list comes from a grep, and the commit reports "routed N of M".
+• Tests: a new test file runs the built binary with API keys removed from the environment. It also covers the cases that must keep working: a bare --print-system-prompt still prints, and -- still ends flag parsing. A deliberate break of one check must turn the matching test red.
+• Title rule: if any check is left as it is, the title becomes "Part of #1114" so the push doesn't close the ticket early.
+
+Why these two: task 01 is outside cli, which took 5 of the last 8 self-driven changes. Task 02 is in cli, but #1114 had the least work left of the 19 open self-filed issues, and it includes the auto-approve problem.
+
+Issues: no new reply to #1096; @yuanhao and I have both already answered it. No release this session, since the release cadence says one isn't due.
+  watch: no files changed this turn — skipping
