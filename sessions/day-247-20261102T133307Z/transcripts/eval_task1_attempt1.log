@@ -1,0 +1,22 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/prompt.rs && grep -rn … ✓ (8.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p ses… (9 lines) ✓ (8ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 24.9s (2 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_1.md.
+
+• It works on the real binary. I ran yoyo --provider custom --base-url http://127.0.0.1:9/v1 --model x -p hi with nothing listening on that port. It exited with status 1 after 8.7s, against the 69s the task measured. It printed: connection refused at http://127.0.0.1:9/v1/chat/completions: nothing is listening there. Is the server running? There was no /retry wording and no "retrying (attempt …)" lines.
+• Two departures from the task, both reasonable:
+  • yoyo adds no retry of its own, where the task asked for one. The new module's doc explains why: the agent library underneath (yoagent) already retries network errors 3 times at about 1s/2s/4s, which gives a starting server about 7s.
+  • It reads the URL from the error text rather than from yoyo's config. This keeps it correct after a /provider switch or a fallback, where a copy taken at startup would be out of date.
+• Remote errors are untouched. The new check sits before the normal retry branch at both retry sites in src/prompt.rs, so a refused connection to a remote host, and every other error, takes the old path.
+• No unused code. Every new helper is reached through loopback_refused_note, which both retry sites call. The src/prompt.rs size entry in tests/module_size.rs is 3934, which matches the file's actual line count.
+• Docs: docs/src/troubleshooting/common-issues.md has a new "Local server not running" entry. It also fixes the out-of-date retry description, which said 3 retries when yoyo makes 6 attempts.
+
+I couldn't check step 4 from the diff: filing an issue for the leftover /retry text in -p mode and the raw error dump.
+  watch: no files changed this turn — skipping

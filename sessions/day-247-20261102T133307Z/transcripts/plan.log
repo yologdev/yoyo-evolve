@@ -1,0 +1,38 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md; for n in 1108 1084 1114 1… ✓ (2.7s)
+  ▶ $ for n in 1037 1021; do echo "=== #$n"; gh issue view $n --repo yologdev/yoyo-evo… ✓ (1.7s)
+  ▶ search 'sub_agents' in src (*.rs) ✓ (16ms)
+  ▶ $ cd src; sed -n 225,275p prompt_budget.rs; grep -rn "take_sub_agent_spend\|fn ext… ✓ (20ms)
+  ▶ write session_plan/task_01.md (56 lines)  ▶ write session_plan/task_02.md (41 lines)  ▶ write session_plan/issue_responses.md (13 lines)  ▶ $ git add session_plan/ && git commit -qm "Day 247 (12:01): session plan" && git l… ✓ (0ms)
+ ✓ (0ms)
+ ✓ (1ms)
+ ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 1m 33s (8 ✓)
+
+I've written the plan as two task files and an issue-responses note in session_plan/. The commit step didn't record them, because session_plan/ is gitignored. The planned command ends in || true, so the harness expects that and reads the files from disk.
+
+Task 01 (product, my own pick, kept outside cli as the trajectory asked): fail fast when a local server refuses the connection.
+• The problem: today's assessment measured it. With nothing listening on Ollama's default port, yoyo --provider ollama -p hi retries for 70 seconds before it errors. --base-url http://127.0.0.1:9 takes 69 seconds.
+• The change: when the host is loopback and the connection is refused, yoyo allows one retry, then stops. It prints a message naming the refused URL. Remote hosts and every other error keep exactly the old retry path.
+• Size limits: the new logic goes in a new module, src/prompt/loopback_refused.rs, because src/prompt_retry.rs is already at its size cap. src/prompt.rs's entry in tests/module_size.rs gets updated to its new line count.
+• Tests: the table includes the near-misses: a remote refusal (where retrying can work), a loopback timeout, and localhost.example.com. A real-binary test runs against a closed port and checks the exit code, the wall time and the URL in stderr.
+• Left for later: two defects on the same path (/retry printed in -p mode, and a raw reqwest error dump) aren't fixed here. The task files them as an issue before the push unless an open ticket already holds them.
+
+Task 02 (backlog drain, Fixes #1108): show sub-agent spend in `/cost`.
+• The problem: /cost's per-turn breakdown still counts only the main agent's own spend, while /tokens and the JSON output already include sub-agents.
+• The change: a separate block after the per-turn table shows each prompt's delegated spend and a total. It says plainly that the split is per prompt, not per turn, because sub-agent spend is only recorded once per prompt today.
+• Unchanged output: a session that never used a sub-agent gets byte-identical /cost output.
+• Size limits: nothing gets added to src/format/cost.rs, which is at its size cap.
+• Fallback: if the block can't be built, the commit says "Part of #1108" rather than closing the ticket.
+
+Deferred:
+• #1037 and #1021: the next slice for both is adding preset rows. Neither slice would close its ticket, and the drain slot needs a Fixes. I put the Bedrock default first for next session, because it prints the guessed-limits warning on every run for users who never chose that model.
+• #1114, #1111, #1086: all cli work, which this session is steering away from.
+• #1096: no reply, since @yuanhao already answered and I have nothing new to add.
+• Release: not due (13 days, 50 commits), so no release this session.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
