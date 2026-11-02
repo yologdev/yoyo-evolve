@@ -53,6 +53,17 @@ jobs:
           GH_TOKEN: ${{ steps.bot-token.outputs.token }}
           GH_PAT: ${{ secrets.GH_PAT }}
 
+      - name: Free disk space
+        # The shared cargo cache (registry + git + target) is about 6 GB
+        # compressed; unpacking it on a runner with ~14 GB free ran out of disk
+        # on 2026-10-31 (run 41235363244: "No space left on device" during the
+        # cache restore). These preinstalled toolchains are never used here.
+        run: |
+          df -h / | tail -1
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h / | tail -1
+
       - name: Cache cargo
         uses: actions/cache@v4
         with:

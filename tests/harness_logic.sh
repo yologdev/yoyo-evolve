@@ -1308,6 +1308,12 @@ check "evolve skill: residue cannot go on a parent the same task closes" \
 check "evolve.sh: the backlog drain closes the issue with the least work left, not the oldest" \
     "$(grep -c 'spend this slot on CLOSING one:' "$SCRIPT")$(grep -c 'another Part-of slice does not$' "$SCRIPT")$(grep -c 'Draining the oldest' "$SCRIPT")" "110"
 
+# ── workflows that restore the shared cargo cache free disk first (2026-10-31) ─
+for w in evolve social dream skill-evolve; do
+    check "$w.yml: frees disk space right before restoring the cargo cache" \
+        "$(awk '/^      - name: /{prev=cur; cur=$0} /^      - name: Cache cargo$/{print (prev ~ /Free disk space/) ? "yes" : "no"; exit}' "$ROOT/.github/workflows/$w.yml")" "yes"
+done
+
 check "skill_evolve.sh: diff-scope guard lists a retire by its attic path (-M)" \
     "$(grep -c 'CHANGED_FILES=$(git diff --name-only -M ' "$SE")" "1"
 
