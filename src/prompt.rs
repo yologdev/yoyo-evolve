@@ -15,6 +15,7 @@ use crate::session::{ChangeKind, SessionChanges};
 #[cfg(test)]
 mod cancel_mid_tool_tests;
 mod interrupt;
+mod loopback_refused;
 mod output_limit;
 mod retry_after_partial;
 mod retry_safe_pipe;
@@ -1343,6 +1344,11 @@ pub async fn run_prompt_with_changes(
                     eprintln!("{DIM}  {RETRY_SKIPPED_AFTER_PARTIAL_NOTE}{RESET}");
                     (collected_text, api_error) = fatal_handoff(dying_text, error_msg);
                     break;
+                } else if let Some(note) = loopback_refused::loopback_refused_note(&error_msg) {
+                    // Nothing listens on that local port; yoagent already retried it.
+                    eprintln!("\n{RED}  error: {note}{RESET}");
+                    (collected_text, api_error) = fatal_handoff(dying_text, error_msg);
+                    break;
                 } else if attempt < MAX_RETRIES {
                     // One decision, both retry loops (the other is in
                     // `run_prompt_auto_retry_with_content`) — a per-token pass
@@ -1757,6 +1763,10 @@ pub async fn run_prompt_with_content_and_changes(
                     // #976: same shared rule as `run_prompt_auto_retry` above.
                     eprintln!("\n{RED}  error: {error_msg}{RESET}");
                     eprintln!("{DIM}  {RETRY_SKIPPED_AFTER_PARTIAL_NOTE}{RESET}");
+                    (collected_text, api_error) = fatal_handoff(dying_text, error_msg);
+                    break;
+                } else if let Some(note) = loopback_refused::loopback_refused_note(&error_msg) {
+                    eprintln!("\n{RED}  error: {note}{RESET}"); // same rule as above
                     (collected_text, api_error) = fatal_handoff(dying_text, error_msg);
                     break;
                 } else if attempt < MAX_RETRIES {

@@ -101,7 +101,15 @@ This appears when the Anthropic API returns an error. Common causes:
   `--provider anthropic`, or pass `--base-url` if the endpoint is deliberate — a proxy or
   gateway serving another vendor's ids is a supported setup and stays silent.
 
-**Automatic retry:** yoyo automatically retries transient errors (rate limits, server errors, network issues) with exponential backoff — up to 3 retries with 1s, 2s, 4s delays. You'll see a dim message like `⚡ retrying (attempt 2/4, waiting 2s)...` when this happens. Auth errors (401, 403) and invalid requests (400) are shown immediately without retrying.
+**Automatic retry:** yoyo automatically retries transient errors (rate limits, server errors, network issues) with exponential backoff — up to 6 attempts, waiting roughly 1s, 2s, 4s, 8s and 17s between them (measured Day 247). You'll see a dim message like `⚡ retrying (attempt 2/6, waiting 1s)...` when this happens. Network errors are also retried a few times inside each attempt by the agent library underneath, before yoyo sees them. Auth errors (401, 403) and invalid requests (400) are shown immediately without retrying.
+
+**Local server not running:** if the endpoint is on this machine (`localhost`, `127.x.x.x`, `[::1]`) and the connection is *refused*, nothing is listening on that port, and backing off won't start it. yoyo stops after the library's own few quick retries (about 7s, enough for a server that is just starting) and says so:
+
+```
+  error: connection refused at http://localhost:11434/v1/chat/completions: nothing is listening there. Is the server running? (for Ollama: `ollama serve`)
+```
+
+Start your local server (Ollama, LM Studio, llama.cpp…) or fix `--base-url`, then run again. A refused connection to a *remote* host still takes the normal retry path, because there (a deploy, a load balancer) waiting can work.
 
 **Tool error auto-recovery:** When a tool execution fails during a natural-language prompt, yoyo automatically retries the prompt with error context appended (up to 2 times). This lets the agent self-correct — for example, retrying a failed file read with a corrected path. You'll see `⚡ auto-retrying after tool error...` when this kicks in.
 
