@@ -35,7 +35,7 @@ Use `--provider <name>` to select a provider. Each provider has a default model 
 | `anthropic` (default) | `claude-opus-5-5` | `ANTHROPIC_API_KEY` |
 | `openai` | `gpt-6-sol` | `OPENAI_API_KEY` |
 | `google` | `gemini-3.8-flash` | `GEMINI_API_KEY` or `GOOGLE_API_KEY` |
-| `openrouter` | `anthropic/claude-sonnet-4-20250514` | `OPENROUTER_API_KEY` |
+| `openrouter` | `anthropic/claude-sonnet-5.5` | `OPENROUTER_API_KEY` |
 | `ollama` | `llama3.2` | *(none — local)* |
 | `xai` | `grok-3` | `XAI_API_KEY` |
 | `groq` | `llama-3.3-70b-versatile` | `GROQ_API_KEY` |
@@ -49,6 +49,12 @@ Use `--provider <name>` to select a provider. Each provider has a default model 
 > **Note:** the table shows each provider's *default* model — others are
 > available. For example, MiniMax's flagship `MiniMax-M3` can be selected via
 > `--model MiniMax-M3` or picked in the setup wizard.
+
+> **OpenRouter and Claude ids:** OpenRouter spells Anthropic ids with dots
+> (`anthropic/claude-opus-4.8`). yoyo maps `anthropic/<id>`, dotted or dashed,
+> onto its Anthropic preset, so those models get their real context window,
+> output limit and price. A `:variant` id (such as `:batch`) and a Claude id
+> with no Anthropic preset still run on guessed limits, and yoyo warns about them.
 
 ### Examples
 

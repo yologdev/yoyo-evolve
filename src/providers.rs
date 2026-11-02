@@ -183,6 +183,28 @@ pub fn known_models_for_provider(provider: &str) -> &'static [&'static str] {
     }
 }
 
+/// OpenRouter's `anthropic/<id>` as the anthropic preset id (#1037): the
+/// prefix dropped and each dot between two digits made a dash, so
+/// `anthropic/claude-sonnet-5.5` (OpenRouter's only spelling) and the dashed
+/// form both reach `claude-sonnet-5-5`. `None` without the prefix, for an
+/// empty id, and for a `:variant` (`:batch` is priced differently).
+pub(crate) fn openrouter_anthropic_preset_id(model: &str) -> Option<String> {
+    let id = model.strip_prefix("anthropic/")?;
+    if id.is_empty() || id.contains(':') {
+        return None;
+    }
+    let b = id.as_bytes();
+    let digit = |i: Option<usize>| i.and_then(|i| b.get(i)).is_some_and(u8::is_ascii_digit);
+    Some(
+        id.char_indices()
+            .map(|(i, c)| match c {
+                '.' if digit(i.checked_sub(1)) && digit(Some(i + 1)) => '-',
+                _ => c,
+            })
+            .collect(),
+    )
+}
+
 /// Whether `model` is a **known** id for `provider`.
 ///
 /// One matching rule, consulted by every surface that asks "is this id known?"
@@ -250,7 +272,10 @@ pub fn default_model_for_provider(provider: &str) -> String {
         // and its request default fits the declared ceiling (65,536). The old
         // `gemini-2.5-flash` has no yoagent preset, so it ran on guessed limits.
         "google" => "gemini-3.8-flash".into(),
-        "openrouter" => "anthropic/claude-sonnet-4-6".into(),
+        // #1037 (Day 247): OpenRouter lists Anthropic ids with dots only, and
+        // sonnet-5.5 is listed there AND has an anthropic preset, so it runs on
+        // real limits (`claude-sonnet-4.6` has no preset in yoyo or yoagent).
+        "openrouter" => "anthropic/claude-sonnet-5.5".into(),
         "ollama" => "llama3.2".into(),
         "xai" => "grok-4".into(),
         "groq" => "llama-3.3-70b-versatile".into(),
@@ -684,10 +709,10 @@ mod tests {
     }
 
     #[test]
-    fn test_openrouter_default_uses_sonnet_4_6() {
+    fn test_openrouter_default_uses_dotted_sonnet_5_5() {
         assert_eq!(
             default_model_for_provider("openrouter"),
-            "anthropic/claude-sonnet-4-6"
+            "anthropic/claude-sonnet-5.5"
         );
     }
 
@@ -743,3 +768,7 @@ mod tests {
 #[cfg(test)]
 #[path = "providers_key_tests.rs"]
 mod providers_key_tests;
+
+#[cfg(test)]
+#[path = "openrouter_preset_tests.rs"]
+mod openrouter_preset_tests;

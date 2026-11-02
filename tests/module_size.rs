@@ -446,7 +446,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // context-tier pricing -- `estimate_request_cost_with`, the per-turn marker/footnote and the
     // `tiered` field on four fixtures; its tests live in `src/format/cost/context_tier_tests.rs`).
     // Day 242 (#1012): 3605 -> 3640. +23 from the Day 239-241 price arms that sat in the grace band, +12 for the retired-gemini aliases.
-    ("src/format/cost.rs", 3640), // Day 192: +251 for the cache-prefix clause (what the counters PROVE about a low hit rate) plus its table, boundary, glyph and byte-identity guards.
+    ("src/format/cost.rs", 3647), // Day 247: #1037 — both price lookups map OpenRouter's dotted anthropic/ ids onto the anthropic preset id (+7; tests live in openrouter_preset_tests.rs). Day 192: +251 for the cache-prefix clause (what the counters PROVE about a low hit rate) plus its table, boundary, glyph and byte-identity guards.
     // Day 204 (#937 Task 2): 2931 -> 3439 (+508, the count after `cargo fmt`). The price drift alarm against
     // models.dev — an `#[ignore]`d audit plus its offline arm and the
     // `KNOWN_DIVERGENCES` register's anti-rot guard. Mostly tests (as with every

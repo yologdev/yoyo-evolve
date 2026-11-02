@@ -995,6 +995,12 @@ pub fn create_model_config(provider: &str, model: &str, base_url: Option<&str>) 
                 .unwrap_or("https://openrouter.ai/api/v1")
                 .to_string();
             config.compat = Some(OpenAiCompat::openrouter());
+            // #1037: `anthropic/<id>` (dotted or dashed) takes the anthropic preset.
+            let preset_id = crate::providers::openrouter_anthropic_preset_id(model);
+            if let Some(p) = preset_id.and_then(|id| anthropic_preset(&id)) {
+                (config.context_window, config.max_tokens) = (p.context_window, p.max_tokens);
+                (config.cost, config.reasoning) = (p.cost, p.reasoning);
+            }
             config
         }
         "xai" => {

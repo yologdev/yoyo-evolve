@@ -90,7 +90,11 @@ fn builtin_model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
     // Returns (input_per_MTok, cache_write_per_MTok, cache_read_per_MTok, output_per_MTok)
     // For providers without caching, cache_write and cache_read are set to 0.0.
 
-    let model = strip_router_prefix(model);
+    // #1037: OpenRouter's dotted `anthropic/claude-opus-4.8` prices as `claude-opus-4-8`.
+    let mapped = crate::providers::openrouter_anthropic_preset_id(model);
+    let model = mapped
+        .as_deref()
+        .unwrap_or_else(|| strip_router_prefix(model));
 
     // Fleet models (claude-fable-5, claude-opus-4-8, claude-sonnet-5,
     // claude-haiku-4-5): read pricing from yoagent 0.9's preset ModelConfig at
@@ -457,7 +461,10 @@ pub fn estimate_request_cost_with(
     if overrides.lookup(model).is_some() {
         return Some((base, false));
     }
-    let stripped = strip_router_prefix(model);
+    let mapped = crate::providers::openrouter_anthropic_preset_id(model);
+    let stripped = mapped
+        .as_deref()
+        .unwrap_or_else(|| strip_router_prefix(model));
     let tiers = crate::agent_builder::anthropic_preset(stripped)
         .or_else(|| crate::agent_builder::openai_preset(stripped))
         .or_else(|| crate::agent_builder::vendor_preset_by_id(stripped))

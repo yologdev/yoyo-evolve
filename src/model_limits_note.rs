@@ -374,16 +374,10 @@ context_window in .yoyo.toml (or pass --max-tokens / --context-window).",
         // moved from "== 128K/4096" to provenance. minimax's default runs on
         // its constructor's per-id guess (1M / 4096, the same harmful cap);
         // bedrock's on 200K / 16000 for every id.
+        // Day 247 (#1037): `openrouter` left: its default is now the dotted
+        // `anthropic/claude-sonnet-5.5`, mapped onto the anthropic preset.
         let mut expected = vec![
-            "openrouter",
-            "xai",
-            "groq",
-            "mistral",
-            "github",
-            "zai",
-            "cerebras",
-            "minimax",
-            "bedrock",
+            "xai", "groq", "mistral", "github", "zai", "cerebras", "minimax", "bedrock",
         ];
         expected.sort_unstable();
         assert_eq!(
@@ -394,7 +388,7 @@ means its default trips the guessed-limits warning (#1037)"
         // Day 241 (#1021): every `build_agent` arm now calls the note, so
         // bedrock's row above is a guess its user IS told about. Giving
         // bedrock's default real limits (removing that row) is still open.
-        for silent in ["openai", "anthropic", "google", "deepseek"] {
+        for silent in ["openai", "anthropic", "google", "deepseek", "openrouter"] {
             assert!(!tripping.contains(&silent), "{silent}");
         }
     }
