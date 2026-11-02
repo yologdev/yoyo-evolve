@@ -28,8 +28,8 @@ mod stream_session_restored;
 mod sub_agent_spend;
 pub(crate) use stream_session_restored::{escape_unsafe_json_chars, record_session_restored};
 pub(crate) use sub_agent_spend::{
-    attach_sub_agent_spend, session_cost_header, session_sub_agent_spend, sub_agent_cost_lines,
-    take_sub_agent_spend,
+    attach_sub_agent_spend, delegated_turn_lines, session_cost_header, session_sub_agent_spend,
+    sub_agent_cost_lines, sub_agent_spend_by_call, take_sub_agent_spend,
 };
 pub(crate) mod turn_prefix;
 mod write_preview;
@@ -1099,7 +1099,7 @@ async fn handle_prompt_events(
                         state.handle_tool_execution_start(tool_call_id, tool_name, args, changes);
                     }
                     AgentEvent::ToolExecutionEnd { tool_call_id, is_error, result, tool_name, .. } => {
-                        sub_agent_spend::record_sub_agent_spend(&result); // #1073, both doors
+                        sub_agent_spend::record_sub_agent_spend(&tool_call_id, &result); // #1073, #1108
                         state.handle_tool_execution_end(tool_call_id, tool_name, is_error, result, changes);
                     }
                     AgentEvent::ToolExecutionUpdate { tool_call_id, partial_result, .. } => {
@@ -1994,7 +1994,7 @@ async fn handle_stream_json_events(
                     AgentEvent::ToolExecutionEnd {
                         tool_call_id, tool_name, is_error, result,
                     } => {
-                        sub_agent_spend::record_sub_agent_spend(result); // #1073, both doors
+                        sub_agent_spend::record_sub_agent_spend(tool_call_id, result); // #1073, #1108
                         // #808: a tool just finished — same clearing rule as the
                         // display path, so the two cannot drift.
                         text_since_last_tool.clear();

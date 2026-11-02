@@ -59,8 +59,25 @@ adds a separate `sub_agents` object (`runs`, the four token counts and
 `cost_usd`, which is `null` when delegated spend could not be priced) only when
 the run delegated; without delegation the object is exactly as before. The
 `--cost-warn` tally counts own and delegated spend; unpriced delegated spend is
-reported as an unpriced run, never added as `$0`. The per-turn breakdown in
-`/cost` still shows each turn's own spend only (#1073).
+reported as an unpriced run, never added as `$0`.
+
+The per-turn breakdown in `/cost` shows each turn's own spend. When the
+session delegated, a second block under it puts each delegation on the turn
+that dispatched it (the assistant turn whose tool call ran the sub-agent), so
+the turn numbers match the table above (#1108):
+
+```
+    Sub-agent spend by turn (not in the per-turn costs above):
+      Turn 2: 1 run, 12.3k in / 1.2k out, $0.042
+      Turn 5: 1 run, 2.0k in / 300 out, unpriced (not $0)
+      Total delegated: 2 runs, 14.3k in / 1.5k out, unpriced (not $0)
+```
+
+A turn whose delegated spend could not be priced says `unpriced (not $0)`,
+and so does the total. Delegations from turns no longer in the conversation
+(after `/clear` or compaction) get their own `Not in the turns above` line and
+stay in the total. With no delegation, the block is not printed and `/cost` is
+unchanged.
 
 ## Detailed breakdown
 

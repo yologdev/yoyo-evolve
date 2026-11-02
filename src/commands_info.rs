@@ -653,6 +653,10 @@ pub fn handle_cost(session_total: &Usage, model: &str, messages: &[yoagent::Agen
         if !turn_costs.is_empty() {
             println!();
             println!("{}", format_turn_costs(&turn_costs));
+            let by_call = crate::prompt::sub_agent_spend_by_call(); // #1108
+            if let Some(block) = crate::prompt::delegated_turn_lines(messages, &by_call) {
+                println!("{block}");
+            }
         }
 
         // Per-tool call summary

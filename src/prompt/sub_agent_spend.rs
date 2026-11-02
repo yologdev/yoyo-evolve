@@ -93,9 +93,110 @@ fn peek_with(store: &Mutex<Option<SubAgentSpend>>) -> SubAgentSpend {
     lock_or_recover(store).clone().unwrap_or_default()
 }
 
+/// Delegated spend per sub_agent call, keyed by the parent's `tool_call_id`
+/// (#1108). The id is also on the `ToolCall` block of the assistant message
+/// that issued the call, so `/cost` can put each call's spend on the turn
+/// that dispatched it. Only delegating calls are stored.
+static SUB_AGENT_SPEND_BY_CALL: Mutex<Vec<(String, SubAgentSpend)>> = Mutex::new(Vec::new());
+
+/// Record one call's delegated spend under its id, or nothing for a result
+/// that carried no sub-agent stats.
+fn record_call_with(
+    store: &Mutex<Vec<(String, SubAgentSpend)>>,
+    tool_call_id: &str,
+    result: &ToolResult,
+) {
+    let mut one = SubAgentSpend::default();
+    fold_sub_agent_result(&mut one, result);
+    if !one.is_empty() {
+        lock_or_recover(store).push((tool_call_id.to_string(), one));
+    }
+}
+
 /// Called from both `ToolExecutionEnd` arms in `prompt.rs`.
-pub(crate) fn record_sub_agent_spend(result: &ToolResult) {
+pub(crate) fn record_sub_agent_spend(tool_call_id: &str, result: &ToolResult) {
     record_into(&SUB_AGENT_SPEND, &SESSION_SUB_AGENT_SPEND, result);
+    record_call_with(&SUB_AGENT_SPEND_BY_CALL, tool_call_id, result);
+}
+
+/// Every delegating call so far this session, with its call id. Never drains.
+pub(crate) fn sub_agent_spend_by_call() -> Vec<(String, SubAgentSpend)> {
+    lock_or_recover(&SUB_AGENT_SPEND_BY_CALL).clone()
+}
+
+/// `N run(s), X in / Y out, $Z` -- or `unpriced (not $0)` when any delegated
+/// spend in `s` had no price.
+fn spend_summary(s: &SubAgentSpend) -> String {
+    use crate::format::{format_cost, format_token_count};
+    let cost = match s.cost_usd {
+        Some(c) => format_cost(c),
+        None => "unpriced (not $0)".to_string(),
+    };
+    format!(
+        "{} run{}, {} in / {} out, {cost}",
+        s.runs,
+        if s.runs == 1 { "" } else { "s" },
+        format_token_count(s.usage.input),
+        format_token_count(s.usage.output)
+    )
+}
+
+/// The block `/cost` prints under its per-turn table (#1108), or `None` when
+/// nothing was delegated -- every user who never used sub_agent, whose
+/// `/cost` must stay byte-identical. Turns are numbered exactly as
+/// `format::extract_turn_costs` numbers them (one per assistant message), and
+/// a call is attributed to the assistant message whose `ToolCall` carries its
+/// id. Calls whose turn is no longer in `messages` (`/clear`, compaction) get
+/// their own line rather than vanishing, and the total covers all of them.
+/// ASCII only, so plain output needs no separate form.
+pub(crate) fn delegated_turn_lines(
+    messages: &[yoagent::AgentMessage],
+    by_call: &[(String, SubAgentSpend)],
+) -> Option<String> {
+    if by_call.is_empty() {
+        return None;
+    }
+    let mut used = vec![false; by_call.len()];
+    let mut lines =
+        vec!["    Sub-agent spend by turn (not in the per-turn costs above):".to_string()];
+    let mut turn = 0;
+    for msg in messages {
+        let yoagent::AgentMessage::Llm(yoagent::Message::Assistant { content, .. }) = msg else {
+            continue;
+        };
+        turn += 1;
+        let mut here = SubAgentSpend::default();
+        for block in content {
+            let yoagent::Content::ToolCall { id, .. } = block else {
+                continue;
+            };
+            for (i, (call_id, spend)) in by_call.iter().enumerate() {
+                if !used[i] && call_id == id {
+                    here.merge(spend);
+                    used[i] = true;
+                }
+            }
+        }
+        if !here.is_empty() {
+            lines.push(format!("      Turn {turn}: {}", spend_summary(&here)));
+        }
+    }
+    let mut elsewhere = SubAgentSpend::default();
+    let mut total = SubAgentSpend::default();
+    for (i, (_, spend)) in by_call.iter().enumerate() {
+        total.merge(spend);
+        if !used[i] {
+            elsewhere.merge(spend);
+        }
+    }
+    if !elsewhere.is_empty() {
+        lines.push(format!(
+            "      Not in the turns above (cleared or compacted): {}",
+            spend_summary(&elsewhere)
+        ));
+    }
+    lines.push(format!("      Total delegated: {}", spend_summary(&total)));
+    Some(lines.join("\n"))
 }
 
 /// Everything delegated so far this session. Does not clear anything, so it
@@ -186,6 +287,10 @@ pub(crate) fn attach_sub_agent_spend(
 #[cfg(test)]
 #[path = "sub_agent_spend_session_tests.rs"]
 mod sub_agent_spend_session_tests;
+
+#[cfg(test)]
+#[path = "sub_agent_spend_turn_tests.rs"]
+mod sub_agent_spend_turn_tests;
 
 #[cfg(test)]
 mod tests {
