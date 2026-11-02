@@ -71,7 +71,7 @@ pub(crate) fn hints_disabled_from(
     args: &[String],
     file_config: &std::collections::HashMap<String, String>,
 ) -> bool {
-    args.iter().any(|a| a == "--no-hints")
+    has_option(args, &["--no-hints"])
         || crate::config::parse_hints_disabled_from_config(file_config)
 }
 
@@ -1184,7 +1184,7 @@ fn parse_model_config(
                                 // Optional for local providers and for --print-system-prompt (never calls a model)
                                 if provider == "ollama"
                                     || provider == "custom"
-                                    || args.iter().any(|a| a == "--print-system-prompt")
+                                    || has_option(args, &["--print-system-prompt"])
                                 {
                                     ("not-needed".to_string(), KeySource::Missing)
                                 } else if std::io::stdin().is_terminal() && prompt_arg.is_none() {
@@ -1366,27 +1366,27 @@ struct OutputFlags {
 
 /// Parse simple boolean output flags from CLI args and config.
 fn parse_output_flags(args: &[String], file_config: &HashMap<String, String>) -> OutputFlags {
-    let verbose = args.iter().any(|a| a == "--verbose" || a == "-v");
+    let verbose = has_option(args, &["--verbose", "-v"]);
 
-    let auto_approve = args.iter().any(|a| a == "--yes" || a == "-y");
+    let auto_approve = has_option(args, &["--yes", "-y"]);
 
-    let print_mode = args.iter().any(|a| a == "--print");
+    let print_mode = has_option(args, &["--print"]);
 
     // --print implies --yes (auto-approve all tool use)
     let auto_approve = auto_approve || print_mode;
 
-    let auto_commit = args.iter().any(|a| a == "--auto-commit")
+    let auto_commit = has_option(args, &["--auto-commit"])
         || crate::config::parse_auto_commit_from_config(file_config);
 
-    let no_update_check = args.iter().any(|a| a == "--no-update-check")
+    let no_update_check = has_option(args, &["--no-update-check"])
         || std::env::var("YOYO_NO_UPDATE_CHECK")
             .map(|v| v == "1")
             .unwrap_or(false);
 
-    let json_output = args.iter().any(|a| a == "--json");
+    let json_output = has_option(args, &["--json"]);
 
     // Parse --output-format <value> (takes precedence over --json)
-    let output_format = if let Some(pos) = args.iter().position(|a| a == "--output-format") {
+    let output_format = if let Some(pos) = option_position(args, &["--output-format"]) {
         match args.get(pos + 1).map(|s| s.as_str()) {
             Some("stream-json") => OutputFormat::StreamJson,
             Some("json") => OutputFormat::Json,
@@ -1405,7 +1405,7 @@ fn parse_output_flags(args: &[String], file_config: &HashMap<String, String>) ->
         OutputFormat::Text
     };
 
-    let audit = args.iter().any(|a| a == "--audit")
+    let audit = has_option(args, &["--audit"])
         || std::env::var("YOYO_AUDIT")
             .map(|v| v == "1")
             .unwrap_or(false)
@@ -1417,11 +1417,11 @@ fn parse_output_flags(args: &[String], file_config: &HashMap<String, String>) ->
     // --auto-edit: auto-approve file edits, still confirm shell commands
     // --yes implies --auto-edit (approves everything including edits)
     // Also enabled via auto_edit = true in .yoyo.toml
-    let auto_edit = args.iter().any(|a| a == "--auto-edit")
+    let auto_edit = has_option(args, &["--auto-edit"])
         || auto_approve
         || crate::config::parse_auto_edit_from_config(file_config);
 
-    let print_system_prompt = args.iter().any(|a| a == "--print-system-prompt");
+    let print_system_prompt = has_option(args, &["--print-system-prompt"]);
 
     OutputFlags {
         verbose,
@@ -2378,8 +2378,8 @@ pub(crate) fn parse_args_with_config(
     let (full_args, args) = (args, crate::cli_config::option_args(args)); // #1110: flags end at `--`
                                                                           // Apply config-file defaults for display/audio settings.
                                                                           // CLI flags (handled earlier in apply_cli_flags / parse_args) take priority.
-    if !args.iter().any(|a| a == "--quiet" || a == "-q")
-        && !args.iter().any(|a| a == "--print")
+    if !has_option(args, &["--quiet", "-q"])
+        && !has_option(args, &["--print"])
         && !std::env::var("YOYO_QUIET")
             .map(|v| v == "1")
             .unwrap_or(false)
@@ -2391,9 +2391,7 @@ pub(crate) fn parse_args_with_config(
     if hints_disabled_from(args, &file_config) {
         set_hints_disabled();
     }
-    if !args.iter().any(|a| a == "--no-bell")
-        && crate::config::parse_no_bell_from_config(&file_config)
-    {
+    if !has_option(args, &["--no-bell"]) && crate::config::parse_no_bell_from_config(&file_config) {
         crate::format::disable_bell();
     }
     // NOTE: `notify_command` used to be installed here. It moved down beside the
@@ -2401,7 +2399,7 @@ pub(crate) fn parse_args_with_config(
     // gated — and the gate reads `is_trust_project()`, which is not decided
     // until the trust prompt runs further below. Installing it here would refuse
     // a command the user is about to say "yes" to.
-    if !args.iter().any(|a| a == "--no-color")
+    if !has_option(args, &["--no-color"])
         && std::io::stdout().is_terminal()
         && crate::config::parse_no_color_from_config(&file_config)
     {
@@ -2411,7 +2409,7 @@ pub(crate) fn parse_args_with_config(
     // Spinner/ToolProgressTimer animations (no \r redraws, no cursor-movement
     // escapes) and implies --no-color (reuses disable_color() — single source
     // of truth for the color-off path).
-    if args.iter().any(|a| a == "--screen-reader") {
+    if has_option(args, &["--screen-reader"]) {
         crate::format::set_plain_output(true);
         crate::format::disable_color();
     }
@@ -2431,7 +2429,7 @@ pub(crate) fn parse_args_with_config(
     // byte-identical to the pre-#794 default. The config door exists because
     // some callers cannot pass a flag at all (an evolve-loop agent is piped
     // by a protected script), and `.yoyo.toml` is a file the user authors.
-    if args.iter().any(|a| a == "--continue-on-silence")
+    if has_option(args, &["--continue-on-silence"])
         || crate::config::parse_continue_on_silence_from_config(&file_config)
     {
         set_continue_on_silence();
@@ -2463,7 +2461,7 @@ pub(crate) fn parse_args_with_config(
     // The config door exists because the whole point of the flag is a person
     // willing to leave the terminal open for hours; that person wants to say so
     // once, not retype a flag on every invocation.
-    if args.iter().any(|a| a == "--wait-for-reset")
+    if has_option(args, &["--wait-for-reset"])
         || crate::config::parse_wait_for_reset_from_config(&file_config)
     {
         set_wait_for_reset();
@@ -2496,8 +2494,7 @@ pub(crate) fn parse_args_with_config(
     // an alarm and is not getting it. Reasoning in `cost_threshold_warning`.
     let (cost_threshold, cost_warnings) =
         crate::prompt_budget::resolve_cost_threshold_with_warnings(
-            args.iter()
-                .position(|a| a == "--cost-warn")
+            option_position(args, &["--cost-warn"])
                 .and_then(|i| args.get(i + 1))
                 .map(|s| s.as_str()),
             std::env::var("YOYO_COST_WARN_USD").ok().as_deref(),
@@ -2564,8 +2561,8 @@ pub(crate) fn parse_args_with_config(
     // i.e. back to the unsafe default by habit. There is deliberately **no un-trust
     // flag** — the store is a plain text file and deleting a line is the revocation,
     // which is why every message below names the file's full path.
-    let trust_always = args.iter().any(|a| a == "--trust-project-always");
-    let trust_once = args.iter().any(|a| a == "--trust-project");
+    let trust_always = has_option(args, &["--trust-project-always"]);
+    let trust_once = has_option(args, &["--trust-project"]);
     let cwd = std::env::current_dir().ok();
     if trust_once || trust_always {
         set_trust_project();
@@ -2798,9 +2795,7 @@ directory ({e}); this run is trusted, later runs will not be."
     // Custom system prompt: --system "text" or --system-file path
     let custom_system = flag_value(args, &["--system"]);
 
-    let system_from_file = args
-        .iter()
-        .position(|a| a == "--system-file")
+    let system_from_file = option_position(args, &["--system-file"])
         .and_then(|i| args.get(i + 1))
         .map(|path| {
             std::fs::read_to_string(path).unwrap_or_else(|e| {
@@ -2831,10 +2826,10 @@ directory ({e}); this run is trusted, later runs will not be."
     // `restricted_from_sources`, so the OS environment is consulted once for the
     // process and a session's confinement cannot shift mid-session.
     let restricted = crate::restricted::restricted_from_sources(
-        args.iter().any(|a| a == "--restricted"),
+        has_option(args, &["--restricted"]),
         crate::restricted::restricted_env_source().as_deref(),
     );
-    let safe_mode = restricted || args.iter().any(|a| a == "--safe-mode");
+    let safe_mode = restricted || has_option(args, &["--safe-mode"]);
     // Parse permission and directory restriction config. Built BEFORE the
     // project context load so instruction files honour the --deny-dir /
     // --allow-dir fence at their resolved target (#1002); it reads only `args`
@@ -2868,12 +2863,12 @@ directory ({e}); this run is trusted, later runs will not be."
     // --lite: replace system prompt with minimal version for small/local LLMs
     // (skips project context, repo map, goal — they consume too much context)
     // CLI flag takes priority; falls back to config file `lite = true`
-    let lite_flag = args.iter().any(|a| a == "--lite");
+    let lite_flag = has_option(args, &["--lite"]);
     let lite_from_config = crate::config::parse_lite_from_config(&file_config);
     let lite = lite_flag || lite_from_config;
 
     // Track whether user explicitly set a custom system prompt (CLI or config file)
-    let user_set_system_prompt = args.iter().any(|a| a == "--system" || a == "--system-file")
+    let user_set_system_prompt = has_option(args, &["--system", "--system-file"])
         || file_config.contains_key("system_prompt")
         || file_config.contains_key("system_file");
 
@@ -2882,16 +2877,14 @@ directory ({e}); this run is trusted, later runs will not be."
     }
 
     // --thinking <level> enables extended thinking (CLI overrides config file)
-    let thinking = args
-        .iter()
-        .position(|a| a == "--thinking")
+    let thinking = option_position(args, &["--thinking"])
         .and_then(|i| args.get(i + 1))
         .map(|s| parse_thinking_level(s))
         .or_else(|| file_config.get("thinking").map(|s| parse_thinking_level(s)))
         .unwrap_or(ThinkingLevel::Off);
 
-    let continue_strict = args.iter().any(|a| a == "--continue-strict");
-    let continue_session = continue_strict || args.iter().any(|a| a == "--continue" || a == "-c");
+    let continue_strict = has_option(args, &["--continue-strict"]);
+    let continue_session = continue_strict || has_option(args, &["--continue", "-c"]);
 
     let max_tokens = parse_numeric_flag::<u32>(args, "--max-tokens", &file_config, "max_tokens");
 
@@ -2916,7 +2909,7 @@ directory ({e}); this run is trusted, later runs will not be."
     // disallow list is unchanged and its tool set is byte-identical, which is
     // every existing user and the whole regression surface. One `set_*` call
     // site; the single read lives in `tools::build_sub_agent_tool_at_depth`.
-    set_read_only_subagents(args.iter().any(|a| a == "--read-only-subagents"));
+    set_read_only_subagents(has_option(args, &["--read-only-subagents"]));
     if restricted {
         let cwd = std::env::current_dir().ok();
         let effects = restricted_mode_effects(&dir_restrictions.allow, cwd.as_deref());
@@ -2932,9 +2925,7 @@ directory ({e}); this run is trusted, later runs will not be."
     crate::cd_config_note::record_startup_fences(&permissions.deny, &dir_restrictions);
 
     // --context-strategy <compaction|checkpoint> (CLI only, not in config file)
-    let context_strategy = args
-        .iter()
-        .position(|a| a == "--context-strategy")
+    let context_strategy = option_position(args, &["--context-strategy"])
         .and_then(|i| args.get(i + 1))
         .map(|val| match val.as_str() {
             "compaction" => ContextStrategy::Compaction,
@@ -3054,7 +3045,7 @@ directory ({e}); this run is trusted, later runs will not be."
             .filter(|s| !s.is_empty())
             .collect(),
         disallowed_tools: {
-            let no_tools = args.iter().any(|a| a == "--no-tools");
+            let no_tools = has_option(args, &["--no-tools"]);
             let user_disallowed: Vec<String> = collect_repeatable_flag(args, "--disallowed-tools")
                 .iter()
                 .flat_map(|v| v.split(','))
@@ -3078,7 +3069,7 @@ directory ({e}); this run is trusted, later runs will not be."
             }
             tools
         },
-        no_tools: args.iter().any(|a| a == "--no-tools"),
+        no_tools: has_option(args, &["--no-tools"]),
         lite,
         safe_mode,
     });

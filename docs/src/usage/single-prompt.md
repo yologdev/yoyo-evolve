@@ -27,8 +27,10 @@ No flag after `--` is applied either, including the ones read at startup: `yoyo 
 sends `--no-color hi` and leaves colour, bell, notifications, `--quiet` and `--print` as they were.
 The same holds for the word right after a flag that takes a value: `yoyo -p --help` sends
 `--help` (with a warning that the value looks like a flag) instead of printing the help page.
-Some later-read flags (`--yes`, `--print-system-prompt`, ...) are still applied from that slot;
-that is tracked in #1114.
+On/off flags are not applied from that slot either: `yoyo -p --print-system-prompt` sends the
+text, and `yoyo --system --yes hi` uses `--yes` as the system prompt without turning on
+auto-approve. Flags that take a value are still read from it (`yoyo --system --model x` picks
+model `x`); that is tracked in #1114.
 
 ## When to use it
 

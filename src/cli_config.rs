@@ -391,16 +391,25 @@ pub(crate) fn option_args(args: &[String]) -> &[String] {
 /// (#1113), so `yoyo -p --help` sends `--help` and `--model --no-color`
 /// leaves colour on. Same walk as `option_split`.
 pub(crate) fn has_option(args: &[String], names: &[&str]) -> bool {
+    option_position(args, names).is_some()
+}
+
+/// Index in `args` of the first of `names` written as an option (#1114):
+/// the value-slot-aware `args.iter().position(..)`, for the lookups that
+/// read the word after the flag (`--output-format json`, `--thinking high`).
+/// `yoyo --system --thinking high` gives `None`: `--thinking` is the system
+/// prompt there, not a flag.
+pub(crate) fn option_position(args: &[String], names: &[&str]) -> Option<usize> {
     let opts = option_args(args);
     let mut i = 1;
     while let Some(a) = opts.get(i) {
         if names.contains(&a.as_str()) {
-            return true;
+            return Some(i);
         }
         let takes_value = crate::cli::FLAGS_NEEDING_VALUES.contains(&a.as_str());
         i += if takes_value { 2 } else { 1 };
     }
-    false
+    None
 }
 
 /// The words after `--`: prompt text, verbatim, never parsed as flags.
@@ -994,3 +1003,7 @@ e.g. --max-tokens 4096. Nothing was sent to the model."
         assert!(!msg.as_bytes().contains(&0x1b), "{msg:?}");
     }
 }
+
+#[cfg(test)]
+#[path = "cli_flag_slot_tests.rs"]
+mod cli_flag_slot_tests;
