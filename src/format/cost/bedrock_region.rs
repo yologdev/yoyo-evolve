@@ -20,7 +20,7 @@ const REGIONAL_PREMIUM: f64 = 1.1;
 
 /// The price Bedrock bills `model` at, or `None` when it is not a Bedrock
 /// Claude id with an anthropic preset.
-pub(super) fn bedrock_preset_cost(model: &str) -> Option<CostConfig> {
+pub(crate) fn bedrock_preset_cost(model: &str) -> Option<CostConfig> {
     let id = crate::providers::bedrock_anthropic_preset_id(model)?;
     let mut cost = crate::agent_builder::anthropic_preset(id)?.cost?;
     if model.starts_with("global.") {

@@ -167,10 +167,13 @@ defaults but are not warned about, since you configure those servers yourself. `
 preset for the whole provider, so it is not warned about. `anthropic` ids without a preset (for
 example `claude-made-up-9`) run on a 200,000 / `max_tokens = 16000` guess, and yoyo warns about
 those too. Anthropic ids with a preset, such as the default `claude-opus-5-5`, are not warned about.
-On `bedrock`, a Claude id (`[us.|eu.|apac.|global.]anthropic.<id>[-vN:M]`) takes the same Anthropic
-preset, so the default `anthropic.claude-sonnet-4-6` runs on Anthropic's published 1,000,000 window
-with `max_tokens = 64000` (of its 128,000 maximum) and is not warned about. Any other `bedrock` id
-(`amazon.nova-pro-v1:0`, or a Claude id with no preset) runs on the 200,000 / 16000 guess and warns.
+On `bedrock`, the limits come from yoagent's Bedrock preset: a Claude id it knows, bare or behind one
+of AWS's cross-region prefixes (`global.`, `us.`, `us-gov.`, `eu.`, `apac.`, `jp.`, `au.`, `ca.`,
+`in.`), takes the same limits as the Anthropic model, so the default `anthropic.claude-sonnet-4-6`
+runs on a 1,000,000 window with `max_tokens = 64000` and is not warned about. Your `base_url` (the
+Region) is kept. Any other `bedrock` id (`amazon.nova-pro-v1:0`, a Claude id yoagent has no preset
+for, or a Claude id spelled with a prefix or version suffix AWS doesn't use, such as
+`xx.anthropic.claude-sonnet-4-6`) runs on the 200,000 / 16000 guess and warns.
 
 A value for `--max-tokens`, `--temperature`, `--max-turns` or `--context-window` that is not a
 number (`--max-tokens abc`) is refused at startup with exit 2, before any request is sent; it no

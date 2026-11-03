@@ -5,6 +5,7 @@ use crate::config::ModelPricingOverrides;
 // #1012: Google's promos (by the date) and xAI's US-endpoint premium (by the endpoint).
 // #1116: Bedrock Claude ids price as the anthropic preset, +10% off `global.`.
 mod bedrock_region;
+pub(crate) use bedrock_region::bedrock_preset_cost;
 pub(crate) mod promo;
 mod xai_region;
 pub use xai_region::{is_xai_us_endpoint, set_xai_us_region};

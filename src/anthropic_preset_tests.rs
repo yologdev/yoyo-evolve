@@ -151,7 +151,9 @@ fn sonnet_5_5_matches_the_catalogue_and_keeps_sonnet_5_limits() {
 }
 
 /// #1116: Sonnet 4.6, typed from Anthropic's pages (Day 247), not from
-/// production code: 1M window and 128K max output
+/// production code. Since #1123 the preset is yoagent 0.26.7's own
+/// `claude_sonnet_4_6()`, and these typed figures stay as the outside check
+/// on it: 1M window and 128K max output
 /// (docs.anthropic.com/en/docs/build-with-claude/context-windows); $3 / $15,
 /// cache write $3.75, cache read $0.30, and the full 1M at standard pricing
 /// (docs.anthropic.com/en/docs/about-claude/pricing).
@@ -181,6 +183,14 @@ fn sonnet_4_6_matches_anthropic_published_figures() {
             "{id}"
         );
         assert!(c.context_tiers.is_empty(), "no long-context tier: {id}");
+        // #1123: yoyo sends yoagent's constructor, not a hand-written copy.
+        let y = ModelConfig::claude_sonnet_4_6();
+        assert_eq!(
+            (p.context_window, p.max_tokens, p.reasoning),
+            (y.context_window, y.max_tokens, y.reasoning),
+            "{id}"
+        );
+        assert_eq!(Some(c), y.cost, "{id}");
     }
     // Near misses: 4.5 (200K, a different model) and 4 stay unmapped.
     assert!(anthropic_preset("claude-sonnet-4-5-20250929").is_none());
@@ -232,7 +242,9 @@ fn bedrock_anthropic_preset_id_table() {
 
 /// Emission point: what the bedrock arm builds, and what the guessed-limits
 /// warning reads (`runs_on_guessed_limits`, the same predicate the warning
-/// uses). The wire stays Bedrock's.
+/// uses). The wire stays Bedrock's. #1124: the limits authority is yoagent's
+/// `ModelConfig::preset("bedrock", id)` (named geo prefixes, a fixed id
+/// table), no longer yoyo's own id mapping.
 #[test]
 fn bedrock_claude_ids_run_on_the_anthropic_preset() {
     use crate::agent_builder::create_model_config;
@@ -247,16 +259,21 @@ fn bedrock_claude_ids_run_on_the_anthropic_preset() {
         default.as_str(),
         "us.anthropic.claude-sonnet-4-6",
         "global.anthropic.claude-sonnet-4-6",
-        "us.anthropic.claude-opus-5-5-v1:0",
+        "jp.anthropic.claude-sonnet-4-6",
+        "us.anthropic.claude-opus-5-5",
+        "us.anthropic.claude-haiku-4-5-20251001-v1:0",
     ] {
         let c = create_model_config("bedrock", id, None);
-        let want =
-            anthropic_preset(crate::providers::bedrock_anthropic_preset_id(id).unwrap()).unwrap();
+        let want = ModelConfig::preset("bedrock", id).unwrap_or_else(|| panic!("{id}"));
         assert_eq!(
-            (c.context_window, c.max_tokens),
-            (want.context_window, want.max_tokens),
+            (c.context_window, c.max_tokens, c.reasoning),
+            (want.context_window, want.max_tokens, want.reasoning),
             "{id}"
         );
+        // Priced by /cost's own Bedrock rule, never yoagent's (unpriced) preset.
+        assert!(want.cost.is_none(), "{id}");
+        assert_eq!(c.cost, crate::format::bedrock_preset_cost(id), "{id}");
+        assert!(c.cost.is_some(), "{id}");
         assert_eq!(c.id, id, "the id sent to Bedrock is the user's");
         assert_eq!(c.provider, "bedrock");
         assert_eq!(format!("{}", c.api), "bedrock_converse_stream");
@@ -281,16 +298,26 @@ fn bedrock_claude_ids_run_on_the_anthropic_preset() {
         "m",
         "m",
     );
+    // #1124: shapes the old mapping accepted and yoagent refuses (none is a
+    // bedrock-runtime id on AWS's model cards): an unknown geo prefix, and a
+    // `-vN` suffix on a model whose Bedrock id has none.
     for id in [
         "amazon.nova-pro-v1:0",
         "anthropic.claude-sonnet-4-20250514-v1:0",
+        "xx.anthropic.claude-sonnet-4-6",
+        "us.anthropic.claude-opus-5-5-v1:0",
+        "anthropic.claude-sonnet-4-6-v2",
     ] {
         let c = create_model_config("bedrock", id, None);
+        assert!(ModelConfig::preset("bedrock", id).is_none(), "{id}");
         assert_eq!(
-            (c.context_window, c.max_tokens, c.cost.is_none()),
-            (200_000, generic.max_tokens, generic.cost.is_none()),
+            (c.context_window, c.max_tokens),
+            (200_000, generic.max_tokens),
             "{id}"
         );
+        // Pricing is still the looser /cost lookup (#1124's residue): the
+        // three Claude-shaped strays are priced, the other vendors are not.
+        assert_eq!(c.cost, crate::format::bedrock_preset_cost(id), "{id}");
         assert!(runs_on_guessed_limits("bedrock", id), "{id}");
     }
 }

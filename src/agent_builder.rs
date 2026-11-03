@@ -765,7 +765,8 @@ fn ensure_bundled_prices() {
 /// Look up a yoagent 0.9 fleet preset for an Anthropic model name.
 ///
 /// The fleet models (claude-fable-5, claude-opus-5, claude-opus-4-8,
-/// claude-sonnet-5, claude-sonnet-5-5, claude-haiku-4-5, claude-haiku-5-5)
+/// claude-sonnet-5, claude-sonnet-5-5, claude-sonnet-4-6, claude-haiku-4-5,
+/// claude-haiku-5-5)
 /// ship with authoritative pricing, context-window, and
 /// max-output defaults inside yoagent's presets — that's where truth lives,
 /// so we start from the preset instead of a hand-rolled config. Dated
@@ -797,14 +798,7 @@ pub fn anthropic_preset(model: &str) -> Option<ModelConfig> {
     } else if model.starts_with("claude-haiku-5-5") {
         ModelConfig::claude_haiku_5_5()
     } else if model.starts_with("claude-sonnet-4-6") {
-        // Stopgap for #1123, delete when yoagent ships it (#1116: no constructor, 0.26.6).
-        // Anthropic, Day 247: 1M / 128K (docs.anthropic.com/en/docs/build-with-claude/
-        // context-windows), $3/$15, cache $3.75/$0.30, no 1M tier (.../about-claude/pricing).
-        let mut c = ModelConfig::anthropic("claude-sonnet-4-6", "Claude Sonnet 4.6");
-        (c.context_window, c.max_tokens) = (1_000_000, 64_000); // 64K of 128K, as the 1M presets
-        let cost = yoagent::provider::CostConfig::new(3.0, 15.0).with_cache_write(3.75);
-        c.cost = Some(cost.with_cache_read(0.30));
-        c
+        ModelConfig::claude_sonnet_4_6()
     } else {
         return None;
     };
@@ -1095,12 +1089,15 @@ pub fn create_model_config(provider: &str, model: &str, base_url: Option<&str>) 
                 model,
             );
             config.context_window = 200_000;
-            // #1116: `[geo.]anthropic.<id>` is the same model as the anthropic preset.
-            let preset = crate::providers::bedrock_anthropic_preset_id(model);
-            if let Some(p) = preset.and_then(anthropic_preset) {
+            // #1124: limits come from yoagent's Bedrock preset (a Claude id,
+            // optionally behind one of its named geo prefixes). Only limits and
+            // reasoning: its base_url is us-east-1 and it is unpriced, so the
+            // user's URL stays and the price is /cost's own (regional premium).
+            if let Some(p) = ModelConfig::preset("bedrock", model) {
                 (config.context_window, config.max_tokens) = (p.context_window, p.max_tokens);
-                (config.cost, config.reasoning) = (p.cost, p.reasoning);
+                config.reasoning = p.reasoning;
             }
+            config.cost = crate::format::bedrock_preset_cost(model);
             config
         }
         "github" => {
