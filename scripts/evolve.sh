@@ -684,10 +684,16 @@ setup_dependency_skills() {
         echo "  Warning: cargo metadata failed; continuing without dependency skills."
         return 0
     fi
-    local name version dir found=0
+    local name version dir found=0 skill_files
+    DEPENDENCY_SKILL_FILES=""
     while IFS=$'\t' read -r name version dir; do
         [ -n "$dir" ] || continue
         YOYO_SKILL_FLAGS+=(--skills "$dir")
+        # `|| true`: a skills dir the glob cannot see (a dot-dir, or one that
+        # changed since the python check) must not abort the session under -e.
+        skill_files=$(ls "$dir"/*/SKILL.md 2>/dev/null || true)
+        [ -n "$skill_files" ] && DEPENDENCY_SKILL_FILES="${DEPENDENCY_SKILL_FILES}${skill_files}
+"
         echo "  dependency skills: $name $version from $dir"
         found=1
     done < <(printf '%s' "$meta" | dependency_skill_dirs)
@@ -696,6 +702,20 @@ setup_dependency_skills() {
 }
 
 setup_dependency_skills
+
+# Named in the plan and implement prompts (#1122): six evolve runs loaded the
+# dependency skills every session and never opened them, then hand-built what the
+# library already had (a preset row, a Bedrock id lookup). Listing the exact files
+# makes reading them a step, not a suggestion. No crate is named here.
+DEPENDENCY_SKILLS_SECTION=""
+if [ -n "$(printf '%s' "${DEPENDENCY_SKILL_FILES:-}" | tr -d '[:space:]')" ]; then
+    DEPENDENCY_SKILLS_SECTION="=== SKILLS SHIPPED BY YOUR DEPENDENCIES: READ BEFORE BUILDING ===
+${DEPENDENCY_SKILL_FILES}For any task that touches agent behaviour, models, presets, prices, MCP, tools,
+retries, limits, compaction or events, READ the matching file above FIRST: its
+feature table says what the library already does, and its pitfalls say what breaks.
+Build in yoyo only what is not there. If the library almost has it, file it here
+with --label upstream instead of writing a stopgap."
+fi
 
 # ── Helper: run agent with automatic fallback on API error ──
 # Run yoyo with optional --fallback flag for provider failover.
@@ -2058,6 +2078,8 @@ Skip issues where you have nothing new to say — silence is better than noise.
 Write issue responses in yoyo's voice (see PERSONALITY.md). Be a curious, honest octopus —
 celebrate fixes, admit struggles, show personality. No corporate speak.
 
+$DEPENDENCY_SKILLS_SECTION
+
 For EACH task, create a file: session_plan/task_01.md, session_plan/task_02.md, etc.
 
 Each file should contain:
@@ -2065,6 +2087,7 @@ Title: [short task title]
 Kind: [product | evolve]
 Files: [files to modify]
 Issue: #N (or "none")
+Dependency: [the library feature this task uses, from a skill above, or: none; checked "<section of the skill you read>"]
 
 Kind declares who the task is for — decide this consciously for every task:
 - product: users of yoyo benefit directly (features, CLI/UX, defaults, docs they read).
@@ -2475,7 +2498,11 @@ $TASK_DESC
 ${CHECKPOINT_SECTION:+
 $CHECKPOINT_SECTION
 }
+$DEPENDENCY_SKILLS_SECTION
+
 Follow the evolve skill rules:
+- If the task file has a Dependency: line naming a feature, read that part of the
+  skill before you write code, and use the feature rather than rebuilding it.
 - Act early — don't spend the whole budget reading/planning. Make your first concrete
   change (a failing test, or an edit to a task-scope file) within your first few tool
   calls. If current code already satisfies the task, add the smallest real verification
@@ -3007,7 +3034,7 @@ Write your verdict to session_plan/eval_task_${TASK_NUM}.md with exactly this fo
 
 Verdict: PASS (or FAIL)
 Reason: [1-2 sentences explaining why]
-Checked: intent_alignment: <PASS or FAIL>: <what you actually looked at>
+Checked: intent_alignment: <PASS or FAIL>: <what you actually looked at; if the task's Dependency: line names a library feature, a diff that rebuilds that feature instead of using it is a FAIL>
 Checked: forgotten_touchpoints: <PASS or FAIL>: <every new definition has its consumer in THIS diff; every new enum variant has its match arms; every renamed thing has its call sites>
 Checked: doc_sync: <PASS or FAIL or N/A>: <behavior change reflected in CLAUDE.md / README / docs; N/A only if no behavior changed>
 Checked: product_surface: <PASS or FAIL or N/A>: <evolve-kind task touching config defaults, CLI flags, wizard or startup behavior must be opt-in — see #448; N/A only if the diff touches no product surface>

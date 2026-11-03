@@ -857,8 +857,10 @@ ds_case() { # $1 = ok|fail (cargo metadata), $2 = disabled?
 JSON
       if [ "$1" = ok ]; then cargo() { cat "$d/meta.json"; }; else cargo() { return 101; }; fi
       [ "${2:-}" = disabled ] && export YOYO_DEPENDENCY_SKILLS_DISABLED=1
+      [ "${2:-}" = dotdir ] && { mkdir -p agentlib-1.2.0/skills/.hidden; echo x > agentlib-1.2.0/skills/.hidden/SKILL.md; rm -rf agentlib-1.2.0/skills/agentlib; }
       YOYO_SKILL_FLAGS=()
       eval "$DS_FN"; setup_dependency_skills >/dev/null; rc=$?
+      if [ "${2:-}" = files ] || [ "${2:-}" = dotdir ]; then printf '%s' "${DEPENDENCY_SKILL_FILES//$d/D}" | tr '\n' ';'; rm -rf "$d"; exit 0; fi
       out="${YOYO_SKILL_FLAGS[*]:-none}"; echo "${out//$d/D}|rc=$rc"
       rm -rf "$d" ) 2>/dev/null
 }
@@ -868,6 +870,10 @@ if require "setup_dependency_skills extracted" "$(awk '/^setup_dependency_skills
         "$(ds_case ok)" "--skills D/agentlib-1.2.0/skills|rc=0"
     check "dependency skills: cargo metadata failing adds nothing and does not fail" \
         "$(ds_case fail)" "none|rc=0"
+    check "dependency skills: the exact SKILL.md files loaded are recorded for the prompts (#1122)" \
+        "$(ds_case ok files)" "D/agentlib-1.2.0/skills/agentlib/SKILL.md;"
+    check "dependency skills: a skills dir the glob cannot see (dot-dir only) records nothing and does not abort" \
+        "$(ds_case ok dotdir; echo "|rc=$?")" "|rc=0"
     check "dependency skills: YOYO_DEPENDENCY_SKILLS_DISABLED=1 adds nothing" \
         "$(ds_case ok disabled)" "none|rc=0"
 fi
@@ -1297,6 +1303,21 @@ done
 # ── backlog convergence (2026-10-28): leftovers as comments; the drain closes ──
 check "evolve skill: over 20 open agent-self, residue is a comment on the parent issue" \
     "$(grep -c 'over 20, leftovers go on the parent issue, not into new ones' "$ROOT/skills/evolve/SKILL.md")" "1"
+check "evolve.sh: the planner prompt lists the dependency skill files (#1122)" \
+    "$(awk '/<<PLANEOF$/,/^PLANEOF$/' "$SCRIPT" | grep -c '^\$DEPENDENCY_SKILLS_SECTION$')" "1"
+check "evolve.sh: the implementer prompt lists the dependency skill files (#1122)" \
+    "$(awk '/<<TEOF$/,/^TEOF$/' "$SCRIPT" | grep -c '^\$DEPENDENCY_SKILLS_SECTION$')" "1"
+check "evolve.sh: the evaluator fails a diff that rebuilds a feature its Dependency: line names" \
+    "$(grep -c 'Dependency: line names a library feature, a diff that rebuilds that feature instead of using it is a FAIL' "$SCRIPT")" "1"
+DSS_BLOCK=$(awk '/^DEPENDENCY_SKILLS_SECTION=""$/,/^fi$/' "$SCRIPT")
+if require "evolve.sh dependency skills section extracted" "$DSS_BLOCK"; then
+    dss_case() { ( DEPENDENCY_SKILL_FILES="$1"; eval "$DSS_BLOCK"; printf '%s' "$DEPENDENCY_SKILLS_SECTION" | sed -n '1,3p' | tr '\n' '|' ) }
+    check "dependency skills section: empty when no skill file was recorded" "$(dss_case '')$(dss_case $'\n')" ""
+    check "dependency skills section: each path on its own line, before the instruction" \
+        "$(dss_case $'/a/x/SKILL.md\n/b/y/SKILL.md\n')" "=== SKILLS SHIPPED BY YOUR DEPENDENCIES: READ BEFORE BUILDING ===|/a/x/SKILL.md|/b/y/SKILL.md|"
+fi
+check "evolve.sh: each task file declares the library feature it uses, or the skill section it checked" \
+    "$(grep -c '^Dependency: \[the library feature this task uses' "$SCRIPT")" "1"
 check "evolve.sh: no planner text still says to take the oldest backlog item" \
     "$(grep -c 'take the oldest still-valid item' "$SCRIPT")" "0"
 check "evolve.sh: the backlog index shows each issue's comment count (leftovers live there)" \
