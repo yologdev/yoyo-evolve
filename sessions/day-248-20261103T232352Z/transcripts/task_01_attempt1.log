@@ -1,0 +1,167 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh… ✓ (25ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 140,170p src/mcp_prefix.rs;…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; Y=~/.cargo/registry/src/index.crat… ✓ (9ms)
+ ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; Y=~/.cargo/registry/src/index.crat… ✓ (9ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/mcp_prefix.rs:145..165 ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 14.4s (5 ✓)
+
+Now the edit:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/mcp_prefix.rs (4 → 19 lines)
+    /// terminal's hangup no longer reaches them.
+  + ///
+  + /// `env_remove_all(hook_scrub_vars())` (#1064, owner's decision 2026-11-03):
+  + /// the server starts with every provider API key **unset** (not blanked) —
+  + /// `subprocess_env::credential_vars()`, i.e. yoagent's `api_key_variables()`
+  + /// plus yoyo's own lookup table, with `GITHUB_TOKEN`/`GH_TOKEN` kept. A stdio
+  + /// server is third-party code named in a config that may be repo-authored,
+  + /// the same population shell hooks are scrubbed for, so it uses the hooks'
+  + /// gate: on by default, `YOYO_SUBPROCESS_ENV_SCRUB=0`/`false` turns it off,
+  + /// and an empty or misspelled value keeps it on (fails closed). Read at each
+  + /// spawn, so both spawns of one server see the same answer. yoagent applies a
+  + /// caller `env` map AFTER the removal, so
+  + /// `[mcp_servers.<name>] env = { ANTHROPIC_API_KEY = "..." }` still hands one
+  + /// server a key explicitly — that is the per-server opt-in.
+    pub(crate) fn mcp_stdio_options() -> StdioOptions {
+  -     StdioOptions::new().own_process_group(true)
+  +     StdioOptions::new()
+  +         .own_process_group(true)
+  +         .env_remove_all(crate::subprocess_env::hook_scrub_vars())
+    }
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo build 2>&1 | tail -3; ls tes… ✓ (5m 39s)
+    /// terminal's hangup no longer reaches them.
+  + ///
+  + /// `env_remove_all(hook_scrub_vars())` (#1064, owner's decision 2026-11-03):
+  + /// the server starts with every provider API key **unset** (not blanked) —
+  + /// `subprocess_env::credential_vars()`, i.e. yoagent's `api_key_variables()`
+  + /// plus yoyo's own lookup table, with `GITHUB_TOKEN`/`GH_TOKEN` kept. A stdio
+  + /// server is third-party code named in a config that may be repo-authored,
+  + /// the same population shell hooks are scrubbed for, so it uses the hooks'
+  ... (12 more lines)
+ ✗ (5m 39s)
+    │ Command timed out after 120s. Output so far:
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; ls tests/common; grep -n "pub fn\|… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "fn project_mcp_refusal_me… ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "fn dirs_hint" -A10 src/co… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "\[mcp_servers" -A8 docs/s… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 5240,5300p src/cli.rs ✓ (4ms)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/tests/mcp_env_scrub.rs (211 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 500 cargo test --test mcp_… ✓ (4m 56s)
+ ✓ (4m 56s)
+
+────────────────────────────────────────────────────────────────────────────────
+  9 tools completed in 11m 20s (8 ✓, 1 ✗)
+
+Green. Now the positive control — neuter, run, restore in one command:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/mcp_prefix.rs /tmp/mp.bak &… ✓ (26.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/mcp_prefix.rs /tmp/mp.bak &… ✓ (12.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/mcp_prefix.rs /tmp/mp.bak &… ✓ (13.2s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 0s (3 ✓)
+
+Exactly the three scrub cases go red by name, and the near-miss rows stay green. Restored. Now the docs:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n -i "mcp" docs/src/troubles… ✓ (9ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/troubleshooting/safety.md:185..235 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/troubleshooting/safety.md (3 → 19 lines)
+  - - **Not covered yet:** `/run`, `!`, `/bg`, `/watch`, MCP stdio servers and
+  -   sub-agent bash still inherit the full environment (tracked in
+  + - **MCP stdio servers (`--mcp`, `[mcp_servers.*]`): scrubbed by default,
+  +   like hooks.** A stdio server is a third-party program named in your config
+  +   or the repository's, so it starts with the provider keys unset. The same
+  +   `YOYO_SUBPROCESS_ENV_SCRUB=0` (or `false`) turns this off, and any other
+  +   value keeps it on. A server that genuinely needs a key gets it explicitly
+  +   through its own `env` map, which is applied after the scrub:
+  + 
+  +   ```toml
+  +   [mcp_servers.myserver]
+  +   command = "my-mcp-server"
+  +   env = { OPENAI_API_KEY = "sk-..." }
+  +   ```
+  + 
+  +   A server that used to pick up your key silently from the environment will
+  +   now fail its own calls until you give it the key this way (or set the
+  +   variable to `0`). The tools yoyo shows the model are unchanged.
+  + - **Not covered yet:** `/run`, `!`, `/bg`, `/watch` and sub-agent bash still
+  +   inherit the full environment (tracked in
+  ... (1 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue view 1064 --json state,ti… ✓ (2ms)
+  - - **Not covered yet:** `/run`, `!`, `/bg`, `/watch`, MCP stdio servers and
+  -   sub-agent bash still inherit the full environment (tracked in
+  + - **MCP stdio servers (`--mcp`, `[mcp_servers.*]`): scrubbed by default,
+  +   like hooks.** A stdio server is a third-party program named in your config
+  +   or the repository's, so it starts with the provider keys unset. The same
+  +   `YOYO_SUBPROCESS_ENV_SCRUB=0` (or `false`) turns this off, and any other
+  +   value keeps it on. A server that genuinely needs a key gets it explicitly
+  +   through its own `env` map, which is applied after the scrub:
+  ... (13 more lines)
+ ✓ (299ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "^- \`mcp_prefix.rs\`\|^- … ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1582,1592p ARCHITECTURE.md … ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (17 lines) ✓ (57ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn -i "mcp" src/subprocess_e… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1,45p src/subprocess_env.rs ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/subprocess_env.rs:20..36 ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  10 tools completed in 31.2s (10 ✓)
+
+This module doc now states something false; fixing it in the same diff:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (17 lines) ✓ (25.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 590 cargo test 2>&1 | grep… ✓ (5m 5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 590 cargo test 2>&1 | grep… ✓ (4m 26s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 590 cargo test >/tmp/t.log… ✓ (4m 21s)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 14m 35s (4 ✓)
+
+All green (exit 0, 34 test binaries ok, clippy and fmt clean). Committing:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add -A && … (40 lines) ✓ (52ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the residue comment on #1064, with the scope first so the planner sees it:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue comme… (3 lines) ✓ (1.1s)
+
+MCP stdio servers now start with the provider API keys unset by default. Committed as 19d5d3ce, titled "Part of #1064". It's local, so the push still happens at the end of the session. Build, the full cargo test run (34 test binaries), clippy with -D warnings and fmt --check all pass.
+
+The change: mcp_stdio_options() in src/mcp_prefix.rs now calls .env_remove_all(subprocess_env::hook_scrub_vars()). That is yoagent 0.26.8's new API, and it unsets the keys rather than setting them to "". It reuses the gate and key list hooks already have, so nothing new was written. Leaving YOYO_SUBPROCESS_ENV_SCRUB unset, or setting it to 1 or a misspelled value, scrubs the keys. Only 0 or false turns it off. GITHUB_TOKEN and GH_TOKEN are still passed through. Both places that start a server (the pre-flight tool listing and the real connect) go through this one function, and grep found no other site that starts a stdio server.
+
+The cost to users: a server that quietly relied on inheriting your key will now fail its own calls. The fix is to give that one server the key in [mcp_servers.<name>] env = { KEY = "..." }. yoagent applies that map after the removal, so the key gets through, and a test confirms it. Setting YOYO_SUBPROCESS_ENV_SCRUB=0 also works. The model sees the same tool list as before.
+
+Tests: I added tests/mcp_env_scrub.rs, six tests that run the real binary. The "server" is a small shell script that writes its environment to a file. The canary key is set only on the yoyo process the test starts, never in the test process itself.
+• Unset, 1 and bogus: the key is absent.
+• 0 and false: the key is passed through.
+• An env map in the config: the explicit key arrives.
+• Every case also checks that an ordinary variable arrived, so a server that never started can't make an "absent" test pass by accident.
+
+Positive control: I replaced the removal list with an empty one (marked NEUTERED), ran the tests and restored the line in one command. Exactly the three scrub cases failed, by name, and the other three stayed green. After the restore all six pass and no marker is left.
+
+Docs:
+• safety.md has a new MCP row: the default, how to turn it off, the env-map fix and the cost.
+• Two notes that still said MCP wasn't covered were wrong now, and I fixed both: the module doc in src/subprocess_env.rs (outside the task's file list, but only a comment) and the Day 238 "still open" line in ARCHITECTURE.md.
+• The mcp_prefix.rs entry in ARCHITECTURE.md has a dated line about the change.
+
+I commented on #1064 (scope first) listing what's still open there: /run, !, /bg and /watch opt-in wiring, sub-agent bash, and run_verify_command.
+
+  (interrupted)

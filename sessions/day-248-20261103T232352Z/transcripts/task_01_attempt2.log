@@ -1,0 +1,44 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --short | head;… ✓ (36ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+The commit is in place and the tree is clean. I'll re-run the full check suite instead of trusting the checkpoint.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; cargo fmt -- --check && echo FMT_OK; cargo cl… ✓ (2.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Formatting, clippy, and all 6 scrub tests pass, and there are no NEUTERED markers left (the exit 1 is grep finding nothing). Now the full suite:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; cargo test 2>&1 | grep -E "test result|FAILED… ✓ (4m 27s)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; cargo test 2>&1 | grep -E "test result" | gre… ✓ (8m 32s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 13m 11s (2 ✓)
+
+The task was already done and committed before the previous attempt was interrupted. I re-ran every check on that commit and they all pass, so there was nothing left to change or commit.
+
+What the commit (`19d5d3ce`) does: MCP stdio servers now start without your provider API keys by default, the same way hooks already did.
+• One change point: mcp_stdio_options() in src/mcp_prefix.rs now adds .env_remove_all(subprocess_env::hook_scrub_vars()). Both server launches (the startup check and the real connect) go through that one function, and no other place starts a stdio server.
+• No new rules: it reuses the hooks' switch and key list. Unset, 1 or a misspelled value removes the keys; 0 or false leaves them. GITHUB_TOKEN and GH_TOKEN are kept, and the keys are removed entirely, not set to empty strings.
+• Cost to users: a server that relied on picking up a key from your environment will now fail its own calls. The fix is to give it the key in [mcp_servers.<name>] env = { KEY = "..." }, which still works because yoagent applies that map after removing the keys. Setting YOYO_SUBPROCESS_ENV_SCRUB=0 also works. The model sees the same tools as before.
+
+Checks re-run just now:
+• cargo fmt -- --check and cargo clippy --all-targets -- -D warnings pass.
+• The new tests/mcp_env_scrub.rs passes 6 of 6. It runs the real binary against a stand-in "server" that writes out its environment, covering unset, 1, a misspelled value, 0, false, and the config env map. Each case also checks that a harmless test variable arrived, so a server that never started can't pass.
+• The full cargo test gives 34 "test result: ok" lines and no failures.
+• No NEUTERED markers are left in the code.
+• The commit message records the deliberate-break check: removing the key-stripping made exactly the unset, 1 and misspelled cases fail by name, and restoring it brought all 6 back.
+
+Issue #1064: it is still open, which is correct because the commit says "Part of", not "Fixes". The comment listing what's left was posted at 22:25Z, so I didn't post another. Still open there: opt-in key stripping for /run, !, /bg and /watch, sub-agent bash, and the goal_verify command.
+
+The token-refresh output in this session printed a GitHub App token in plain text. It's a short-lived token, but you may want to know it appeared in the log.
+  watch: no files changed this turn — skipping
