@@ -16,6 +16,7 @@ use crate::session::{ChangeKind, SessionChanges};
 mod cancel_mid_tool_tests;
 mod interrupt;
 mod loopback_refused;
+pub(crate) mod network_error_summary;
 mod output_limit;
 mod retry_after_partial;
 mod retry_safe_pipe;
@@ -236,7 +237,8 @@ use crate::prompt_retry::{
 // re-exported through `prompt_retry`, so a pass-through can't outlive its
 // callers.
 use crate::prompt_retry_limits::{rate_limit_giveup_message, retry_wait_decision, RetryWait};
-// MAX_RETRIES is pub(crate), so import without re-exporting.
+use network_error_summary::{print_error_line, surface_diagnosis}; // #1115
+                                                                  // MAX_RETRIES is pub(crate), so import without re-exporting.
 use crate::prompt_retry::MAX_RETRIES;
 
 // Extracted into `prompt_utils` module (Day 64). Callers import directly
@@ -1340,7 +1342,7 @@ pub async fn run_prompt_with_changes(
                 {
                     // #976: a pipe already holds this attempt's partial answer;
                     // a retry would write it again. Stop with the real error.
-                    eprintln!("\n{RED}  error: {error_msg}{RESET}");
+                    print_error_line(&error_msg);
                     eprintln!("{DIM}  {RETRY_SKIPPED_AFTER_PARTIAL_NOTE}{RESET}");
                     (collected_text, api_error) = fatal_handoff(dying_text, error_msg);
                     break;
@@ -1368,7 +1370,7 @@ pub async fn run_prompt_with_changes(
                             tokio::time::sleep(delay).await;
                         }
                         RetryWait::GiveUp { retry_after } => {
-                            eprintln!("\n{RED}  error: {error_msg}{RESET}");
+                            print_error_line(&error_msg);
                             eprintln!(
                                 "{YELLOW}  ⏳ {}{RESET}",
                                 rate_limit_giveup_message(retry_after)
@@ -1379,9 +1381,9 @@ pub async fn run_prompt_with_changes(
                     }
                 } else {
                     // Exhausted all retries — show the final error with diagnostic
-                    eprintln!("\n{RED}  error: {error_msg}{RESET}");
+                    print_error_line(&error_msg);
                     eprintln!("{DIM}  (failed after {} attempts){RESET}", MAX_RETRIES + 1);
-                    if let Some(diagnostic) = diagnose_api_error(&error_msg, model) {
+                    if let Some(diagnostic) = surface_diagnosis(&error_msg, model) {
                         eprintln!(
                             "{YELLOW}  💡 {}{RESET}",
                             diagnostic.replace('\n', &format!("\n{YELLOW}     {RESET}"))
@@ -1761,7 +1763,7 @@ pub async fn run_prompt_with_content_and_changes(
                     && retry_blocked_by_streamed_partial(&dying_text, is_retry_after_partial())
                 {
                     // #976: same shared rule as `run_prompt_auto_retry` above.
-                    eprintln!("\n{RED}  error: {error_msg}{RESET}");
+                    print_error_line(&error_msg);
                     eprintln!("{DIM}  {RETRY_SKIPPED_AFTER_PARTIAL_NOTE}{RESET}");
                     (collected_text, api_error) = fatal_handoff(dying_text, error_msg);
                     break;
@@ -1786,7 +1788,7 @@ pub async fn run_prompt_with_content_and_changes(
                             tokio::time::sleep(delay).await;
                         }
                         RetryWait::GiveUp { retry_after } => {
-                            eprintln!("\n{RED}  error: {error_msg}{RESET}");
+                            print_error_line(&error_msg);
                             eprintln!(
                                 "{YELLOW}  ⏳ {}{RESET}",
                                 rate_limit_giveup_message(retry_after)
@@ -1796,9 +1798,9 @@ pub async fn run_prompt_with_content_and_changes(
                         }
                     }
                 } else {
-                    eprintln!("\n{RED}  error: {error_msg}{RESET}");
+                    print_error_line(&error_msg);
                     eprintln!("{DIM}  (failed after {} attempts){RESET}", MAX_RETRIES + 1);
-                    if let Some(diagnostic) = diagnose_api_error(&error_msg, model) {
+                    if let Some(diagnostic) = surface_diagnosis(&error_msg, model) {
                         eprintln!(
                             "{YELLOW}  💡 {}{RESET}",
                             diagnostic.replace('\n', &format!("\n{YELLOW}     {RESET}"))

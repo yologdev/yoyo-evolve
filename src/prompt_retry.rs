@@ -696,7 +696,7 @@ pub fn diagnose_api_error(error: &str, model: &str) -> Option<String> {
                 "  Check your internet connection and that {provider}'s API is reachable.\n"
             ));
         }
-        msg.push_str("  You can retry with /retry.");
+        msg.push_str(crate::prompt::network_error_summary::REPL_RETRY_LINE);
         return Some(msg);
     }
 
