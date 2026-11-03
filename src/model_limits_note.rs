@@ -377,7 +377,7 @@ context_window in .yoyo.toml (or pass --max-tokens / --context-window).",
         // Day 247 (#1037): `openrouter` left: its default is now the dotted
         // `anthropic/claude-sonnet-5.5`, mapped onto the anthropic preset.
         let mut expected = vec![
-            "xai", "groq", "mistral", "github", "zai", "cerebras", "minimax", "bedrock",
+            "xai", "groq", "mistral", "github", "zai", "cerebras", "minimax",
         ];
         expected.sort_unstable();
         assert_eq!(
@@ -385,10 +385,17 @@ context_window in .yoyo.toml (or pass --max-tokens / --context-window).",
             "fixing a provider's default removes it from this list; a new provider here \
 means its default trips the guessed-limits warning (#1037)"
         );
-        // Day 241 (#1021): every `build_agent` arm now calls the note, so
-        // bedrock's row above is a guess its user IS told about. Giving
-        // bedrock's default real limits (removing that row) is still open.
-        for silent in ["openai", "anthropic", "google", "deepseek", "openrouter"] {
+        // Day 241 (#1021): every `build_agent` arm now calls the note. Day
+        // 247 (#1116): bedrock's default maps onto the anthropic preset, so
+        // its row left the list (shrank by exactly that one member).
+        for silent in [
+            "openai",
+            "anthropic",
+            "google",
+            "deepseek",
+            "openrouter",
+            "bedrock",
+        ] {
             assert!(!tripping.contains(&silent), "{silent}");
         }
     }

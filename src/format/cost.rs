@@ -3,6 +3,8 @@
 use crate::config::ModelPricingOverrides;
 
 // #1012: Google's promos (by the date) and xAI's US-endpoint premium (by the endpoint).
+// #1116: Bedrock Claude ids price as the anthropic preset, +10% off `global.`.
+mod bedrock_region;
 pub(crate) mod promo;
 mod xai_region;
 pub use xai_region::{is_xai_us_endpoint, set_xai_us_region};
@@ -90,6 +92,10 @@ fn builtin_model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
     // Returns (input_per_MTok, cache_write_per_MTok, cache_read_per_MTok, output_per_MTok)
     // For providers without caching, cache_write and cache_read are set to 0.0.
 
+    if let Some(c) = bedrock_region::bedrock_preset_cost(model) {
+        let (i, o) = (c.input_per_million, c.output_per_million);
+        return Some((i, c.cache_write_per_million, c.cache_read_per_million, o));
+    }
     // #1037: OpenRouter's dotted `anthropic/claude-opus-4.8` prices as `claude-opus-4-8`.
     let mapped = crate::providers::openrouter_anthropic_preset_id(model);
     let model = mapped
@@ -471,6 +477,9 @@ pub fn estimate_request_cost_with(
         .and_then(|preset| preset.cost)
         .filter(|cost| !cost.context_tiers.is_empty())
         .or_else(|| yoyo_side_tier_cost(stripped))
+        .or_else(|| {
+            bedrock_region::bedrock_preset_cost(model).filter(|c| !c.context_tiers.is_empty())
+        })
         .map(|cost| xai_region::region_cost(model, cost));
     let Some(cost) = tiers else {
         return Some((base, false));

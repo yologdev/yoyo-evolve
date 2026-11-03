@@ -205,6 +205,29 @@ pub(crate) fn openrouter_anthropic_preset_id(model: &str) -> Option<String> {
     )
 }
 
+/// #1116: a Bedrock Claude id -> the anthropic preset id it is the same model
+/// as. Bedrock spells them `[geo.]anthropic.<id>[-vN[:M]]` (`us.`, `eu.`,
+/// `apac.`, `global.` are cross-region inference profiles; `-v1:0` is
+/// Bedrock's version suffix). `None` for any other vendor (`amazon.nova-…`,
+/// `meta.llama…`) and for an ARN, so those stay on the bedrock guess.
+pub(crate) fn bedrock_anthropic_preset_id(model: &str) -> Option<&str> {
+    let id = model.strip_prefix("anthropic.").or_else(|| {
+        let (geo, rest) = model.split_once('.')?;
+        let geo_ok = !geo.is_empty() && geo.bytes().all(|b| b.is_ascii_lowercase() || b == b'-');
+        geo_ok.then_some(rest)?.strip_prefix("anthropic.")
+    })?;
+    let id = match id.rsplit_once("-v") {
+        Some((head, ver))
+            if ver.starts_with(|c: char| c.is_ascii_digit())
+                && ver.bytes().all(|b| b.is_ascii_digit() || b == b':') =>
+        {
+            head
+        }
+        _ => id,
+    };
+    (!id.is_empty()).then_some(id)
+}
+
 /// Whether `model` is a **known** id for `provider`.
 ///
 /// One matching rule, consulted by every surface that asks "is this id known?"
@@ -274,7 +297,7 @@ pub fn default_model_for_provider(provider: &str) -> String {
         "google" => "gemini-3.8-flash".into(),
         // #1037 (Day 247): OpenRouter lists Anthropic ids with dots only, and
         // sonnet-5.5 is listed there AND has an anthropic preset, so it runs on
-        // real limits (`claude-sonnet-4.6` has no preset in yoyo or yoagent).
+        // real limits. (`claude-sonnet-4.6` had no preset then; #1116 added one.)
         "openrouter" => "anthropic/claude-sonnet-5.5".into(),
         "ollama" => "llama3.2".into(),
         "xai" => "grok-4".into(),

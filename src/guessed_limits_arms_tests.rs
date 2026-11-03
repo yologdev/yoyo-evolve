@@ -59,14 +59,20 @@ fn anthropic_id_without_preset_warns_with_the_generic_guess() {
     );
 }
 
-/// Bedrock has no presets at all, so its default id runs on the same
-/// 200K / yoagent-default guess as any other id, and saying so is true.
-/// The next #1021 slice gives the default real limits; this row then flips.
+/// Day 247 (#1116): the row flipped. The bedrock default is a Claude id, so
+/// it takes the anthropic preset and is silent; a non-Claude bedrock id still
+/// runs on the 200K / yoagent-default guess, and saying so is still true.
 #[test]
-fn bedrock_default_and_other_ids_warn_because_they_run_on_a_guess() {
+fn bedrock_default_is_silent_and_other_ids_warn_because_they_run_on_a_guess() {
     let default = crate::providers::default_model_for_provider("bedrock");
     assert_eq!(default, "anthropic.claude-sonnet-4-6");
-    for id in [default.as_str(), "amazon.nova-pro-v1:0"] {
+    let c = create_model_config("bedrock", &default, None);
+    assert_eq!(c.context_window, 1_000_000);
+    assert_eq!(note_for("bedrock", &default), None);
+    for id in [
+        "amazon.nova-pro-v1:0",
+        "anthropic.claude-sonnet-4-20250514-v1:0",
+    ] {
         let c = create_model_config("bedrock", id, None);
         assert_eq!(c.context_window, 200_000, "{id}");
         assert_eq!(

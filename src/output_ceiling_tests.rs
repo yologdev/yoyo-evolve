@@ -22,9 +22,12 @@ fn ceiling_warning(provider: &str, model: &str, configured: u32) -> Option<Strin
 
 #[test]
 fn bedrock_and_google_do_not_quote_their_request_default_as_a_ceiling() {
-    // The two live repros from #1020, with the default model ids.
+    // The two live repros from #1020. The bedrock default
+    // (anthropic.claude-sonnet-4-6) took the anthropic preset's 64000 on Day
+    // 247 (#1116), so it can no longer hold the "under 32000" premise; a
+    // bedrock id still on the 16K guess stands in for it here.
     for (provider, model) in [
-        ("bedrock", "anthropic.claude-sonnet-4-6"),
+        ("bedrock", "amazon.nova-pro-v1:0"),
         ("google", "gemini-2.5-flash"),
     ] {
         // Anti-vacuous: the resolved default really is below 32000, so the old
@@ -41,6 +44,13 @@ fn bedrock_and_google_do_not_quote_their_request_default_as_a_ceiling() {
             "{provider}/{model}: no preset declares a maximum, so no warning"
         );
     }
+    // The bedrock default itself: the bedrock arm still declares no ceiling.
+    let model = "anthropic.claude-sonnet-4-6";
+    assert_eq!(
+        create_model_config("bedrock", model, None).max_tokens,
+        64_000
+    );
+    assert_eq!(ceiling_warning("bedrock", model, 128_000), None);
 }
 
 #[test]

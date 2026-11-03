@@ -55,6 +55,9 @@ fn dotted_and_dashed_anthropic_ids_get_the_anthropic_preset_limits() {
         ("anthropic/claude-sonnet-5.5", "claude-sonnet-5-5"),
         ("anthropic/claude-sonnet-5-5", "claude-sonnet-5-5"),
         ("anthropic/claude-opus-4.8", "claude-opus-4-8"),
+        // Day 247 (#1116): sonnet-4-6 got an anthropic preset row, so the
+        // dotted 4.6 id left the near-miss list below and resolves here.
+        ("anthropic/claude-sonnet-4.6", "claude-sonnet-4-6"),
     ] {
         let p = anthropic_preset(preset_id).expect("premise: the anthropic preset exists");
         let c = create_model_config("openrouter", model, None);
@@ -82,8 +85,6 @@ fn near_misses_stay_on_the_guess_and_still_warn() {
     for model in [
         // Mapped id, but no anthropic preset: the guessed-limits warning fires.
         "anthropic/claude-unknown-9.9",
-        // yoagent has no claude-sonnet-4-6 constructor, so 4.6 is still a guess.
-        "anthropic/claude-sonnet-4.6",
         // Not mapped at all.
         "anthropic/claude-sonnet-5.5:batch",
         "openai/gpt-6-sol",

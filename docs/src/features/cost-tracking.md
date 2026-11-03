@@ -150,6 +150,22 @@ only turns still in the conversation, so after `/compact` it can be lower). A
 `[model_pricing]` override for the model replaces its pricing wholesale and no
 tier applies. Gemini 3.1 Pro (see Google below) is tiered the same way.
 
+Sonnet 4.6 has no yoagent preset; since Day 247 (#1116) yoyo carries its own
+row from Anthropic's pages: 1M context at standard pricing (no long-context
+tier), 128K max output, $3 / $3.75 cache write / $0.30 cache read / $15.
+
+**Amazon Bedrock.** A Bedrock Claude id (`[us.|eu.|apac.|global.]anthropic.<id>[-vN:M]`,
+such as yoyo's bedrock default `anthropic.claude-sonnet-4-6`) is priced from the
+same Anthropic preset. Bedrock bills Claude 4.5 and later 10% more on regional
+endpoints than on `global.` (Anthropic's pricing page, "Regional and multi-region
+endpoint pricing"). The endpoint is in the id, so yoyo reads it: a `global.` id
+is billed at the preset's rate, and every other one (the bare in-region id and
+the `us.` / `eu.` / `apac.` profiles) at 1.1x, so the default bills
+$3.30 / $4.125 / $0.33 / $16.50. Claude ids with no preset (Sonnet 4) keep the
+table rate above with no premium; they predate it. Other Bedrock models
+(`amazon.nova-…`, `meta.llama…`) are not mapped: they get whatever row their
+name happens to match in these tables, or no price.
+
 ### OpenAI
 
 | Model | Input | Output |

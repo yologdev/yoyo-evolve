@@ -796,6 +796,15 @@ pub fn anthropic_preset(model: &str) -> Option<ModelConfig> {
         ModelConfig::claude_haiku_4_5()
     } else if model.starts_with("claude-haiku-5-5") {
         ModelConfig::claude_haiku_5_5()
+    } else if model.starts_with("claude-sonnet-4-6") {
+        // #1116: no yoagent constructor. Anthropic's figures, Day 247: 1M / 128K
+        // (docs.anthropic.com/en/docs/build-with-claude/context-windows), $3/$15,
+        // cache $3.75/$0.30, no 1M tier (docs.anthropic.com/en/docs/about-claude/pricing).
+        let mut c = ModelConfig::anthropic("claude-sonnet-4-6", "Claude Sonnet 4.6");
+        (c.context_window, c.max_tokens) = (1_000_000, 64_000); // 64K of 128K, as the 1M presets
+        let cost = yoagent::provider::CostConfig::new(3.0, 15.0).with_cache_write(3.75);
+        c.cost = Some(cost.with_cache_read(0.30));
+        c
     } else {
         return None;
     };
@@ -1075,8 +1084,8 @@ pub fn create_model_config(provider: &str, model: &str, base_url: Option<&str>) 
         "bedrock" => {
             let url = base_url.unwrap_or("https://bedrock-runtime.us-east-1.amazonaws.com");
             // ModelConfig is #[non_exhaustive] as of yoagent 0.9 — build via
-            // custom() and mutate. Bedrock-hosted Claude models get a 200K
-            // context window; max_tokens follows yoagent's default (16K).
+            // custom() and mutate. Ids with no preset get a 200K context
+            // window; max_tokens follows yoagent's default (16K).
             let mut config = ModelConfig::custom(
                 ApiProtocol::BedrockConverseStream,
                 "bedrock",
@@ -1085,6 +1094,12 @@ pub fn create_model_config(provider: &str, model: &str, base_url: Option<&str>) 
                 model,
             );
             config.context_window = 200_000;
+            // #1116: `[geo.]anthropic.<id>` is the same model as the anthropic preset.
+            let preset = crate::providers::bedrock_anthropic_preset_id(model);
+            if let Some(p) = preset.and_then(anthropic_preset) {
+                (config.context_window, config.max_tokens) = (p.context_window, p.max_tokens);
+                (config.cost, config.reasoning) = (p.cost, p.reasoning);
+            }
             config
         }
         "github" => {
@@ -1710,7 +1725,7 @@ impl AgentConfig {
             let context_window = model_config.context_window;
             let output_ceiling =
                 declared_output_ceiling(&self.provider, &self.model, model_config.max_tokens);
-            // #1021: bedrock has no presets, so every id (default too) is a guess.
+            // #1021/#1116: Claude ids take the anthropic preset; other ids are a guess.
             crate::model_limits_note::warn_once_if_guessing(
                 &self.provider,
                 &self.model,

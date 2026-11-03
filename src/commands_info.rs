@@ -2811,7 +2811,8 @@ More text.
     fn non_preset_ids_keep_their_pre_change_table_values() {
         let rows: &[(&str, Option<u64>)] = &[
             ("claude-sonnet-4-20250514", Some(1_000_000)),
-            ("claude-sonnet-4-6", Some(1_000_000)),
+            // claude-sonnet-4-6 left this table on Day 247 (#1116): it has a
+            // preset now, still 1M (test_model_context_window_known_models).
             ("claude-opus-4-7", Some(1_000_000)),
             ("claude-opus-4-20250514", Some(200_000)),
             ("claude-3-5-haiku-20241022", Some(200_000)),

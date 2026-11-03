@@ -197,7 +197,9 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // `plan_mcp_connect` (Plain / Prefixed / Skip) and track `registered`;
     // all new logic and its tests live in src/mcp_prefix.rs. The rest of the
     // drift since 4861 predates this task.
-    ("src/agent_builder.rs", 4969),
+    // Day 247 (#1116): +7 — a claude-sonnet-4-6 anthropic_preset row (no
+    // yoagent constructor) and the bedrock arm mapping Claude ids onto it.
+    ("src/agent_builder.rs", 4976),
     // Day 164 (#728): +98 lines — `/skill install`'s destination becomes a third
     // auto-discovery source, so an explicitly installed skill actually loads.
     // The two near-identical per-directory blocks were collapsed into one loop
@@ -448,7 +450,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // context-tier pricing -- `estimate_request_cost_with`, the per-turn marker/footnote and the
     // `tiered` field on four fixtures; its tests live in `src/format/cost/context_tier_tests.rs`).
     // Day 242 (#1012): 3605 -> 3640. +23 from the Day 239-241 price arms that sat in the grace band, +12 for the retired-gemini aliases.
-    ("src/format/cost.rs", 3647), // Day 247: #1037 — both price lookups map OpenRouter's dotted anthropic/ ids onto the anthropic preset id (+7; tests live in openrouter_preset_tests.rs). Day 192: +251 for the cache-prefix clause (what the counters PROVE about a low hit rate) plus its table, boundary, glyph and byte-identity guards.
+    ("src/format/cost.rs", 3656), // Day 247: #1116 — Bedrock Claude ids price as the anthropic preset (+9: the flat and tier lookups call cost/bedrock_region.rs, which holds the +10% regional rule; tests in anthropic_preset_tests.rs). Day 247: #1037 — both price lookups map OpenRouter's dotted anthropic/ ids onto the anthropic preset id (+7; tests live in openrouter_preset_tests.rs). Day 192: +251 for the cache-prefix clause (what the counters PROVE about a low hit rate) plus its table, boundary, glyph and byte-identity guards.
     // Day 204 (#937 Task 2): 2931 -> 3439 (+508, the count after `cargo fmt`). The price drift alarm against
     // models.dev — an `#[ignore]`d audit plus its offline arm and the
     // `KNOWN_DIVERGENCES` register's anti-rot guard. Mostly tests (as with every

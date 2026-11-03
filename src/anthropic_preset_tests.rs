@@ -149,3 +149,181 @@ fn sonnet_5_5_matches_the_catalogue_and_keeps_sonnet_5_limits() {
         Some((2.0, 2.5, 0.20, 10.0))
     );
 }
+
+/// #1116: Sonnet 4.6, typed from Anthropic's pages (Day 247), not from
+/// production code: 1M window and 128K max output
+/// (docs.anthropic.com/en/docs/build-with-claude/context-windows); $3 / $15,
+/// cache write $3.75, cache read $0.30, and the full 1M at standard pricing
+/// (docs.anthropic.com/en/docs/about-claude/pricing).
+#[test]
+fn sonnet_4_6_matches_anthropic_published_figures() {
+    for id in ["claude-sonnet-4-6", "claude-sonnet-4-6-20260217"] {
+        let p = anthropic_preset(id).unwrap_or_else(|| panic!("{id} has a preset"));
+        assert_eq!(p.id, id, "the requested id is sent verbatim");
+        assert_eq!(p.context_window, 1_000_000, "{id}");
+        // The request default: 64K of the 128K maximum, the same split every
+        // yoagent 1M Claude preset makes.
+        assert_eq!(
+            p.max_tokens,
+            ModelConfig::claude_sonnet_5_5().max_tokens,
+            "{id}"
+        );
+        assert_eq!(p.max_tokens, 64_000, "{id}");
+        let c = p.cost.expect("sonnet 4.6 is priced");
+        assert_eq!(
+            (
+                c.input_per_million,
+                c.output_per_million,
+                c.cache_read_per_million,
+                c.cache_write_per_million,
+            ),
+            (3.0, 15.0, 0.30, 3.75),
+            "{id}"
+        );
+        assert!(c.context_tiers.is_empty(), "no long-context tier: {id}");
+    }
+    // Near misses: 4.5 (200K, a different model) and 4 stay unmapped.
+    assert!(anthropic_preset("claude-sonnet-4-5-20250929").is_none());
+    assert!(anthropic_preset("claude-sonnet-4-20250514").is_none());
+}
+
+#[test]
+fn bedrock_anthropic_preset_id_table() {
+    use crate::providers::bedrock_anthropic_preset_id as map;
+    let rows: &[(&str, Option<&str>)] = &[
+        // yoyo's no-config bedrock default.
+        ("anthropic.claude-sonnet-4-6", Some("claude-sonnet-4-6")),
+        // Cross-region inference profiles.
+        ("us.anthropic.claude-sonnet-4-6", Some("claude-sonnet-4-6")),
+        ("eu.anthropic.claude-sonnet-4-6", Some("claude-sonnet-4-6")),
+        ("apac.anthropic.claude-opus-5-5", Some("claude-opus-5-5")),
+        (
+            "global.anthropic.claude-sonnet-4-6",
+            Some("claude-sonnet-4-6"),
+        ),
+        // Bedrock's version suffix is dropped, the date kept.
+        (
+            "anthropic.claude-sonnet-4-20250514-v1:0",
+            Some("claude-sonnet-4-20250514"),
+        ),
+        (
+            "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+            Some("claude-haiku-4-5-20251001"),
+        ),
+        ("anthropic.claude-sonnet-4-6-v2", Some("claude-sonnet-4-6")),
+        // Other vendors on bedrock: not Anthropic, not mapped.
+        ("amazon.nova-pro-v1:0", None),
+        ("meta.llama3-70b-instruct-v1:0", None),
+        ("us.meta.llama3-2-90b-instruct-v1:0", None),
+        // An ARN, an empty id, a bare Anthropic id, and two dots before it.
+        (
+            "arn:aws:bedrock:us-east-1:1:inference-profile/us.anthropic.claude-sonnet-4-6",
+            None,
+        ),
+        ("anthropic.", None),
+        ("claude-sonnet-4-6", None),
+        ("a.b.anthropic.claude-sonnet-4-6", None),
+        ("", None),
+    ];
+    for (model, want) in rows {
+        assert_eq!(map(model), *want, "{model}");
+    }
+}
+
+/// Emission point: what the bedrock arm builds, and what the guessed-limits
+/// warning reads (`runs_on_guessed_limits`, the same predicate the warning
+/// uses). The wire stays Bedrock's.
+#[test]
+fn bedrock_claude_ids_run_on_the_anthropic_preset() {
+    use crate::agent_builder::create_model_config;
+    use crate::model_limits_note::runs_on_guessed_limits;
+    let default = crate::providers::default_model_for_provider("bedrock");
+    assert_eq!(
+        default, "anthropic.claude-sonnet-4-6",
+        "the default is not moved"
+    );
+    let preset = anthropic_preset("claude-sonnet-4-6").unwrap();
+    for id in [
+        default.as_str(),
+        "us.anthropic.claude-sonnet-4-6",
+        "global.anthropic.claude-sonnet-4-6",
+        "us.anthropic.claude-opus-5-5-v1:0",
+    ] {
+        let c = create_model_config("bedrock", id, None);
+        let want =
+            anthropic_preset(crate::providers::bedrock_anthropic_preset_id(id).unwrap()).unwrap();
+        assert_eq!(
+            (c.context_window, c.max_tokens),
+            (want.context_window, want.max_tokens),
+            "{id}"
+        );
+        assert_eq!(c.id, id, "the id sent to Bedrock is the user's");
+        assert_eq!(c.provider, "bedrock");
+        assert_eq!(format!("{}", c.api), "bedrock_converse_stream");
+        assert_eq!(
+            c.base_url,
+            "https://bedrock-runtime.us-east-1.amazonaws.com"
+        );
+        assert!(!runs_on_guessed_limits("bedrock", id), "{id}");
+    }
+    // Anti-vacuous: the default's limits really differ from the guess.
+    let guess = create_model_config("bedrock", "amazon.nova-pro-v1:0", None);
+    assert_ne!(
+        (preset.context_window, preset.max_tokens),
+        (guess.context_window, guess.max_tokens)
+    );
+    // Near misses keep the guess (200K, yoagent's default) and still warn:
+    // another vendor, and a Claude id with no preset (Sonnet 4 is 200K anyway).
+    let generic = yoagent::provider::ModelConfig::custom(
+        yoagent::provider::ApiProtocol::BedrockConverseStream,
+        "bedrock",
+        "u",
+        "m",
+        "m",
+    );
+    for id in [
+        "amazon.nova-pro-v1:0",
+        "anthropic.claude-sonnet-4-20250514-v1:0",
+    ] {
+        let c = create_model_config("bedrock", id, None);
+        assert_eq!(
+            (c.context_window, c.max_tokens, c.cost.is_none()),
+            (200_000, generic.max_tokens, generic.cost.is_none()),
+            "{id}"
+        );
+        assert!(runs_on_guessed_limits("bedrock", id), "{id}");
+    }
+}
+
+/// /cost: Bedrock bills Claude 4.5+ on regional endpoints (in-region and the
+/// `us.`/`eu.`/`apac.` profiles) 10% above `global.` (Anthropic's pricing
+/// page, "Regional and multi-region endpoint pricing"). The selector is the
+/// id's own prefix, so it is modelled, not guessed.
+#[test]
+fn cost_prices_bedrock_claude_ids_by_endpoint() {
+    let none = crate::config::ModelPricingOverrides::default();
+    let price = |id| crate::format::model_pricing_with(&none, id).expect(id);
+    let close = |a: (f64, f64, f64, f64), b: (f64, f64, f64, f64)| {
+        [a.0 - b.0, a.1 - b.1, a.2 - b.2, a.3 - b.3]
+            .iter()
+            .all(|d| d.abs() < 1e-9)
+    };
+    let base = (3.0, 3.75, 0.30, 15.0);
+    let regional = (3.3, 4.125, 0.33, 16.5);
+    assert!(close(price("global.anthropic.claude-sonnet-4-6"), base));
+    for id in [
+        "anthropic.claude-sonnet-4-6",
+        "us.anthropic.claude-sonnet-4-6",
+        "eu.anthropic.claude-sonnet-4-6",
+    ] {
+        assert!(close(price(id), regional), "{id}: {:?}", price(id));
+    }
+    // First-party id: no premium.
+    assert!(close(price("claude-sonnet-4-6"), base));
+    // Near miss: Sonnet 4 predates the regional premium and has no preset, so
+    // it keeps the hand table's row, byte-identical to before.
+    assert_eq!(
+        price("anthropic.claude-sonnet-4-20250514-v1:0"),
+        (3.0, 3.75, 0.30, 15.0)
+    );
+}
