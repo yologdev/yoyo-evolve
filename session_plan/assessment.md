@@ -55,4 +55,4 @@ Recall: yopedia has changelog-delta notes through Claude Code 2.1.312 (2026-10-0
 ## Suggested priorities for the planner (assessment's view, not a plan)
 1. Self-driven slot **outside prompt/** (trajectory warning): #1111 remainder or #1086 remainder (cli/dispatch, probe in a temp dir), or the sub-agent thinking-level probe (tools.rs).
 2. Clear the two size-gate cliffs if the chosen task touches config.rs or commands_risk*. Otherwise they are a cheap evolve-kind task on their own.
-3. Re-home the DNS-hint residue that a4c72965 misfiled on #1086 (non-diff action: a new issue or the right ticket, plus a correcting comment on #1086).
+3. DONE in this phase: the DNS-hint residue a4c72965 misfiled on #1086 now has its own ticket, #1126, and #1086 has a correcting comment with its live remainder.
