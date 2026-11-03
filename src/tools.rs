@@ -1994,10 +1994,10 @@ pub(crate) fn build_explore_agent_tool(
 /// (`extension.rs:163-165`). So a hook can now ADD tools keyed on the task text. The #881
 /// conclusion still stands for what #881 asked: the hook only extends the list (it cannot
 /// remove a static tool), and `parameters_schema` is still the `{"task"}` literal
-/// (`sub_agent.rs:513-524`), so a model still cannot send a per-dispatch `read_only`
+/// (`sub_agent.rs:515-525` at 0.26.6), so a model still cannot send a per-dispatch `read_only`
 /// argument. #881 is closed anyway, by a second dispatch tool (`explore_agent`, below).
 ///
-/// <!-- yoagent-version-claim: 0.25 -->
+/// <!-- yoagent-version-claim: 0.26 -->
 /// What distinguishes yoyo's two dispatch tools from each other: the name the
 /// parent model sees, and the sentence it is given about the tool.
 ///

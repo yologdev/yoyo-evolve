@@ -10,7 +10,7 @@
 //! (`src/tools/file.rs:9`, `MAX_IMAGE_SIZE_BYTES`, checked at `:196` with
 //! `metadata.len() > MAX_IMAGE_SIZE_BYTES`); yoagent's const is private, so
 //! the number is copied rather than referenced.
-//! <!-- yoagent-version-claim: 0.25 -->
+//! <!-- yoagent-version-claim: 0.26 -->
 
 use crate::commands_file_fence::AddReadError;
 use std::path::Path;

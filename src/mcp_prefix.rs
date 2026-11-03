@@ -15,7 +15,7 @@
 //! server, prefixed or not ([`connect_mcp`]): each is installed as a yoagent
 //! `McpToolSource`, which withdraws a server's tools at the next run once its
 //! process has exited, so the model stops calling a dead server
-//! <!-- yoagent-version-claim: 0.25 -->.
+//! <!-- yoagent-version-claim: 0.26 -->.
 //!
 //! Decisions, stated where the code is:
 //! - **Prefix only on collision.** A server whose names collide with nothing
@@ -172,7 +172,7 @@ pub(crate) fn mcp_stdio_options() -> StdioOptions {
 /// of every run, and when the server process has exited it withdraws the
 /// tools (yoagent 0.25.15, via `McpClient::exited()`), so the model stops
 /// calling a dead server. It also re-lists on
-/// `notifications/tools/list_changed` <!-- yoagent-version-claim: 0.25 -->.
+/// `notifications/tools/list_changed` <!-- yoagent-version-claim: 0.26 -->.
 ///
 /// The tools are listed once here as well, so a server that cannot list
 /// fails the connect (as `McpToolAdapter::from_client` did) instead of

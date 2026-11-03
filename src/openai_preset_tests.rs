@@ -25,6 +25,9 @@ fn presets() -> Vec<(&'static str, ModelConfig)> {
         // yoagent 0.25.8 (#1037): Codex's default, its own price (cache hit
         // $0.10, not gpt-6-sol's $0.20). Values read from the constructor.
         ("gpt-6.1-sol", ModelConfig::gpt_6_1_sol()),
+        // yoagent 0.26.4 (#1122): Terra, 1,050,000 window, 64K of a 128K
+        // output maximum (the same GPT_6_OUTPUT_MAXIMUM), its own price.
+        ("gpt-6.1-terra", ModelConfig::gpt_6_1_terra()),
     ]
 }
 

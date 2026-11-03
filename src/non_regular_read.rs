@@ -14,7 +14,7 @@
 //! For yoyo's **own** `std::fs` readers (startup config, instruction files,
 //! goal/memory, the trusted-dirs store, `/add`, `/config set`) yoagent offers
 //! nothing: `read_regular_to_string` and its siblings below are the only guard.
-//! <!-- yoagent-version-claim: 0.25 -->
+//! <!-- yoagent-version-claim: 0.26 -->
 //!
 //! What it does NOT touch, so those paths stay byte-identical:
 //! - **Missing paths / metadata errors** → `None`; the inner tool reports its

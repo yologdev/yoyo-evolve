@@ -26,7 +26,7 @@
 //! A user's search config is no longer one of the reasons: yoagent's `search`
 //! passes `--no-config` to `rg` and removes `RIPGREP_CONFIG_PATH` and
 //! `GREP_OPTIONS` from the child's environment, for `rg` and the grep fallback
-//! alike <!-- yoagent-version-claim: 0.25 -->. The shapes that can still reach
+//! alike <!-- yoagent-version-claim: 0.26 -->. The shapes that can still reach
 //! the drop path, stated rather than implied: a file NAME containing a newline
 //! (measured, GNU grep 3.11: `d/a\nb.txt` printed as `d/a` and `b.txt:1:tok`,
 //! neither naming a file under `d`); a grep that prints its binary-match notice
@@ -116,7 +116,7 @@ const SEARCH_MORE_SUFFIX: &str = " matches; there are more. Narrow the pattern, 
 
 /// If `line` is the count footer yoagent's `tool` appends (spellings copied
 /// from yoagent 0.25.7's `tools/search.rs` and `tools/list.rs`
-/// <!-- yoagent-version-claim: 0.25 -->), return it re-counted to `shown`
+/// <!-- yoagent-version-claim: 0.26 -->), return it re-counted to `shown`
 /// result lines, plus the count the original claimed for its shown lines.
 /// `None` for anything else, so an unknown footer is left alone, never
 /// invented. For a truncated `list_files` footer (`T files, showing first M`)
@@ -204,7 +204,7 @@ fn filter_fenced_lines(
 
 /// The header yoagent's `list_files` puts above `find`'s stderr, after its
 /// footer, and the line its 2000-char cap ends that stderr with (spellings
-/// copied from yoagent 0.25 `src/tools/list.rs`) <!-- yoagent-version-claim: 0.25 -->.
+/// copied from yoagent 0.25 `src/tools/list.rs`) <!-- yoagent-version-claim: 0.26 -->.
 const FIND_WARNINGS_HEADER: &str = "Warnings from find (the listing may be incomplete):";
 const FIND_WARNINGS_CAP: &str = "... (more warnings not shown)";
 /// `list_files`' whole text when `find` printed no file.

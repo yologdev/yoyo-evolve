@@ -28,7 +28,7 @@
 //! keeps the new lock only if build+test pass, and this one test was the only
 //! thing that rolled yoagent 0.25.6 back in BOTH Day-230 sessions (14:31,
 //! 19:18), each time discarding a full ~10-minute build+test. The reason for
-//! the change: `Cargo.toml` pins `yoagent = "0.25"`, so patches are already
+//! the change: `Cargo.toml` pins yoagent by minor (`"0.25"` then), so patches are
 //! trusted by the dependency spec; the gate now guards what the pin does not,
 //! a minor (or major) bump. A three-component marker is rejected as a wrong
 //! FORM ("drop the patch number"), so there is one marker form, never two.

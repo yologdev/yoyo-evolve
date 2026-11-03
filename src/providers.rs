@@ -43,7 +43,7 @@ pub fn provider_api_key_env(provider: &str) -> Option<&'static str> {
 /// (#1064). The names are yoagent's `resolve_api_key` table for that provider,
 /// in its order: that table is private in yoagent 0.25, so it is mirrored here
 /// and `providers_key_tests.rs` checks the mirror against the real resolver in
-/// a child process <!-- yoagent-version-claim: 0.25 -->. `provider_api_key_env`
+/// a child process <!-- yoagent-version-claim: 0.26 -->. `provider_api_key_env`
 /// still returns one name (the pre-#1064 one) for hints and the wizard.
 pub fn provider_api_key_vars(provider: &str) -> &'static [&'static str] {
     match provider {
@@ -210,6 +210,7 @@ pub(crate) fn openrouter_anthropic_preset_id(model: &str) -> Option<String> {
 /// `apac.`, `global.` are cross-region inference profiles; `-v1:0` is
 /// Bedrock's version suffix). `None` for any other vendor (`amazon.nova-…`,
 /// `meta.llama…`) and for an ARN, so those stay on the bedrock guess.
+/// Stopgap for #1124 (yoagent 0.26.6 still has no Bedrock id -> preset lookup).
 pub(crate) fn bedrock_anthropic_preset_id(model: &str) -> Option<&str> {
     let id = model.strip_prefix("anthropic.").or_else(|| {
         let (geo, rest) = model.split_once('.')?;

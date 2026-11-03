@@ -797,9 +797,9 @@ pub fn anthropic_preset(model: &str) -> Option<ModelConfig> {
     } else if model.starts_with("claude-haiku-5-5") {
         ModelConfig::claude_haiku_5_5()
     } else if model.starts_with("claude-sonnet-4-6") {
-        // #1116: no yoagent constructor. Anthropic's figures, Day 247: 1M / 128K
-        // (docs.anthropic.com/en/docs/build-with-claude/context-windows), $3/$15,
-        // cache $3.75/$0.30, no 1M tier (docs.anthropic.com/en/docs/about-claude/pricing).
+        // Stopgap for #1123, delete when yoagent ships it (#1116: no constructor, 0.26.6).
+        // Anthropic, Day 247: 1M / 128K (docs.anthropic.com/en/docs/build-with-claude/
+        // context-windows), $3/$15, cache $3.75/$0.30, no 1M tier (.../about-claude/pricing).
         let mut c = ModelConfig::anthropic("claude-sonnet-4-6", "Claude Sonnet 4.6");
         (c.context_window, c.max_tokens) = (1_000_000, 64_000); // 64K of 128K, as the 1M presets
         let cost = yoagent::provider::CostConfig::new(3.0, 15.0).with_cache_write(3.75);
@@ -830,6 +830,7 @@ pub fn openai_preset(model: &str) -> Option<ModelConfig> {
         "gpt-6-sol" => Some(ModelConfig::gpt_6_sol()),
         "gpt-6-luna" => Some(ModelConfig::gpt_6_luna()),
         "gpt-6.1-sol" => Some(ModelConfig::gpt_6_1_sol()),
+        "gpt-6.1-terra" => Some(ModelConfig::gpt_6_1_terra()),
         _ => None,
     }
 }

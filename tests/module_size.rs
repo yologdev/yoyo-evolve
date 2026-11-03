@@ -199,7 +199,9 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // drift since 4861 predates this task.
     // Day 247 (#1116): +7 — a claude-sonnet-4-6 anthropic_preset row (no
     // yoagent constructor) and the bedrock arm mapping Claude ids onto it.
-    ("src/agent_builder.rs", 4976),
+    // Day 248 (#1122, yoagent 0.26): +1, the `gpt-6.1-terra` arm of
+    // `openai_preset` routing yoagent 0.26.4's new GPT-6.1 Terra preset.
+    ("src/agent_builder.rs", 4977),
     // Day 164 (#728): +98 lines — `/skill install`'s destination becomes a third
     // auto-discovery source, so an explicitly installed skill actually loads.
     // The two near-identical per-directory blocks were collapsed into one loop

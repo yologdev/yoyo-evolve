@@ -31,6 +31,11 @@ const PRESETS_NOT_YET_ROUTED: &[(&str, &str, &str)] = &[
         "qwen3.8-flash",
         "yoyo has no `qwen` provider arm (unknown provider -> localhost)",
     ),
+    (
+        "qwen",
+        "qwen3.8-omni-flash",
+        "yoagent 0.26.4; yoyo has no `qwen` provider arm (unknown provider -> localhost)",
+    ),
 ];
 
 #[test]
@@ -86,7 +91,7 @@ fn every_yoagent_preset_id_is_known_for_its_provider() {
 
 #[test]
 fn glm_5_3_keeps_the_zai_wire_and_drops_the_guessed_limits_note() {
-    for id in ["glm-5.3", "glm-5.3-flash"] {
+    for id in ["glm-5.3", "glm-5.3-flash", "glm-5.3-flashx"] {
         let c = create_model_config("zai", id, None);
         assert_eq!((c.context_window, c.max_tokens), (1_000_000, 128_000));
         assert!(c.cost.is_some() && c.reasoning, "{id}");
@@ -112,7 +117,9 @@ fn glm_5_3_keeps_the_zai_wire_and_drops_the_guessed_limits_note() {
 #[test]
 fn near_miss_ids_and_other_providers_keep_the_generic_guess() {
     // One character off a preset: generic config AND the honest warnings.
-    for id in ["glm-5.3-flashx", "glm-5.4"] {
+    // yoagent 0.26.4 made `glm-5.3-flashx` a preset (#1122), so this row
+    // moved to `glm-5.3-flashy`, which no yoagent preset owns.
+    for id in ["glm-5.3-flashy", "glm-5.4"] {
         let c = create_model_config("zai", id, None);
         assert_eq!((c.context_window, c.max_tokens), (128_000, 4096), "{id}");
         assert!(vendor_preset("zai", id).is_none(), "{id}");
