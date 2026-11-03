@@ -3651,8 +3651,9 @@ fn bare_index_still_indexes_the_whole_project_and_exits_zero() {
 }
 
 /// `yoyo grep`'s usage text, byte-for-byte as it printed before #982 made
-/// the bare form exit 2 (only the status changed).
-const GREP_USAGE_STDOUT: &str = r#"  usage: /grep [-s|--case] [-c|--count] [-C N] [-B N] [-A N] [--include <glob>] [--exclude <glob>] <pattern> [path]
+/// the bare form exit 2 (only the status changed), except that since #1127
+/// it names `yoyo grep`, not the REPL's `/grep` (no `/grep` exists on a shell).
+const GREP_USAGE_STDOUT: &str = r#"  usage: yoyo grep [-s|--case] [-c|--count] [-C N] [-B N] [-A N] [--include <glob>] [--exclude <glob>] <pattern> [path]
   Search file contents directly — no AI, no tokens, instant results.
   Case-insensitive by default. Use -s or --case for case-sensitive.
 
@@ -3669,15 +3670,15 @@ const GREP_USAGE_STDOUT: &str = r#"  usage: /grep [-s|--case] [-c|--count] [-C N
     -c / --count        Show match counts per file instead of lines
 
   Examples:
-    /grep TODO
-    /grep "fn main" src/
-    /grep -s MyStruct src/lib.rs
-    /grep -C 3 "fn main" src/
-    /grep -B 2 -A 1 TODO
-    /grep --include "*.rs" fn main
-    /grep --exclude "*.md" TODO
-    /grep -c fn src/
-    /grep -C 3 --include "*.toml" version
+    yoyo grep TODO
+    yoyo grep "fn main" src/
+    yoyo grep -s MyStruct src/lib.rs
+    yoyo grep -C 3 "fn main" src/
+    yoyo grep -B 2 -A 1 TODO
+    yoyo grep --include "*.rs" fn main
+    yoyo grep --exclude "*.md" TODO
+    yoyo grep -c fn src/
+    yoyo grep -C 3 --include "*.toml" version
 
 "#;
 

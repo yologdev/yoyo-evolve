@@ -522,7 +522,7 @@ pub(crate) fn try_dispatch_subcommand_in(
                 // for with its quotes. Unspaced args join identically.
                 let input = join_args_as_command(args);
                 // #982: 2 with no query (usage); no match stays 0.
-                exit_if_nonzero(crate::commands_search::handle_outline_status(&input));
+                exit_if_nonzero(crate::commands_search::handle_outline_status(&input, Shell));
                 return Some(None);
             }
             "run" => {
@@ -584,7 +584,7 @@ pub(crate) fn try_dispatch_subcommand_in(
             }
             "grep" => {
                 let input = quote_args_as_command(args);
-                exit_if_nonzero(crate::commands_search::handle_grep_status(&input));
+                exit_if_nonzero(crate::commands_search::handle_grep_status(&input, Shell));
                 return Some(None);
             }
             "find" => {
@@ -624,7 +624,7 @@ pub(crate) fn try_dispatch_subcommand_in(
                 // `foo()` / `&foo` / `mod::foo` comes along unchanged.
                 let input = join_args_as_command(args);
                 // #982: 2 with no symbol (usage); not found stays 0.
-                exit_if_nonzero(crate::commands_search::handle_def_status(&input));
+                exit_if_nonzero(crate::commands_search::handle_def_status(&input, Shell));
                 return Some(None);
             }
             "model" => {
@@ -1848,7 +1848,7 @@ mod tests {
         let args: Vec<String> = vec!["yoyo".into(), "grep".into(), "TODO".into()];
         let input = quote_args_as_command(&args);
         assert_eq!(input, "/grep TODO");
-        assert_eq!(crate::commands_search::handle_grep_status(&input), 0);
+        assert_eq!(crate::commands_search::handle_grep_status(&input, Shell), 0);
     }
 
     #[test]

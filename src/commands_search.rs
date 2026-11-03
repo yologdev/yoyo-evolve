@@ -795,21 +795,35 @@ pub(crate) const SEARCH_USAGE_EXIT: i32 = 2;
 
 /// Handle the `/outline <query|filepath> [--all]` command (REPL door).
 pub fn handle_outline(input: &str) {
-    let _ = handle_outline_status(input);
+    let _ = handle_outline_status(input, DoctorSurface::Repl);
 }
 
 /// `/outline` core returning an exit status (#982): [`SEARCH_USAGE_EXIT`]
 /// when no query was given, 0 otherwise (including no match).
-pub fn handle_outline_status(input: &str) -> i32 {
-    if outline_body(input) {
+pub fn handle_outline_status(input: &str, surface: DoctorSurface) -> i32 {
+    if outline_body(input, surface) {
         0
     } else {
         SEARCH_USAGE_EXIT
     }
 }
 
+/// The `/outline` / `yoyo outline` usage text, in the surface's form (#1127).
+pub(crate) fn outline_usage(surface: DoctorSurface) -> String {
+    let o = command_form(surface, "outline");
+    format!(
+        "{DIM}  Usage: {o} <query|filepath> [--all]{RESET}\n  \
+         Search for symbols across the project, or show all symbols in a file.\n\n  \
+         Examples:\n    \
+         {o} parse            {DIM}# search for symbols matching \"parse\"{RESET}\n    \
+         {o} Config            {DIM}# search for symbols matching \"Config\"{RESET}\n    \
+         {o} src/main.rs       {DIM}# show all symbols in src/main.rs{RESET}\n    \
+         {o} handle --all      {DIM}# show all matches (no limit){RESET}"
+    )
+}
+
 /// The `/outline` body; returns `false` when it printed usage (no query).
-fn outline_body(input: &str) -> bool {
+fn outline_body(input: &str, surface: DoctorSurface) -> bool {
     let rest = input.strip_prefix("/outline").unwrap_or(input).trim();
 
     // Parse --all flag
@@ -822,15 +836,7 @@ fn outline_body(input: &str) -> bool {
     };
 
     if query.is_empty() {
-        println!(
-            "{DIM}  Usage: /outline <query|filepath> [--all]{RESET}\n  \
-             Search for symbols across the project, or show all symbols in a file.\n\n  \
-             Examples:\n    \
-             /outline parse            {DIM}# search for symbols matching \"parse\"{RESET}\n    \
-             /outline Config            {DIM}# search for symbols matching \"Config\"{RESET}\n    \
-             /outline src/main.rs       {DIM}# show all symbols in src/main.rs{RESET}\n    \
-             /outline handle --all      {DIM}# show all matches (no limit){RESET}"
-        );
+        println!("{}", outline_usage(surface));
         return false;
     }
 
@@ -1087,15 +1093,23 @@ fn collect_def_matches(query: &str) -> Vec<DefMatch> {
 /// (no LSP/AST server). Prefers exact name matches; falls back to
 /// case-insensitive substring matches labeled "similar".
 pub fn handle_def(input: &str) {
-    let _ = handle_def_status(input);
+    let _ = handle_def_status(input, DoctorSurface::Repl);
+}
+
+/// The `/def` / `yoyo def` usage line, in the surface's form (#1127).
+pub(crate) fn def_usage(surface: DoctorSurface) -> String {
+    format!(
+        "{DIM}  usage: {} <symbol-name>{RESET}",
+        command_form(surface, "def")
+    )
 }
 
 /// `/def` core returning an exit status (#982): [`SEARCH_USAGE_EXIT`] when no
 /// symbol was given, 0 otherwise (a not-found symbol is an empty result).
-pub fn handle_def_status(input: &str) -> i32 {
+pub fn handle_def_status(input: &str, surface: DoctorSurface) -> i32 {
     let query = parse_def_query(input);
     if query.is_empty() {
-        println!("{DIM}  usage: /def <symbol-name>{RESET}");
+        println!("{}", def_usage(surface));
         return SEARCH_USAGE_EXIT;
     }
     print_def_matches(&query);
@@ -2160,45 +2174,49 @@ pub(crate) const GREP_ERROR_EXIT: i32 = 2;
 /// grep(1), git grep and rg all exit (find(1) exits 0, so `yoyo find` does).
 pub(crate) const GREP_NO_MATCH_EXIT: i32 = 1;
 
+/// The `/grep` / `yoyo grep` usage text, verbs in the surface's form (#1127).
+pub(crate) fn grep_usage(surface: DoctorSurface) -> String {
+    let g = command_form(surface, "grep");
+    format!(
+        "{DIM}  usage: {g} [-s|--case] [-c|--count] [-C N] [-B N] [-A N] [--include <glob>] [--exclude <glob>] <pattern> [path]\n  \
+         Search file contents directly — no AI, no tokens, instant results.\n  \
+         Case-insensitive by default. Use -s or --case for case-sensitive.\n\n  \
+         Context lines:\n    \
+         -C N / --context N  Show N lines before and after each match\n    \
+         -B N / --before N   Show N lines before each match\n    \
+         -A N / --after N    Show N lines after each match\n\n  \
+         File filter:\n    \
+         --include <glob>    Only search files matching the glob (e.g. *.rs)\n    \
+         --exclude <glob>    Skip files matching the glob (e.g. *.md)\n\n  \
+         Count mode:\n    \
+         -c / --count        Show match counts per file instead of lines\n\n  \
+         Examples:\n    \
+         {g} TODO\n    \
+         {g} \"fn main\" src/\n    \
+         {g} -s MyStruct src/lib.rs\n    \
+         {g} -C 3 \"fn main\" src/\n    \
+         {g} -B 2 -A 1 TODO\n    \
+         {g} --include \"*.rs\" fn main\n    \
+         {g} --exclude \"*.md\" TODO\n    \
+         {g} -c fn src/\n    \
+         {g} -C 3 --include \"*.toml\" version{RESET}\n\n"
+    )
+}
+
 /// Handle the `/grep` command (REPL door; the status is for the shell door).
 pub fn handle_grep(input: &str) {
-    let _ = handle_grep_status(input);
+    let _ = handle_grep_status(input, DoctorSurface::Repl);
 }
 
 /// `/grep` core returning an exit status (#982): 0 for matches or a genuine
 /// no-match (unchanged), [`GREP_ERROR_EXIT`] when grep reported an error or
 /// could not be spawned, [`SEARCH_USAGE_EXIT`] (2) when there is no pattern —
 /// the usage text stays on stdout byte-identical, the `def`/`outline` policy.
-pub fn handle_grep_status(input: &str) -> i32 {
+pub fn handle_grep_status(input: &str, surface: DoctorSurface) -> i32 {
     let args = match parse_grep_args(input) {
         Some(a) => a,
         None => {
-            println!("{DIM}  usage: /grep [-s|--case] [-c|--count] [-C N] [-B N] [-A N] [--include <glob>] [--exclude <glob>] <pattern> [path]");
-            println!("  Search file contents directly — no AI, no tokens, instant results.");
-            println!("  Case-insensitive by default. Use -s or --case for case-sensitive.");
-            println!();
-            println!("  Context lines:");
-            println!("    -C N / --context N  Show N lines before and after each match");
-            println!("    -B N / --before N   Show N lines before each match");
-            println!("    -A N / --after N    Show N lines after each match");
-            println!();
-            println!("  File filter:");
-            println!("    --include <glob>    Only search files matching the glob (e.g. *.rs)");
-            println!("    --exclude <glob>    Skip files matching the glob (e.g. *.md)");
-            println!();
-            println!("  Count mode:");
-            println!("    -c / --count        Show match counts per file instead of lines");
-            println!();
-            println!("  Examples:");
-            println!("    /grep TODO");
-            println!("    /grep \"fn main\" src/");
-            println!("    /grep -s MyStruct src/lib.rs");
-            println!("    /grep -C 3 \"fn main\" src/");
-            println!("    /grep -B 2 -A 1 TODO");
-            println!("    /grep --include \"*.rs\" fn main");
-            println!("    /grep --exclude \"*.md\" TODO");
-            println!("    /grep -c fn src/");
-            println!("    /grep -C 3 --include \"*.toml\" version{RESET}\n");
+            print!("{}", grep_usage(surface));
             return SEARCH_USAGE_EXIT;
         }
     };
@@ -2270,14 +2288,79 @@ mod tests {
     #[test]
     fn def_and_outline_without_argument_exit_2_and_not_found_stays_0() {
         // #982: a missing argument is a usage error a script can see.
-        assert_eq!(handle_def_status("/def"), SEARCH_USAGE_EXIT);
-        assert_eq!(handle_def_status("/def   "), SEARCH_USAGE_EXIT);
-        assert_eq!(handle_outline_status("/outline"), SEARCH_USAGE_EXIT);
-        assert_eq!(handle_outline_status("/outline --all"), SEARCH_USAGE_EXIT);
+        assert_eq!(
+            handle_def_status("/def", DoctorSurface::Repl),
+            SEARCH_USAGE_EXIT
+        );
+        assert_eq!(
+            handle_def_status("/def   ", DoctorSurface::Repl),
+            SEARCH_USAGE_EXIT
+        );
+        assert_eq!(
+            handle_outline_status("/outline", DoctorSurface::Repl),
+            SEARCH_USAGE_EXIT
+        );
+        assert_eq!(
+            handle_outline_status("/outline --all", DoctorSurface::Repl),
+            SEARCH_USAGE_EXIT
+        );
         assert_eq!(SEARCH_USAGE_EXIT, 2);
         // Near-miss: a query that finds nothing is an empty result, still 0.
-        assert_eq!(handle_def_status("/def zz_no_such_symbol_982"), 0);
-        assert_eq!(handle_outline_status("/outline zz_no_such_symbol_982"), 0);
+        assert_eq!(
+            handle_def_status("/def zz_no_such_symbol_982", DoctorSurface::Repl),
+            0
+        );
+        assert_eq!(
+            handle_outline_status("/outline zz_no_such_symbol_982", DoctorSurface::Repl),
+            0
+        );
+    }
+
+    #[test]
+    fn grep_def_outline_usage_names_the_verb_as_typed_on_each_surface() {
+        // #1127: the shell has no `/grep`; it must say `yoyo grep`.
+        use DoctorSurface::{Repl, Shell};
+        for (verb, shell, repl) in [
+            ("grep", grep_usage(Shell), grep_usage(Repl)),
+            ("outline", outline_usage(Shell), outline_usage(Repl)),
+            ("def", def_usage(Shell), def_usage(Repl)),
+        ] {
+            assert!(shell.contains(&format!("yoyo {verb} ")), "{shell}");
+            assert!(!shell.contains(&format!("/{verb}")), "{shell}");
+            // Near-miss: the REPL keeps its slash form and no `yoyo`.
+            assert!(repl.contains(&format!("/{verb} ")), "{repl}");
+            assert!(!repl.contains("yoyo"), "{repl}");
+            // Every `/verb` the REPL text names became `yoyo verb`, one for one.
+            assert_eq!(
+                shell.matches(&format!("yoyo {verb}")).count(),
+                repl.matches(&format!("/{verb}")).count()
+            );
+        }
+        assert_eq!(
+            def_usage(Repl),
+            format!("{DIM}  usage: /def <symbol-name>{RESET}")
+        );
+    }
+
+    #[test]
+    fn grep_and_outline_repl_usage_is_byte_identical_to_before_1127() {
+        // The pre-#1127 REPL text, pinned whole (assert_eq!, not contains).
+        let g = grep_usage(DoctorSurface::Repl);
+        let before = format!("{DIM}  usage: /grep [-s|--case] [-c|--count] [-C N] [-B N] [-A N] [--include <glob>] [--exclude <glob>] <pattern> [path]\n  Search file contents directly — no AI, no tokens, instant results.\n  Case-insensitive by default. Use -s or --case for case-sensitive.\n\n  Context lines:\n    -C N / --context N  Show N lines before and after each match\n    -B N / --before N   Show N lines before each match\n    -A N / --after N    Show N lines after each match\n\n  File filter:\n    --include <glob>    Only search files matching the glob (e.g. *.rs)\n    --exclude <glob>    Skip files matching the glob (e.g. *.md)\n\n  Count mode:\n    -c / --count        Show match counts per file instead of lines\n\n  Examples:\n    /grep TODO\n    /grep \"fn main\" src/\n    /grep -s MyStruct src/lib.rs\n    /grep -C 3 \"fn main\" src/\n    /grep -B 2 -A 1 TODO\n    /grep --include \"*.rs\" fn main\n    /grep --exclude \"*.md\" TODO\n    /grep -c fn src/\n    /grep -C 3 --include \"*.toml\" version{RESET}\n\n");
+        assert_eq!(g, before);
+        let o = outline_usage(DoctorSurface::Repl);
+        assert_eq!(
+            o,
+            format!(
+                "{DIM}  Usage: /outline <query|filepath> [--all]{RESET}\n  \
+                 Search for symbols across the project, or show all symbols in a file.\n\n  \
+                 Examples:\n    \
+                 /outline parse            {DIM}# search for symbols matching \"parse\"{RESET}\n    \
+                 /outline Config            {DIM}# search for symbols matching \"Config\"{RESET}\n    \
+                 /outline src/main.rs       {DIM}# show all symbols in src/main.rs{RESET}\n    \
+                 /outline handle --all      {DIM}# show all matches (no limit){RESET}"
+            )
+        );
     }
     use crate::commands::KNOWN_COMMANDS;
     use crate::help::help_text;

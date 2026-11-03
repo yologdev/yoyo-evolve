@@ -355,7 +355,10 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 224 (#982 residue): 4460 -> 4573. 44 of those were drift already in
     // the tree before this task (4504 at HEAD); +69 are `yoyo index [path]`
     // (`parse_index_args`, `handle_index_argv_status`) and bare `grep`'s exit 2.
-    ("src/commands_search.rs", 4573),
+    // Day 248 (#1127): 4573 -> 4676 (+103): +20 earlier unrecorded drift (4593 at
+    // HEAD), +83 for `grep_usage`/`def_usage`/`outline_usage(surface)` so the shell
+    // says `yoyo grep` not `/grep`, and their per-surface + REPL byte-identity tests, pasted.
+    ("src/commands_search.rs", 4676),
     // Day 163 (#716): +99 lines — spawn_dir_restrictions confines a spawn
     // worker's file tools to its worktree (bash_cwd only pinned bash), plus
     // three regression tests covering no-worktree passthrough, the confined
@@ -440,7 +443,9 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // `help <command>` prints REPL /help's text or refuses; test in tests/integration.rs), pasted.
     // Day 233 (#982): 2521 -> 2522 (+1: `health` refuses a stray arg; `config show`
     // exits 1 on an unreadable config; test in tests/integration.rs), pasted.
-    ("src/dispatch_sub.rs", 2522),
+    // Day 248 (#1127): 2522 -> 2603 (+81), all earlier unrecorded drift; this task's
+    // grep/def/outline arms passing `Shell` are line-neutral, pasted.
+    ("src/dispatch_sub.rs", 2603),
     // Day 209: 3439 -> 3455 (+16, within the drift band, pasted rather than left to absorb).
     // #937 option 1: nine lines of doc above `builtin_model_pricing` naming both ignored
     // audit commands (deliverable 4 — an alarm nobody can find is the #745/#767/#769
