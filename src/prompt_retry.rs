@@ -354,6 +354,7 @@ pub(crate) const TRANSIENT_ERROR_SHAPES: [&str; 20] = [
     "service unavailable",
     "gateway timeout",
     "overloaded",
+    // DNS errors retry (outages pass); RFC 6761 names fail fast: prompt/reserved_dns.rs
     "connection",
     "timeout",
     "timed out",

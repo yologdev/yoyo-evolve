@@ -580,7 +580,8 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // the logic and tests live in src/prompt/sub_agent_spend.rs.
     // +2 (Day 247, #1115): the `mod network_error_summary` and `use` lines;
     // the six error sites changed in place, the logic lives in that module.
-    ("src/prompt.rs", 3936),
+    // +1 Day 248 (#1120): `mod reserved_dns;`, both loops call its no_retry_note.
+    ("src/prompt.rs", 3937),
     // Day 183: first entry for this file — 2042, i.e. 42 past MAX_MODULE_LINES and
     // so inside OVERSHOOT_GRACE_LINES, which is why it warned instead of failing.
     // Registering it is this gate's OWN stated remedy for a grace-band overshoot
@@ -602,7 +603,8 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 236 (#1062): +65 for `KeySource` and the pure `auth_failure_message`
     // the 401 branch now calls; its table tests live in src/prompt_retry_auth_tests.rs.
     // Day 241 (20:26): 2785 -> 2786 -- +1 for REFUSAL_STEM_PARTIAL_READ in is_deterministic_tool_error.
-    ("src/prompt_retry.rs", 2786),
+    // +1 Day 248 (#1120): the reserved-DNS fast-fail pointer beside the classifier.
+    ("src/prompt_retry.rs", 2787),
     // Day 162 (#689): +14 lines — double Ctrl+C at the idle REPL prompt now
     // exits (consecutive-flag `ctrl_c_armed`, dim hint on first press).
     // Day 174: +91 absorbed since Day 166.

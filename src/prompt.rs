@@ -18,6 +18,7 @@ mod interrupt;
 mod loopback_refused;
 pub(crate) mod network_error_summary;
 mod output_limit;
+mod reserved_dns;
 mod retry_after_partial;
 mod retry_safe_pipe;
 mod sigterm;
@@ -1346,8 +1347,8 @@ pub async fn run_prompt_with_changes(
                     eprintln!("{DIM}  {RETRY_SKIPPED_AFTER_PARTIAL_NOTE}{RESET}");
                     (collected_text, api_error) = fatal_handoff(dying_text, error_msg);
                     break;
-                } else if let Some(note) = loopback_refused::loopback_refused_note(&error_msg) {
-                    // Nothing listens on that local port; yoagent already retried it.
+                } else if let Some(note) = reserved_dns::no_retry_note(&error_msg) {
+                    // Nothing listens locally, or a reserved name (RFC 6761): retry can't help.
                     eprintln!("\n{RED}  error: {note}{RESET}");
                     (collected_text, api_error) = fatal_handoff(dying_text, error_msg);
                     break;
@@ -1767,7 +1768,7 @@ pub async fn run_prompt_with_content_and_changes(
                     eprintln!("{DIM}  {RETRY_SKIPPED_AFTER_PARTIAL_NOTE}{RESET}");
                     (collected_text, api_error) = fatal_handoff(dying_text, error_msg);
                     break;
-                } else if let Some(note) = loopback_refused::loopback_refused_note(&error_msg) {
+                } else if let Some(note) = reserved_dns::no_retry_note(&error_msg) {
                     eprintln!("\n{RED}  error: {note}{RESET}"); // same rule as above
                     (collected_text, api_error) = fatal_handoff(dying_text, error_msg);
                     break;

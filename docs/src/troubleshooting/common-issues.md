@@ -111,6 +111,8 @@ This appears when the Anthropic API returns an error. Common causes:
 
 Start your local server (Ollama, LM Studio, llama.cpp…) or fix `--base-url`, then run again. A refused connection to a *remote* host still takes the normal retry path, because there (a deploy, a load balancer) waiting can work.
 
+**Placeholder host name:** if `--base-url` points at a name reserved by RFC 6761 (anything ending in `.invalid`, `.test`, `.example` or `.localhost`), the name can never resolve, so yoyo stops after the library's quick retries with `could not resolve <host>: it is a reserved name (RFC 6761)...` and asks you to check `--base-url`. Other DNS failures keep the normal retries, since a resolver outage can pass.
+
 **Tool error auto-recovery:** When a tool execution fails during a natural-language prompt, yoyo automatically retries the prompt with error context appended (up to 2 times). This lets the agent self-correct — for example, retrying a failed file read with a corrected path. You'll see `⚡ auto-retrying after tool error...` when this kicks in.
 
 **Rate limits with a known reset time:** when a provider's error names *when* the limit

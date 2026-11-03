@@ -35,7 +35,7 @@ pub(crate) fn dialed_url(err: &str) -> Option<&str> {
 }
 
 /// The host part of `url` (brackets kept off an IPv6 literal), if it parses.
-fn url_host(url: &str) -> Option<&str> {
+pub(crate) fn url_host(url: &str) -> Option<&str> {
     let after_scheme = url.split_once("://").map_or(url, |(_, r)| r);
     let authority = after_scheme.split(['/', '?', '#']).next()?;
     let authority = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
