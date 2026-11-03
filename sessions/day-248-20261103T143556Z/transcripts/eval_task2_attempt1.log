@@ -1,0 +1,28 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls target/debug/yoyo && B=$PWD/t… ✓ (34ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p ses… (9 lines) ✓ (10ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 16.4s (2 ✓)
+
+Verdict: PASS. I ran the built binary from /tmp with </dev/null, and the fix does what the task asks. The verdict is written to session_plan/eval_task_2.md.
+
+| Input | Exit | Output |
+|---|---|---|
+| review --quik | 2 | error: unknown flag '--quik' (did you mean --quick?) for \yoyo review\. Nothing ran. |
+| review --thorogh | 2 | Same refusal, suggests --thorough |
+| review --print | 2 | Unknown-flag refusal with no suggestion; no longer read as a PR number |
+| review --quick | 1 | not in a git repository (same as before) |
+| review --pr=abc | 1 | invalid PR number: abc (still treated as a PR) |
+| review -- --weird-file | 1 | file not found: --weird-file (still read as a file path) |
+
+• Does it match the task: review now has its own flag list in src/verb_flags.rs, and the review command checks it before doing anything else. The old starts_with("--pr") check is replaced by is_pr_arg. --pr, --pr N, --pr=N and --prN all still work.
+• Unused definitions: none. Every new helper and constant is used somewhere in this diff, and the size limit for src/dispatch_sub.rs in tests/module_size.rs was updated to 2637 with a reason.
+• Tests: they check the exact refusal strings and exit codes. They also confirm that every previously accepted spelling still behaves the same.
+• Docs: the review entry in docs/src/usage/commands.md now lists the flags, the exit-2 refusal and the -- escape.
+• REPL `/review`: it uses the same review parser, so its only change is the tighter --pr match. /review --print is no longer asked for as PR int.
+• One side effect: --model, --provider, --api-key and --base-url are now accepted as review flags and dropped from the review target. Before, review --model m src/x.rs used the whole string, --model m src/x.rs, as the target. That's an improvement, and the tests cover it.
+  watch: no files changed this turn — skipping

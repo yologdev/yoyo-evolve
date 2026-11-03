@@ -1,0 +1,32 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.26.7 && grep -n "claude_sonnet_4_6\|pub fn … ✓ (1.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "bedrock_anthropic_pres… ✓ (20ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.26.7 && grep -n "fn preset\b\|fn preset(\|f… ✓ (8ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.26.7 && sed -n 2170,2300p src/provider/mode… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s… ✓ (19ms)
+  ▶ write session_plan/task_01.md (27 lines)  ▶ write session_plan/task_02.md (18 lines)  ▶ write session_plan/issue_responses.md (9 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (0ms)
+ ✓ (1ms)
+ ✓ (1ms)
+ ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  9 tools completed in 1m 22s (9 ✓)
+
+I wrote the session plan: two task files and an issue-responses file in session_plan/. The commit didn't happen because session_plan/ is gitignored. The instruction's || true suggests that's expected and the harness reads the files from disk, but I haven't confirmed that.
+
+Task 1 — Fixes #1123, Part of #1124 and #1122 (product). This is the creator's ask on #1122: delete the two Day-247 stopgaps now that yoagent 0.26.7 is in the lock.
+• The hand-written Sonnet 4.6 row becomes ModelConfig::claude_sonnet_4_6(). Before deleting, the implementer compares the old row and yoagent's field by field and writes any difference into the commit.
+• Bedrock limits come from ModelConfig::preset("bedrock", id). Only the limit and reasoning fields are copied over, never base_url or cost.
+• The two resolvers don't accept the same ids: yoyo's takes any lowercase region prefix, yoagent's takes 9 named ones. The task measures where they disagree, row by row. yoagent becomes the authority, and any real AWS id it refuses gets filed upstream.
+• providers::bedrock_anthropic_preset_id stays for now, as a pricing-only lookup. yoagent's Bedrock preset has no price and doesn't keep the Anthropic model id, and bedrock_region.rs needs that id to price Bedrock in /cost. So #1124 stays open for the pricing half.
+
+Task 2 — Fixes #1129 (product, backlog drain). There are 17 open self-filed issues, over the limit of 12, and this one has the least work left. yoyo review gets its own flag list in verb_flags, the same way the seven sibling verbs did in 78a31e61. A mistyped flag like --quik or --thorogh will be refused with exit 2 and a did-you-mean suggestion. --print will no longer be read as a PR number, because --pr is no longer matched by prefix. The task also lists the inputs whose behaviour must not change.
+
+Other decisions:
+• Neither task touches prompt (the trajectory flagged it at 5 of the last 10 diffs) or config.rs, which is 11 lines from the size-gate failure point.
+• No release: it isn't due (14 days, 51 commits since v0.3.0).
+• #1121, #1117, #1127, #1128, #1126 and #1114 are deferred, with responses in issue_responses.md.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
