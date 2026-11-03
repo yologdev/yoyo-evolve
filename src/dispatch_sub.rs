@@ -580,8 +580,8 @@ pub(crate) fn try_dispatch_subcommand_in(
                 // prompt, print the result to stdout, and exit. #1129: a
                 // mistyped flag exits 2 here instead of becoming a path.
                 refuse_unknown_verb_flag(args);
-                let review_arg = build_review_arg(args);
-                let exit_code = run_review_subcommand(args, &review_arg);
+                let review = build_review_arg(args);
+                let exit_code = run_review_subcommand(args, &review);
                 std::process::exit(exit_code);
             }
             "blame" => {
@@ -1055,12 +1055,12 @@ pub(crate) fn require_flag_value<'a>(next: Option<&'a String>) -> FlagValueCheck
     }
 }
 
-/// Build the review argument string from CLI args.
+/// Build the review request (effort + target) from CLI args.
 ///
 /// Handles `yoyo review`, `yoyo review HEAD~3..HEAD`, `yoyo review --pr 123`,
-/// and `yoyo review path/to/file.rs` (#1129: see `verb_flags::review_arg`).
-fn build_review_arg(args: &[String]) -> String {
-    crate::verb_flags::review_arg(args.get(2..).unwrap_or_default())
+/// and `yoyo review path/to/file.rs` (#1129, #1130: see `verb_flags::review_args`).
+fn build_review_arg(args: &[String]) -> crate::verb_flags::ReviewArgs {
+    crate::verb_flags::review_args(args.get(2..).unwrap_or_default())
 }
 
 /// Resolve API key from flags, env vars, and config file.
@@ -1103,7 +1103,7 @@ fn resolve_api_key(args: &[String], provider: &str) -> Option<String> {
 
 /// Run the `yoyo review` subcommand — resolve config, build an agent,
 /// run the review, and print the result. Returns an exit code (0 or 1).
-fn run_review_subcommand(args: &[String], review_arg: &str) -> i32 {
+fn run_review_subcommand(args: &[String], review: &crate::verb_flags::ReviewArgs) -> i32 {
     crate::config_syntax::refuse_malformed_config_on_load(); // #1036: calls a provider
     let (file_config, _) = load_config_file();
 
@@ -1164,7 +1164,7 @@ fn run_review_subcommand(args: &[String], review_arg: &str) -> i32 {
     // so use block_in_place + block_on to run the async review.
     let result = tokio::task::block_in_place(|| {
         tokio::runtime::Handle::current().block_on(
-            crate::commands_git_review::run_non_interactive_review(review_arg, &agent_config),
+            crate::commands_git_review::run_non_interactive_review(review, &agent_config),
         )
     });
 
@@ -2421,7 +2421,7 @@ mod tests {
             .into_iter()
             .map(String::from)
             .collect();
-        assert_eq!(build_review_arg(&args), "");
+        assert_eq!(build_review_arg(&args).target, "");
     }
 
     #[test]
@@ -2430,7 +2430,7 @@ mod tests {
             .into_iter()
             .map(String::from)
             .collect();
-        assert_eq!(build_review_arg(&args), "HEAD~3..HEAD");
+        assert_eq!(build_review_arg(&args).target, "HEAD~3..HEAD");
     }
 
     #[test]
@@ -2439,7 +2439,7 @@ mod tests {
             .into_iter()
             .map(String::from)
             .collect();
-        assert_eq!(build_review_arg(&args), "--pr 123");
+        assert_eq!(build_review_arg(&args).target, "--pr 123");
     }
 
     #[test]
@@ -2448,7 +2448,7 @@ mod tests {
             .into_iter()
             .map(String::from)
             .collect();
-        assert_eq!(build_review_arg(&args), "src/main.rs");
+        assert_eq!(build_review_arg(&args).target, "src/main.rs");
     }
 
     #[test]

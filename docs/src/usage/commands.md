@@ -647,7 +647,7 @@ yoyo review > review.md       # pipe review to a file
 
 The review streams to stderr for visual feedback; the final review text goes to stdout so it can be piped or redirected. Exit code is 0 on success, 1 on error.
 
-Its flags are `--quick`, `--thorough`, `--pr N` (also `--pr=N` or `--prN`), and `--provider`, `--model`, `--api-key` and `--base-url` with a value. Any other dash-led word exits 2 before anything runs (`yoyo review --quik` suggests `--quick`), rather than being read as a file path; put `--` before a file whose name starts with a dash: `yoyo review -- --weird-file`.
+Its flags are `--quick`, `--thorough`, `--pr N` (also `--pr=N` or `--prN`), and `--provider`, `--model`, `--api-key` and `--base-url` with a value. Any other dash-led word exits 2 before anything runs (`yoyo review --quik` suggests `--quick`), rather than being read as a file path; put `--` before a file whose name starts with a dash: `yoyo review -- --weird-file`. `--` ends flags, so everything after it is the target as written: `yoyo review -- --quick` reviews a file named `--quick`, not the quick effort, and one quoted argument containing spaces is one path.
 
 This is one of the most common workflows for developers using coding agents — getting a second pair of eyes on your changes before committing.
 

@@ -38,7 +38,16 @@ pub fn build_review_content(arg: &str) -> Option<(String, String)> {
     } else if is_pr_arg(arg) {
         // Review a PR: --pr <number>
         build_review_content_pr(arg)
-    } else if arg.contains("..") && !std::path::Path::new(arg).exists() {
+    } else {
+        build_review_content_operand(arg)
+    }
+}
+
+/// Review a non-empty operand that is not a `--pr` spec: a commit range or
+/// a file. `yoyo review -- <word>` comes straight here (#1130), so a word
+/// after `--` that spells `--pr5` names a file instead of PR 5.
+fn build_review_content_operand(arg: &str) -> Option<(String, String)> {
+    if arg.contains("..") && !std::path::Path::new(arg).exists() {
         // Review a commit range: HEAD~3..HEAD, abc123..def456, etc.
         // An existing path wins: `../shared/src/lib.rs` is a file, not a range
         // (a commit range never names something that exists on disk).
@@ -144,19 +153,27 @@ fn build_review_content_pr(arg: &str) -> Option<(String, String)> {
 /// returns the agent's response text. No REPL, no interactive session.
 ///
 /// # Arguments
-/// * `arg` — the review target: empty (staged/unstaged), commit range, `--pr N`, or file path
+/// * `review` — effort and target parsed from argv (`verb_flags::review_args`);
+///   target empty (staged/unstaged), commit range, `--pr N`, or file path
 /// * `agent_config` — pre-built agent configuration for creating the side agent
 ///
 /// # Returns
 /// * `Ok(review_text)` — the review completed successfully
 /// * `Err(message)` — nothing to review or an error occurred
-pub async fn run_non_interactive_review(
-    arg: &str,
+pub(crate) async fn run_non_interactive_review(
+    review: &crate::verb_flags::ReviewArgs,
     agent_config: &crate::agent_builder::AgentConfig,
 ) -> Result<String, String> {
-    let (effort, remaining) = parse_review_effort(arg);
-    let (label, content) =
-        build_review_content(&remaining).ok_or_else(|| "nothing to review".to_string())?;
+    // #1130: effort and target arrive already separated from argv, so a
+    // target is never re-split on spaces or re-read as a flag.
+    let effort = review.effort;
+    let target = review.target.trim();
+    let content = if review.flags_ended && !target.is_empty() {
+        build_review_content_operand(target)
+    } else {
+        build_review_content(target)
+    };
+    let (label, content) = content.ok_or_else(|| "nothing to review".to_string())?;
 
     let prompt = build_review_prompt(&label, &content, effort);
 

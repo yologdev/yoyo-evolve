@@ -7,6 +7,8 @@
 //!
 //! The decision is pure and lives here; `dispatch_sub.rs` only prints and exits.
 
+use crate::commands_git_review::ReviewEffort;
+
 /// The flags a shell verb knows, as (all of them, the value-taking subset).
 /// grep's come from its parser's own list (`GREP_FLAGS`, pinned against
 /// `parse_grep_args` by a test); `outline` has `--all`; find, def, memories,
@@ -79,13 +81,29 @@ fn split_pr_spellings(rest: &[String]) -> Vec<String> {
     out
 }
 
-/// The review target string for `yoyo review <rest>` (#1129): `--pr`
-/// spellings split into `--pr N`, the provider flags and their values
-/// removed (`run_review_subcommand` reads those from argv), and the first
-/// `--` dropped so `yoyo review -- --weird-file` reviews that file.
-pub(crate) fn review_arg(rest: &[String]) -> String {
+/// What `yoyo review <rest>` asks for, read from argv (#1129, #1130).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ReviewArgs {
+    /// `--quick` / `--thorough`, recognised only before `--`.
+    pub(crate) effort: ReviewEffort,
+    /// What to review: `--pr N`, a range or a path. Words are joined with
+    /// one space and never re-split, so one argv element stays one path.
+    pub(crate) target: String,
+    /// True when the target came only from after `--`: it is an operand,
+    /// so `yoyo review -- --pr5` names a file, not PR 5.
+    pub(crate) flags_ended: bool,
+}
+
+/// Parse `yoyo review <rest>`: `--pr` spellings split into `--pr N`, the
+/// provider flags and their values removed (`run_review_subcommand` reads
+/// those from argv), the effort flags taken out, and the first `--` dropped
+/// so `yoyo review -- --weird-file` reviews that file. #1130: this used to
+/// return one joined string that `parse_review_effort` re-split on spaces,
+/// so `review -- --quick` set the effort and reviewed the working tree.
+pub(crate) fn review_args(rest: &[String]) -> ReviewArgs {
     let rest = split_pr_spellings(rest);
     let end = rest.iter().position(|a| a == "--").unwrap_or(rest.len());
+    let mut effort = ReviewEffort::Normal;
     let mut kept = Vec::new();
     let mut skip_next = false;
     for word in &rest[..end] {
@@ -93,12 +111,21 @@ pub(crate) fn review_arg(rest: &[String]) -> String {
             skip_next = false;
         } else if REVIEW_PROVIDER_FLAGS.contains(&word.as_str()) {
             skip_next = true;
+        } else if word == "--quick" {
+            effort = ReviewEffort::Quick;
+        } else if word == "--thorough" {
+            effort = ReviewEffort::Thorough;
         } else {
             kept.push(word.as_str());
         }
     }
+    let flags_ended = kept.is_empty() && end < rest.len();
     kept.extend(rest.iter().skip(end + 1).map(String::as_str));
-    kept.join(" ")
+    ReviewArgs {
+        effort,
+        target: kept.join(" "),
+        flags_ended,
+    }
 }
 
 /// `rest` without its first `--`: the end-of-flags marker is not an operand.
@@ -219,35 +246,84 @@ mod tests {
     }
 
     /// #1129 near-misses: every spelling review accepted before still runs,
-    /// and each lands on the same target string the old join produced
-    /// (except the provider flags, which used to become part of a path).
+    /// and each lands on the same effort and target the old join + re-split
+    /// produced (except the provider flags, which used to become part of a
+    /// path, and the #1130 rows, where the old output was the bug).
     #[test]
     fn review_near_misses_keep_their_target() {
-        let rows: &[(&[&str], &str)] = &[
-            (&[], ""),
-            (&["--quick"], "--quick"),
-            (&["--thorough", "src/x.rs"], "--thorough src/x.rs"),
-            (&["src/x.rs"], "src/x.rs"),
-            (&["HEAD~3..HEAD"], "HEAD~3..HEAD"),
-            (&["--pr"], "--pr"),
-            (&["--pr", "123"], "--pr 123"),
-            (&["--pr123"], "--pr 123"),
-            (&["--pr=123"], "--pr 123"),
-            (&["--pr", "abc"], "--pr abc"),
-            (&["--quick", "--pr", "7"], "--quick --pr 7"),
-            (&["--", "--weird-file"], "--weird-file"),
-            (&["--", "--pr123"], "--pr123"),
-            (&["--model", "m", "src/x.rs"], "src/x.rs"),
+        use ReviewEffort::{Normal, Quick, Thorough};
+        let rows: &[(&[&str], ReviewEffort, &str, bool)] = &[
+            (&[], Normal, "", false),
+            (&["--quick"], Quick, "", false),
+            (&["--thorough", "src/x.rs"], Thorough, "src/x.rs", false),
+            (&["src/x.rs", "--quick"], Quick, "src/x.rs", false),
+            (&["src/x.rs"], Normal, "src/x.rs", false),
+            (&["HEAD~3..HEAD"], Normal, "HEAD~3..HEAD", false),
+            (&["--pr"], Normal, "--pr", false),
+            (&["--pr", "123"], Normal, "--pr 123", false),
+            (&["--pr123"], Normal, "--pr 123", false),
+            (&["--pr=123"], Normal, "--pr 123", false),
+            (&["--pr", "abc"], Normal, "--pr abc", false),
+            (&["--quick", "--pr", "7"], Quick, "--pr 7", false),
+            (&["--", "--weird-file"], Normal, "--weird-file", true),
+            (&["--model", "m", "src/x.rs"], Normal, "src/x.rs", false),
             (
                 &["--provider", "openai", "--api-key", "k", "--base-url", "u"],
+                Normal,
                 "",
+                false,
             ),
+            // Empty targets: old output was "" (the staged/unstaged review),
+            // and the content builder still treats blank as "no target".
+            (&[""], Normal, "", false),
+            (&["--", ""], Normal, "", true),
+            (&["--"], Normal, "", true),
+            (&["--", " a.rs"], Normal, " a.rs", true),
         ];
-        for (rest, want) in rows {
+        for (rest, effort, target, flags_ended) in rows {
             let mut args = vec!["yoyo", "review"];
             args.extend_from_slice(rest);
             assert_eq!(verb_flag_refusal(&argv(&args)), None, "{rest:?}");
-            assert_eq!(review_arg(&argv(rest)), *want, "{rest:?}");
+            let want = ReviewArgs {
+                effort: *effort,
+                target: target.to_string(),
+                flags_ended: *flags_ended,
+            };
+            assert_eq!(review_args(&argv(rest)), want, "{rest:?}");
+        }
+    }
+
+    /// #1130: `--` ends flags, so a word after it is the target verbatim
+    /// even when it spells an effort or PR flag, and one argv element with
+    /// spaces stays one path. The old join + re-split read `-- --quick` as
+    /// the effort flag (and reviewed the working tree), `-- --pr5` as PR 5,
+    /// and squeezed `a  b.rs` to `a b.rs`.
+    #[test]
+    fn review_words_after_end_of_flags_are_the_target() {
+        use ReviewEffort::{Normal, Quick};
+        let rows: &[(&[&str], ReviewEffort, &str, bool)] = &[
+            (&["--", "--quick"], Normal, "--quick", true),
+            (&["--", "--thorough"], Normal, "--thorough", true),
+            (&["--", "--pr5"], Normal, "--pr5", true),
+            (&["--", "--pr", "5"], Normal, "--pr 5", true),
+            (&["--", "--pr123"], Normal, "--pr123", true),
+            (&["--", "a  b.rs"], Normal, "a  b.rs", true),
+            (&["a  b.rs"], Normal, "a  b.rs", false),
+            (&["--quick", "--", "--thorough"], Quick, "--thorough", true),
+            (
+                &["src/x.rs", "--", "--quick"],
+                Normal,
+                "src/x.rs --quick",
+                false,
+            ),
+        ];
+        for (rest, effort, target, flags_ended) in rows {
+            let want = ReviewArgs {
+                effort: *effort,
+                target: target.to_string(),
+                flags_ended: *flags_ended,
+            };
+            assert_eq!(review_args(&argv(rest)), want, "{rest:?}");
         }
     }
 

@@ -513,6 +513,9 @@ fn review_known_flags_and_operands_still_reach_the_review() {
         (&["review", "--pr"], "--pr requires a PR number"),
         (&["review", "--pr", "abc"], "invalid PR number: abc"),
         (&["review", "--pr=abc"], "invalid PR number: abc"),
+        // Empty targets stay the staged/unstaged review, as before #1130.
+        (&["review", ""], "not in a git repository"),
+        (&["review", "--", ""], "not in a git repository"),
     ];
     for args in rows.iter() {
         let (argv, want) = args;
@@ -521,4 +524,62 @@ fn review_known_flags_and_operands_still_reach_the_review() {
         assert!(err.contains(want), "{argv:?}: {err}");
         assert!(!err.contains("unknown flag"), "{argv:?}: {err}");
     }
+}
+
+/// #1130: `--` ends flags. `yoyo review -- --quick` read `--quick` as the
+/// effort flag and reviewed the working tree ("not in a git repository"
+/// here), `-- --pr5` asked gh for PR 5, and a spaced path was squeezed by a
+/// re-split. Each row now names the word as the target, verbatim.
+#[test]
+fn review_words_after_double_dash_are_the_target() {
+    let rows: &[(&[&str], &str)] = &[
+        (
+            &["review", "--", "--quick"],
+            "error: file not found: --quick",
+        ),
+        (
+            &["review", "--", "--thorough"],
+            "error: file not found: --thorough",
+        ),
+        (&["review", "--", "--pr5"], "error: file not found: --pr5"),
+        (
+            &["review", "--", "a  b.rs"],
+            "error: file not found: a  b.rs",
+        ),
+        (&["review", "a  b.rs"], "error: file not found: a  b.rs"),
+    ];
+    for (argv, want) in rows {
+        let (code, _, err, _tmp) = run_verb(argv);
+        let plain = strip_ansi(&err);
+        assert_eq!(code, Some(1), "{argv:?}: {plain}");
+        assert_eq!(plain.trim(), *want, "{argv:?}");
+    }
+    // Near-miss: the same word BEFORE `--` is still the effort flag.
+    let (code, _, err, _tmp) = run_verb(&["review", "--quick"]);
+    assert_eq!(code, Some(1), "{err}");
+    assert!(
+        strip_ansi(&err).contains("not in a git repository"),
+        "{err}"
+    );
+    // And a typo of it is still #1129's refusal.
+    let (code, _, err, _tmp) = run_verb(&["review", "--quik"]);
+    assert_eq!(code, Some(2), "{err}");
+    assert!(err.contains("did you mean --quick?"), "{err}");
+}
+
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::new();
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            for c in chars.by_ref() {
+                if c.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
