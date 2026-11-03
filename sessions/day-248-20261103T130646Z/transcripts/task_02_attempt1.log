@@ -1,0 +1,202 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git log --oneli… ✓ (29ms)
+  ▶ $ sed -n 120,200p src/dispatch_sub.rs; sed -n 440,520p src/cli_config.rs; grep -n … ✓ (7ms)
+  ▶ $ sed -n 515,720p src/dispatch_sub.rs  ▶ $ sed -n 745,800p src/dispatch_sub.rs; sed -n 865,900p src/dispatch_sub.rs; sed -n… ✓ (5ms)
+ ✓ (9ms)
+  ▶ $ grep -n "fn try_dispatch_subcommand_in" -A40 src/dispatch_sub.rs | head -70 ✓ (5ms)
+  ▶ $ grep -n "fn parse_grep_args" -A75 src/commands_search.rs ✓ (21ms)
+  ▶ $ sed -n 1313,1420p src/commands_search.rs | cat ✓ (6ms)
+  ▶ $ grep -n "\"--all\"\|starts_with('-')\|starts_with(\"-\")" src/commands_search.rs… ✓ (8ms)
+  ▶ $ sed -n 565,590p src/commands_search.rs; sed -n 820,840p src/commands_search.rs; … ✓ (15ms)
+  ▶ $ sed -n 679,700p src/dispatch_sub.rs; grep -n "fn run_review_subcommand" -A60 src… ✓ (10ms)
+  ▶ $ sed -n 682,690p src/dispatch_sub.rs; sed -n 1,80p src/commands_git_review.rs ✓ (5ms)
+  ▶ $ awk 'NR>=679 && NR<=692 {print NR": "$0}' src/dispatch_sub.rs; awk 'NR>=1072 && … ✓ (6ms)
+  ▶ $ python3 - <<'EOF' (27 lines) ✓ (19ms)
+  ▶ $ python3 - <<'EOF' (13 lines) ✓ (19ms)
+  ▶ $ awk 'NR>=1280 && NR<=1293 {print NR": "$0}' src/commands_search.rs ✓ (4ms)
+  ▶ $ python3 - <<'EOF' (42 lines) ✓ (23ms)
+  ▶ $ python3 - <<'EOF' (18 lines) ✓ (22ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  17 tools completed in 2m 6s (17 ✓)
+
+Now the test in commands_search's test module.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ awk 'NR>=2345 && NR<=2352 {print NR": "$0}' src/commands_search.rs ✓ (4ms)
+  ▶ edit src/commands_search.rs (2 → 33 lines)
+  +     /// #1111: `GREP_FLAGS` is what the shell door lets through, so it must be
+  +     /// exactly the dash-led literals `parse_grep_args` matches (both ways),
+  +     /// and every value flag must really consume its value.
+  +     #[test]
+  +     fn grep_flag_list_matches_its_parser() {
+  +         let src = include_str!("commands_search.rs");
+  +         let start = src.find(&format!("pub fn {}(", "parse_grep_args")).unwrap();
+  +         let body = &src[start..];
+  +         let body = &body[..body.find("\n}\n").unwrap()];
+  +         let mut in_parser: Vec<&str> = body
+  +             .split('"')
+  +             .skip(1)
+  +             .step_by(2)
+  +             .filter(|l| l.starts_with('-') && *l != "--" && !l.contains(' '))
+  +             .collect();
+  +         in_parser.sort_unstable();
+  +         in_parser.dedup();
+  +         let mut listed = GREP_FLAGS.to_vec();
+  +         listed.sort_unstable();
+  +         assert_eq!(in_parser, listed, "GREP_FLAGS and parse_grep_args disagree");
+  ... (13 more lines)
+ ✓ (25.0s)
+  +     /// #1111: `GREP_FLAGS` is what the shell door lets through, so it must be
+  +     /// exactly the dash-led literals `parse_grep_args` matches (both ways),
+  +     /// and every value flag must really consume its value.
+  +     #[test]
+  +     fn grep_flag_list_matches_its_parser() {
+  +         let src = include_str!("commands_search.rs");
+  +         let start = src.find(&format!("pub fn {}(", "parse_grep_args")).unwrap();
+  +         let body = &src[start..];
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit src/dispatch_sub.rs (1 → 56 lines)
+  + /// The flags a shell verb that takes an operand knows (#1111), as (all of
+  + /// them, the value-taking subset). grep's come from its parser's own list;
+  + /// `outline` has `--all`; find, def, memories, docs and changelog have none,
+  + /// so any dash-led word before `--` there is a typo, not a pattern.
+  + fn verb_own_flags(verb: &str) -> (&'static [&'static str], &'static [&'static str]) {
+  +     use crate::commands_search::{GREP_FLAGS, GREP_VALUE_FLAGS};
+  +     match verb {
+  +         "grep" => (GREP_FLAGS, GREP_VALUE_FLAGS),
+  +         "outline" => (&["--all"], &[]),
+  +         _ => (&[], &[]),
+  +     }
+  + }
+  + 
+  + /// The refusal for an unknown dash-led word before `--` in `yoyo <verb> …`
+  + /// (#1111), or None. Pure, so the decision is tested without exiting.
+  + fn verb_flag_refusal(args: &[String]) -> Option<String> {
+  +     let verb = args.get(1)?;
+  +     let rest = args.get(2..).unwrap_or_default();
+  +     let flags = &rest[..rest.iter().position(|a| a == "--").unwrap_or(rest.len())];
+  +     let (own, valued) = verb_own_flags(verb);
+  ... (36 more lines)
+ ✓ (24.5s)
+  + /// The flags a shell verb that takes an operand knows (#1111), as (all of
+  + /// them, the value-taking subset). grep's come from its parser's own list;
+  + /// `outline` has `--all`; find, def, memories, docs and changelog have none,
+  + /// so any dash-led word before `--` there is a typo, not a pattern.
+  + fn verb_own_flags(verb: &str) -> (&'static [&'static str], &'static [&'static str]) {
+  +     use crate::commands_search::{GREP_FLAGS, GREP_VALUE_FLAGS};
+  +     match verb {
+  +         "grep" => (GREP_FLAGS, GREP_VALUE_FLAGS),
+  ... (13 more lines)
+  ▶ $ python3 - <<'EOF' (56 lines) ✓ (23.2s)
+  ▶ $ grep -n "positional_after_verb\|fn .*1111\|fn .*stray" src/dispatch_sub.rs | sed… ✓ (4ms)
+  ▶ $ tail -5 src/dispatch_sub.rs; grep -n "dispatch_sub\|commands_search\|cli_config"… ✓ (10ms)
+  ▶ $ awk 'NR>=415 && NR<=450 {print NR": "substr($0,1,300)}' tests/module_size.rs; gr… ✓ (10ms)
+  ▶ $ grep -rn "dispatch_sub_project_tests" src/*.rs tests/*.rs | head; grep -n "^mod … ✓ (15ms)
+  ▶ $ python3 - <<'EOF' (19 lines) ✓ (23ms)
+  ▶ $ awk 'NR>=123 && NR<=129 {print NR": "$0}' src/main.rs ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  10 tools completed in 2m 35s (10 ✓)
+
+Now the new module with tests.
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ write src/verb_flags.rs (128 lines) ✓ (5m 12s)
+  ▶ $ cargo fmt && cargo clippy --all-targets -- -D warnings 2>&1 | tail -5 && cargo t… ✓ (1m 4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cp src/commands_search.rs /tmp/cs.bak && python3 -c " (2 lines) ✓ (37.9s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 7m 4s (3 ✓)
+
+Red by name, restored. Now probe the built binary.
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo build 2>&1 | tail -1; B=$PWD/target/debug/yoyo; T=$(mk… (3 lines) ✓ (13.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd $(ls -td /tmp/tmp.* | head -1) && B=/home/runner/work/yoyo-evolve/yoyo-evolve… ✓ (11ms)
+  ▶ $ B=/home/runner/work/yoyo-evolve/yoyo-evolve/target/debug/yoyo; T=$(mktemp -d); c… ✓ (78ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "fn outline_body" -A16 src… ✓ (5ms)
+  ▶ $ python3 - <<'EOF' (54 lines) ✓ (1m 6s)
+  ▶ $ awk 'NR>=836 && NR<=843 {print NR": "$0}' src/commands_search.rs; wc -l src/disp… ✗ (2m 0s)
+    │ Command timed out after 120s. Output so far:
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 3m 47s (5 ✓, 1 ✗)
+
+Update module_size entries, then full test run.
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 - <<'EOF' (18 lines) ✓ (2.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ awk 'NR>=1105 && NR<=1150 {print NR": "$0}' src/dispatch_sub.rs | grep -n "revie… ✓ (5ms)
+  ▶ $ grep -n "fn run_review_subcommand" -A120 src/dispatch_sub.rs | grep -n "review_a… ✓ (9ms)
+  ▶ $ awk 'NR>=1165 && NR<=1188 {print NR": "$0}' src/dispatch_sub.rs; grep -n "pub as… ✓ (6ms)
+  ▶ $ git grep -n '#1111\b' src docs skills | grep -v "^src/verb_flags.rs\|cli_config.… ✓ (16ms)
+  ▶ $ awk 'NR>=10 && NR<=60 {print NR": "substr($0,1,220)}' docs/src/usage/commands.md… ✓ (6ms)
+  ▶ edit docs/src/usage/commands.md (2 → 9 lines)
+    > | `yoyo undo` | Undo changes (e.g. `yoyo undo --last-commit`) |
+  + >
+  + > `grep`, `find`, `def`, `outline`, `memories`, `docs` and `changelog` refuse a dash-led word
+  + > that is not one of their own flags (exit 2, nothing runs): `yoyo find --bogus` used to
+  + > search for `--bogus`. Their own flags still work (`grep -c`, `grep --include '*.rs'`,
+  + > `outline handle --all`), and `--` ends flag parsing, so `yoyo find -- --weird-name`
+  + > searches for a name that starts with a dash. `changelog` takes one optional count
+  + > (`yoyo changelog 5`); any other word is refused.
+    >
+  ▶ $ sleep 100; tail -3 /tmp/test.log ✓ (4ms)
+    > | `yoyo undo` | Undo changes (e.g. `yoyo undo --last-commit`) |
+  + >
+  + > `grep`, `find`, `def`, `outline`, `memories`, `docs` and `changelog` refuse a dash-led word
+  + > that is not one of their own flags (exit 2, nothing runs): `yoyo find --bogus` used to
+  + > search for `--bogus`. Their own flags still work (`grep -c`, `grep --include '*.rs'`,
+  + > `outline handle --all`), and `--` ends flag parsing, so `yoyo find -- --weird-name`
+  + > searches for a name that starts with a dash. `changelog` takes one optional count
+  + > (`yoyo changelog 5`); any other word is refused.
+    >
+ ✓ (1m 40s)
+  ▶ $ while ! grep -q "^done" /tmp/test.log; do sleep 15; done; grep -E "^test result|… ✓ (2m 30s)
+  ▶ $ grep -E "^test result" /tmp/test.log | grep -v " 0 failed" ; grep -c "^test resu… ✓ (1.9s)
+  ▶ $ grep -ln "commands.md" tests/*.rs src/*.rs | head ✓ (13ms)
+  ▶ $ grep -n "commands.md" src/commands_risk.rs src/commands_tree.rs | head -4; timeo… ✓ (6.1s)
+
+────────────────────────────────────────────────────────────────────────────────
+  12 tools completed in 4m 52s (12 ✓)
+
+All green. Committing.
+  ╭─ Turn 47 ────────────────────────────────────────────────────────────╮
+  ▶ $ git add -A && git commit -q -F - <<'EOF' (37 lines) ✓ (25ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Fixed and committed as 78a31e61; the message ends Fixes #1111. The seven verbs changelog, memories, docs, def, find, outline and grep now stop with exit 2 when given a dash-led word that isn't one of their own flags, and nothing runs. Before, find --bogus searched for the text --bogus, and docs --bogus asked docs.rs about a crate called --bogus.
+
+How it works
+• One rule for all seven: it lives in a new file, src/verb_flags.rs. The error message reuses the top-level one, so it reads error: unknown flag '--x' (did you mean …?) for \yoyo <verb>\. Nothing ran.
+• grep's flags: they come from a new GREP_FLAGS list in commands_search.rs. A test checks that this list exactly matches the flags grep's own parser recognises. I checked the test works: removing --count from the list made it fail, and putting it back made it pass.
+• Each verb's own flags: outline keeps --all. The other five take no flags. changelog now takes one optional count, like evolution, so changelog -5 and changelog foo are refused too.
+• `--`: it still ends flag parsing, so yoyo find -- --weird-name searches for a name starting with a dash. grep's parser already handled --; for the other verbs the -- is now removed before the search runs.
+• Small extra fix: outline --all x used to search for the text "--all x". It now treats a leading --all as the flag, the same as a trailing one.
+
+Checks
+• Built binary, in a temp git repo: all seven <verb> --bogus exit 2. These still run: grep -c TODO, grep -- --bogus, find -- --bogus, changelog, changelog 5, memories foo, outline main --all and def main. docs serde is only covered by a unit test, because I didn't want to make a network call.
+• cargo build, cargo test, clippy -D warnings and fmt --check all pass.
+• After the full test run I added a note to docs/src/usage/commands.md. Only the two test groups that read that file were re-run, and they pass.
+
+Bookkeeping: src/dispatch_sub.rs grew by 37 lines, to 2640. I moved the logic and its tests into the new file to keep that growth down. The new sizes for it and commands_search.rs are recorded in tests/module_size.rs. git grep '#1111' found only history comments, no user-facing "see #1111" that needed changing.
+
+Verdicts for the issue's other rows (no code changed):
+• `test --bogus`: the arguments go straight to the project's own test runner by design (#745).
+• `blame --bogus`: git refuses the option, exit 1.
+• `review --bogus`: from reading the code, it fails with "file not found: --bogus" and exit 1 before any prompt is sent. I didn't run this one; it needs an API key set first.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 0/3 changed files were in top-10 predictions (0.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 1/3 (33.3%) — reactive was 0.0%
+     Surprises (not predicted): src/commands_search.rs, src/dispatch_sub.rs, src/verb_flags.rs

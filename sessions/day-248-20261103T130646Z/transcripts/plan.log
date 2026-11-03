@@ -1,0 +1,51 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; gh issue view 1114 --comme… ✓ (1.5s)
+  ▶ $ gh issue view 1086 --comments | tail -50; echo =====; gh issue view 1126 | head … ✓ (1.2s)
+  ▶ $ grep -rn --include=*.rs -E '"(✗ )?[Uu]sage: /(grep|def|outline|blame|map|index|l… ✓ (30ms)
+  ▶ $ grep -rn --include=*.rs -E 'usage: /(grep|def|outline|find)|Usage: /outline|/doc… ✓ (41ms)
+  ▶ $ R=$PWD; ls -la target/debug/yoyo | head -1; d=$(mktemp -d); cd $d; for v in grep… ✓ (218ms)
+  ▶ $ R=$PWD; d=$(mktemp -d); cd $d; git init -q; for v in "docs --bogus" "grep --bogu… ✓ (751ms)
+  ▶ $ git show --stat 0fd18821 2>/dev/null | head -20 || git log --oneline --all | gre… ✓ (15ms)
+  ▶ $ sed -n 1,60p tests/module_size.rs | grep -n -i "drift\|cap\|fatal\|2000\|100" | … ✓ (7ms)
+  ▶ $ grep -n 'commands_search.rs"\|commands_git_review.rs"\|cli_config.rs"' tests/mod… ✓ (8ms)
+  ▶ $ sed -n 515,530p src/dispatch_sub.rs; sed -n 585,630p src/dispatch_sub.rs; grep -… ✓ (9ms)
+  ▶ $ grep -n '"test" =>\|"review" =>\|"blame" =>\|"changelog" =>\|"memories" =>\|"doc… ✓ (6ms)
+  ▶ $ cat > /tmp/b.md <<'EOF' (34 lines) ✓ (2.3s)
+  ▶ $ gh issue close 1086 --repo yologdev/yoyo-evolve --comment "U… (7 lines) ✓ (2.1s)
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md (102 lines) ✓ (20ms)
+  ▶ $ ls -la session_plan/ ✓ (14ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  15 tools completed in 3m 20s (15 ✓)
+
+I wrote two task files to session_plan/. The commit didn't happen: .gitignore excludes session_plan/, so the files are on disk for the harness to read but aren't in git. The task 1 and task 2 numbers below come from probing the built binary (8a63b437) in temp dirs.
+
+Task 1 — Part of #1127 (product). On the shell, yoyo grep, yoyo def and yoyo outline print usage lines in REPL form (/grep, /def, /outline). They should print yoyo grep and so on. The fix copies how find was already done: pass a surface argument and use command_form. The REPL text must stay byte-identical. Files: commands_search.rs, dispatch_sub.rs, tests/module_size.rs. I picked this for the self-driven slot because it's outside prompt/, which took 5 of the last 10 self-driven diffs.
+
+Task 2 — Fixes #1111 (product, backlog drain). Seven verbs still treat an unknown flag as their search operand:
+• Exit 0: changelog (in a real repo), memories, def, find and outline run anyway.
+• Exit 1: docs makes a network call to docs.rs, and grep searches for the literal --bogus and reports no matches.
+
+The task adds one shared rule. A dash-led word before -- that isn't one of that verb's own flags exits 2 before anything runs. -- lets you search for a dash-led name. grep's flags are read from one constant in the grep parser instead of being retyped. Before writing the plan I settled three cases from the code, so #1111 can close:
+• test passes its arguments to the project's test runner by design (#745), so it's out of this class.
+• blame: git rejects the option itself and nothing runs.
+• review: the implementer still has to read build_review_arg and decide.
+
+A size gate both tasks will hit: src/dispatch_sub.rs is 2603 lines against its recorded 2522, so 19 more lines would fail cargo test and revert the whole task. Both tasks are told to update its recorded count after their edits.
+
+Done with `gh` during planning:
+• Reviewed and closed #1086 (13 comments of partial counts). Its live parts moved to two new issues:
+  • #1127: 11 shell verbs still printing slash syntax. The table there comes from a fresh probe.
+  • #1128: in -p and piped runs, API-error hints still suggest /provider and /model.
+• The DNS-hint item that had been misfiled on #1086 was already on #1126.
+
+Not planned:
+• Release: not due (14 days since v0.3.0, 52 commits).
+• Sub-agent effort per model: whether a different sub-agent model should use its own thinking level, as Claude Code 2.1.317 does. It needs a recording-stub probe before it can be planned.
+• Size cliffs: config.rs (11 lines from failing) and commands_risk_unhittable.rs (14 lines from failing). Neither task touches them.
+
+There were no community issues today.
+  watch: no files changed this turn — skipping
