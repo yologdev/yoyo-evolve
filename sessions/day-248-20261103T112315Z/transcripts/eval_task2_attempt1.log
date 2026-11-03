@@ -1,0 +1,21 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls target/debug/yoyo && time (OP… ✓ (9.0s)
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 26.0s (2 ✓)
+
+I wrote the verdict, PASS, to session_plan/eval_task_2.md.
+
+I ran the task's own probe on the built binary (--base-url http://nonexistent.invalid/v1). It finished in 9.0s instead of the ~73s measured before the fix, still exited 1, and printed the RFC 6761 note once.
+
+• Matches the spec: only a DNS failure on a reserved name (.invalid, .test, .example, .localhost) stops early. An ordinary NXDOMAIN still returns None, so it keeps the normal retries, and the table test covers both cases as the owner asked.
+• Edge cases covered: example.com and invalidator.dev are correctly treated as ordinary names, and a refused connection or timeout on a reserved host still retries. Mixed case and a trailing dot are handled.
+• Nothing left unwired: both retry loops in src/prompt.rs call the new no_retry_note, which runs the existing loopback check first. url_host was made pub(crate) and reused rather than copied.
+• Size and docs: the size limits in tests/module_size.rs went up by one line for each of prompt.rs and prompt_retry.rs, each with a reason. The troubleshooting doc gained a paragraph next to the loopback one.
+
+I didn't run the build, tests or clippy myself, since the harness had already passed build and tests.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

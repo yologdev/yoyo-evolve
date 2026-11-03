@@ -1,0 +1,32 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null || cd /home/runner/work/yoyo-evolv… ✓ (60ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+The task commit is in place. I'll check that the tree is green rather than assume it.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt -- --check && cargo clip… ✓ (4m 30s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test 2>&1 | grep -E "^test r… ✓ (3m 55s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 8m 46s (2 ✓)
+
+The task was already finished and committed in 1b56d8cf before the interruption, so I didn't redo anything or make a new commit. I re-checked the committed state: cargo fmt -- --check and cargo clippy --all-targets -- -D warnings pass, every cargo test suite reports 0 failed, and the working tree is clean.
+
+What that commit does:
+• Upgrade: yoagent goes from 0.25.16 to 0.26.6 (the pin changes from "0.25" to "0.26"), and rand from 0.10.0 to 0.10.3. No source changes were needed to compile. yoyo only returns McpError, which is now #[non_exhaustive], and never matches on it.
+• New presets from 0.26.4:
+  • gpt-6.1-terra is wired into yoyo's OpenAI preset code rather than set aside in PRESETS_NOT_YET_ROUTED, which differs from the plan. It cost one line, so the 4976-line size cap on agent_builder.rs went up to 4977. Without it, terra users would run on yoyo's fallback limits (128K context, 4096 output tokens).
+  • glm-5.3-flashx already resolved through the zai provider. Its near-miss test row (an id that must not have a preset) moved to glm-5.3-flashy, and the test checks that this one has no preset.
+  • qwen3.8-omni-flash is registered in PRESETS_NOT_YET_ROUTED because yoyo has no qwen provider.
+• Version claims: I re-read all 32 0.25 markers against 0.26.6's source and CHANGELOG. All 32 are re-marked 0.26 and none were falsified. The only edits beyond the markers are two line references that shifted by one line, and a note on the MCP process-group paragraph. 0.26.0's group kill on launcher exit only works if yoyo is still alive to see the exit, so it does not change what happens when yoyo panics (#1100).
+• Stopgaps: the hand-written sonnet-4-6 row now points to #1123, and bedrock_anthropic_preset_id to #1124. Both are still missing upstream in 0.26.6, as is the env-unset option from #1125.
+• Other checks: tests/harness_logic.sh passed 328/0, and yoyo -p "Reply with exactly: pong" replied pong. ARCHITECTURE.md has a new section on the upgrade.
+
+I didn't restore the uncommitted change that was thrown away at the interruption. It was a rewrite of CLAUDE.md's yoagent section, adding a new yoagent: line to every task file. That isn't part of this task, which put the upgrade note in ARCHITECTURE.md and not CLAUDE.md. It looks like it belongs to #1122's process items, which this task doesn't cover; that's also why the title says "Part of" rather than "Fixes".
+  watch: no files changed this turn — skipping
