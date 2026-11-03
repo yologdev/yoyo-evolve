@@ -157,8 +157,23 @@ pub(crate) fn prefix_applied_message(
 /// option off Unix. The cost yoagent names: a host exit that skips `close`
 /// leaves group members that ignore a closed stdin running, since the
 /// terminal's hangup no longer reaches them.
+///
+/// `env_remove_all(hook_scrub_vars())` (#1064, owner's decision 2026-11-03):
+/// the server starts with every provider API key **unset** (not blanked) —
+/// `subprocess_env::credential_vars()`, i.e. yoagent's `api_key_variables()`
+/// plus yoyo's own lookup table, with `GITHUB_TOKEN`/`GH_TOKEN` kept. A stdio
+/// server is third-party code named in a config that may be repo-authored,
+/// the same population shell hooks are scrubbed for, so it uses the hooks'
+/// gate: on by default, `YOYO_SUBPROCESS_ENV_SCRUB=0`/`false` turns it off,
+/// and an empty or misspelled value keeps it on (fails closed). Read at each
+/// spawn, so both spawns of one server see the same answer. yoagent applies a
+/// caller `env` map AFTER the removal, so
+/// `[mcp_servers.<name>] env = { ANTHROPIC_API_KEY = "..." }` still hands one
+/// server a key explicitly — that is the per-server opt-in.
 pub(crate) fn mcp_stdio_options() -> StdioOptions {
-    StdioOptions::new().own_process_group(true)
+    StdioOptions::new()
+        .own_process_group(true)
+        .env_remove_all(crate::subprocess_env::hook_scrub_vars())
 }
 
 /// Spawn a client for one stdio server and wrap it in yoagent's

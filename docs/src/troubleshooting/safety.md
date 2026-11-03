@@ -217,8 +217,24 @@ it, with a different default per kind of program:
   because anything that needs the key from inside bash, such as running
   yoyo (or another tool that calls your provider) from yoyo's own bash,
   fails with the scrub on.
-- **Not covered yet:** `/run`, `!`, `/bg`, `/watch`, MCP stdio servers and
-  sub-agent bash still inherit the full environment (tracked in
+- **MCP stdio servers (`--mcp`, `[mcp_servers.*]`): scrubbed by default,
+  like hooks.** A stdio server is a third-party program named in your config
+  or the repository's, so it starts with the provider keys unset. The same
+  `YOYO_SUBPROCESS_ENV_SCRUB=0` (or `false`) turns this off, and any other
+  value keeps it on. A server that genuinely needs a key gets it explicitly
+  through its own `env` map, which is applied after the scrub:
+
+  ```toml
+  [mcp_servers.myserver]
+  command = "my-mcp-server"
+  env = { OPENAI_API_KEY = "sk-..." }
+  ```
+
+  A server that used to pick up your key silently from the environment will
+  now fail its own calls until you give it the key this way (or set the
+  variable to `0`). The tools yoyo shows the model are unchanged.
+- **Not covered yet:** `/run`, `!`, `/bg`, `/watch` and sub-agent bash still
+  inherit the full environment (tracked in
   [#1064](https://github.com/yologdev/yoyo-evolve/issues/1064)).
 - `GITHUB_TOKEN` and `GH_TOKEN` are always kept, so `gh` still works.
 

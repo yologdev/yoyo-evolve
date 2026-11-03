@@ -21,8 +21,9 @@
 //! yoyo's own `--provider github` reads `GITHUB_TOKEN`: with that provider and
 //! the scrub on, the key the child keeps is the provider key.
 //!
-//! **Scope today: the model's bash tool (opt-in) and shell hooks (on by
-//! default).** Hooks (`[hooks]` in `.yoyo.toml`, run by `ShellHook` in
+//! **Scope today: the model's bash tool (opt-in), and shell hooks and MCP
+//! stdio servers (on by default; the MCP half is `mcp_prefix::mcp_stdio_options`,
+//! Day 248).** Hooks (`[hooks]` in `.yoyo.toml`, run by `ShellHook` in
 //! `hooks.rs`) are a different population from the model's bash: a hook is a
 //! program the *repository* or the user's config wrote, and it never needs
 //! the provider key to do its job, so the scrub is on for hooks unless
@@ -30,7 +31,7 @@
 //! ([`hook_scrub_enabled_from`]). The model's bash keeps the opt-in decision
 //! ([`scrub_enabled_from`]) unchanged, because a user running yoyo (or a
 //! provider-calling test suite) from inside it needs the key. `/run`, `/bg`,
-//! `/watch`, MCP stdio servers, and sub-agent child bash (built from
+//! `/watch`, and sub-agent child bash (built from
 //! yoagent's own `BashTool`, not this constructor) still inherit the full
 //! environment; they stay on #1064.
 
