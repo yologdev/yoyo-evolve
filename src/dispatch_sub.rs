@@ -577,7 +577,9 @@ pub(crate) fn try_dispatch_subcommand_in(
             }
             "review" => {
                 // Non-interactive code review: build an agent, run the review
-                // prompt, print the result to stdout, and exit.
+                // prompt, print the result to stdout, and exit. #1129: a
+                // mistyped flag exits 2 here instead of becoming a path.
+                refuse_unknown_verb_flag(args);
                 let review_arg = build_review_arg(args);
                 let exit_code = run_review_subcommand(args, &review_arg);
                 std::process::exit(exit_code);
@@ -1056,14 +1058,9 @@ pub(crate) fn require_flag_value<'a>(next: Option<&'a String>) -> FlagValueCheck
 /// Build the review argument string from CLI args.
 ///
 /// Handles `yoyo review`, `yoyo review HEAD~3..HEAD`, `yoyo review --pr 123`,
-/// and `yoyo review path/to/file.rs`.
+/// and `yoyo review path/to/file.rs` (#1129: see `verb_flags::review_arg`).
 fn build_review_arg(args: &[String]) -> String {
-    // args[0] = binary, args[1] = "review", args[2..] = review arguments
-    if args.len() <= 2 {
-        return String::new();
-    }
-    // Preserve --pr as a single token with its argument
-    args[2..].join(" ")
+    crate::verb_flags::review_arg(args.get(2..).unwrap_or_default())
 }
 
 /// Resolve API key from flags, env vars, and config file.

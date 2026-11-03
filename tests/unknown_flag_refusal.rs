@@ -461,3 +461,64 @@ fn known_flags_after_a_verb_still_run_and_stray_words_still_refuse() {
     assert!(err.contains("unexpected argument 'stray'"), "{err}");
     assert!(!err.contains("unknown flag"), "{err}");
 }
+
+/// #1129: `yoyo review --quik` said `file not found: --quik` (exit 1) and
+/// `review --print` said `invalid PR number: int`. Both now refuse with
+/// exit 2 before any agent is built, with the review flag list's hint.
+#[test]
+fn review_refuses_a_mistyped_flag_with_exit_2() {
+    for (arg, want) in [
+        (
+            "--quik",
+            "unknown flag '--quik' (did you mean --quick?) for `yoyo review`. Nothing ran.",
+        ),
+        (
+            "--thorogh",
+            "unknown flag '--thorogh' (did you mean --thorough?) for `yoyo review`. Nothing ran.",
+        ),
+        (
+            "--print",
+            "unknown flag '--print' for `yoyo review`. Nothing ran.",
+        ),
+    ] {
+        let (code, out, err, _tmp) = run_verb(&["review", arg]);
+        assert_eq!(code, Some(2), "{arg}: stdout: {out}\nstderr: {err}");
+        assert_eq!(err.trim(), format!("error: {want}"), "{arg}");
+        assert!(out.is_empty(), "{arg}: {out}");
+    }
+}
+
+/// #1129 near-misses: accepted spellings reach the same review error they
+/// reached before (exit 1, no provider call: every row stops before the
+/// agent is prompted). `--model m` no longer becomes part of the path.
+#[test]
+fn review_known_flags_and_operands_still_reach_the_review() {
+    let rows: &[(&[&str], &str)] = &[
+        (&["review"], "not in a git repository"),
+        (&["review", "--quick"], "not in a git repository"),
+        (&["review", "--thorough"], "not in a git repository"),
+        (&["review", "src/x.rs"], "file not found: src/x.rs"),
+        (
+            &["review", "--quick", "src/x.rs"],
+            "file not found: src/x.rs",
+        ),
+        (
+            &["review", "--", "--weird-file"],
+            "file not found: --weird-file",
+        ),
+        (
+            &["review", "--model", "m", "src/x.rs"],
+            "file not found: src/x.rs",
+        ),
+        (&["review", "--pr"], "--pr requires a PR number"),
+        (&["review", "--pr", "abc"], "invalid PR number: abc"),
+        (&["review", "--pr=abc"], "invalid PR number: abc"),
+    ];
+    for args in rows.iter() {
+        let (argv, want) = args;
+        let (code, _, err, _tmp) = run_verb(argv);
+        assert_eq!(code, Some(1), "{argv:?}: {err}");
+        assert!(err.contains(want), "{argv:?}: {err}");
+        assert!(!err.contains("unknown flag"), "{argv:?}: {err}");
+    }
+}

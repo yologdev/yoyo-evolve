@@ -35,7 +35,7 @@ pub fn build_review_content(arg: &str) -> Option<(String, String)> {
                 Some(("staged changes".to_string(), diff))
             }
         }
-    } else if arg.starts_with("--pr") {
+    } else if is_pr_arg(arg) {
         // Review a PR: --pr <number>
         build_review_content_pr(arg)
     } else if arg.contains("..") && !std::path::Path::new(arg).exists() {
@@ -86,9 +86,20 @@ fn build_review_content_range(arg: &str) -> Option<(String, String)> {
     }
 }
 
+/// Whether a review argument asks for a PR: `--pr` alone or followed by
+/// whitespace, `=` or a digit (`--pr 123`, `--pr=123`, `--pr123`). #1129:
+/// this was `starts_with("--pr")`, so `/review --print` asked gh for PR `int`.
+fn is_pr_arg(arg: &str) -> bool {
+    arg.strip_prefix("--pr").is_some_and(|rest| {
+        rest.is_empty()
+            || rest.starts_with(|c: char| c.is_whitespace() || c == '=' || c.is_ascii_digit())
+    })
+}
+
 /// Build review content from a GitHub PR number (e.g. `--pr 123`).
 fn build_review_content_pr(arg: &str) -> Option<(String, String)> {
-    let pr_num = arg.strip_prefix("--pr").unwrap_or("").trim();
+    let rest = arg.strip_prefix("--pr").unwrap_or("");
+    let pr_num = rest.strip_prefix('=').unwrap_or(rest).trim();
     if pr_num.is_empty() {
         eprintln!("{RED}  error: --pr requires a PR number (e.g. --pr 123){RESET}\n");
         return None;
@@ -1166,6 +1177,16 @@ mod tests {
         // --pr without a number should print an error
         let result = build_review_content("--pr");
         assert!(result.is_none(), "bare --pr should return None");
+    }
+
+    #[test]
+    fn is_pr_arg_accepts_pr_spellings_and_nothing_longer() {
+        for yes in ["--pr", "--pr 123", "--pr123", "--pr=123", "--pr abc"] {
+            assert!(is_pr_arg(yes), "{yes}");
+        }
+        for no in ["--print", "--pretty", "--prx", "src/--pr.rs", "", "--quick"] {
+            assert!(!is_pr_arg(no), "{no}");
+        }
     }
 
     #[test]

@@ -11,11 +11,14 @@
 /// grep's come from its parser's own list (`GREP_FLAGS`, pinned against
 /// `parse_grep_args` by a test); `outline` has `--all`; find, def, memories,
 /// docs and changelog have none, so any dash-led word there is a typo.
+/// `review` (#1129) has its effort flags, `--pr`, and the four provider flags
+/// `run_review_subcommand` reads from argv.
 pub(crate) fn verb_own_flags(verb: &str) -> (&'static [&'static str], &'static [&'static str]) {
     use crate::commands_search::{GREP_FLAGS, GREP_VALUE_FLAGS};
     match verb {
         "grep" => (GREP_FLAGS, GREP_VALUE_FLAGS),
         "outline" => (&["--all"], &[]),
+        "review" => (REVIEW_FLAGS, REVIEW_VALUE_FLAGS),
         _ => (&[], &[]),
     }
 }
@@ -25,12 +28,77 @@ pub(crate) fn verb_own_flags(verb: &str) -> (&'static [&'static str], &'static [
 /// and did-you-mean as the top-level refusal (`cli_config::unknown_flags_among`).
 pub(crate) fn verb_flag_refusal(args: &[String]) -> Option<String> {
     let verb = args.get(1)?;
-    let rest = args.get(2..).unwrap_or_default();
+    let mut rest = args.get(2..).unwrap_or_default().to_vec();
+    if verb == "review" {
+        rest = split_pr_spellings(&rest);
+    }
     let flags = &rest[..rest.iter().position(|a| a == "--").unwrap_or(rest.len())];
     let (own, valued) = verb_own_flags(verb);
     let msg = crate::cli_config::unknown_flags_among(flags, own, valued)?;
     let verb = crate::cli::sanitize_for_display(verb);
     Some(format!("{msg} for `yoyo {verb}`. Nothing ran."))
+}
+
+/// `yoyo review`'s own flags (#1129). Before this, `review --quik` was read
+/// as a file path and `review --print` as `--pr int`, because the review
+/// parser matched `starts_with("--pr")`.
+const REVIEW_FLAGS: &[&str] = &[
+    "--quick",
+    "--thorough",
+    "--pr",
+    "--provider",
+    "--model",
+    "--api-key",
+    "--base-url",
+];
+/// The value-taking subset: the next word is `--pr`'s number or a provider
+/// setting, never a review target.
+const REVIEW_VALUE_FLAGS: &[&str] = &["--pr", "--provider", "--model", "--api-key", "--base-url"];
+/// Provider flags `run_review_subcommand` reads itself; they and their values
+/// are not part of the review target.
+const REVIEW_PROVIDER_FLAGS: &[&str] = &["--provider", "--model", "--api-key", "--base-url"];
+
+/// `--pr=N` and `--prN` (N all digits) as the two words `--pr N`, before
+/// `--` only. Every other dash-led word is left alone, so `--print` stays
+/// one word and is refused as unknown instead of becoming PR `int`.
+fn split_pr_spellings(rest: &[String]) -> Vec<String> {
+    let end = rest.iter().position(|a| a == "--").unwrap_or(rest.len());
+    let mut out = Vec::with_capacity(rest.len() + 1);
+    for (i, word) in rest.iter().enumerate() {
+        let tail = word.strip_prefix("--pr").filter(|_| i < end);
+        let value = match tail {
+            Some(t) if t.starts_with('=') => t.strip_prefix('='),
+            Some(t) if !t.is_empty() && t.bytes().all(|b| b.is_ascii_digit()) => Some(t),
+            _ => None,
+        };
+        match value {
+            Some(v) => out.extend(["--pr".to_string(), v.to_string()]),
+            None => out.push(word.clone()),
+        }
+    }
+    out
+}
+
+/// The review target string for `yoyo review <rest>` (#1129): `--pr`
+/// spellings split into `--pr N`, the provider flags and their values
+/// removed (`run_review_subcommand` reads those from argv), and the first
+/// `--` dropped so `yoyo review -- --weird-file` reviews that file.
+pub(crate) fn review_arg(rest: &[String]) -> String {
+    let rest = split_pr_spellings(rest);
+    let end = rest.iter().position(|a| a == "--").unwrap_or(rest.len());
+    let mut kept = Vec::new();
+    let mut skip_next = false;
+    for word in &rest[..end] {
+        if skip_next {
+            skip_next = false;
+        } else if REVIEW_PROVIDER_FLAGS.contains(&word.as_str()) {
+            skip_next = true;
+        } else {
+            kept.push(word.as_str());
+        }
+    }
+    kept.extend(rest.iter().skip(end + 1).map(String::as_str));
+    kept.join(" ")
 }
 
 /// `rest` without its first `--`: the end-of-flags marker is not an operand.
@@ -112,6 +180,74 @@ mod tests {
         ];
         for row in pass {
             assert_eq!(verb_flag_refusal(&argv(row)), None, "{row:?}");
+        }
+    }
+
+    /// #1129: the three inputs the issue reproduced, full message each.
+    #[test]
+    fn review_refuses_a_mistyped_flag_with_a_suggestion() {
+        let rows: &[(&[&str], &str)] = &[
+            (
+                &["yoyo", "review", "--quik"],
+                "unknown flag '--quik' (did you mean --quick?) for `yoyo review`. Nothing ran.",
+            ),
+            (
+                &["yoyo", "review", "--thorogh", "src/x.rs"],
+                "unknown flag '--thorogh' (did you mean --thorough?) for `yoyo review`. Nothing ran.",
+            ),
+            (
+                &["yoyo", "review", "--print"],
+                "unknown flag '--print' for `yoyo review`. Nothing ran.",
+            ),
+            (
+                &["yoyo", "review", "--pretty"],
+                "unknown flag '--pretty' for `yoyo review`. Nothing ran.",
+            ),
+            // Not digits after `--pr`, so not a PR spelling.
+            (
+                &["yoyo", "review", "--prx"],
+                "unknown flag '--prx' (did you mean --pr?) for `yoyo review`. Nothing ran.",
+            ),
+        ];
+        for (row, want) in rows {
+            assert_eq!(
+                verb_flag_refusal(&argv(row)).as_deref(),
+                Some(*want),
+                "{row:?}"
+            );
+        }
+    }
+
+    /// #1129 near-misses: every spelling review accepted before still runs,
+    /// and each lands on the same target string the old join produced
+    /// (except the provider flags, which used to become part of a path).
+    #[test]
+    fn review_near_misses_keep_their_target() {
+        let rows: &[(&[&str], &str)] = &[
+            (&[], ""),
+            (&["--quick"], "--quick"),
+            (&["--thorough", "src/x.rs"], "--thorough src/x.rs"),
+            (&["src/x.rs"], "src/x.rs"),
+            (&["HEAD~3..HEAD"], "HEAD~3..HEAD"),
+            (&["--pr"], "--pr"),
+            (&["--pr", "123"], "--pr 123"),
+            (&["--pr123"], "--pr 123"),
+            (&["--pr=123"], "--pr 123"),
+            (&["--pr", "abc"], "--pr abc"),
+            (&["--quick", "--pr", "7"], "--quick --pr 7"),
+            (&["--", "--weird-file"], "--weird-file"),
+            (&["--", "--pr123"], "--pr123"),
+            (&["--model", "m", "src/x.rs"], "src/x.rs"),
+            (
+                &["--provider", "openai", "--api-key", "k", "--base-url", "u"],
+                "",
+            ),
+        ];
+        for (rest, want) in rows {
+            let mut args = vec!["yoyo", "review"];
+            args.extend_from_slice(rest);
+            assert_eq!(verb_flag_refusal(&argv(&args)), None, "{rest:?}");
+            assert_eq!(review_arg(&argv(rest)), *want, "{rest:?}");
         }
     }
 
