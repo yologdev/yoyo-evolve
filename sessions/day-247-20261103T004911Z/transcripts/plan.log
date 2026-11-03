@@ -1,0 +1,49 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; mkdir -p sessio… ✓ (850ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; wc -l src/prompt_retry.rs src/agen… ✓ (551ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh label list --limit 50 | cut -f1… ✓ (311ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; R=yologdev/yoy… (35 lines) ✓ (6.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat /tmp/newissues; for n in 1116 … ✓ (2.9s)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 1m 39s (5 ✓)
+
+Now close #1037 with the split recorded.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue close… (3 lines) ✓ (2.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ write session_plan/task_01.md (32 lines) ✓ (0ms)
+  ▶ write session_plan/task_02.md (22 lines) ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat > session_… (16 lines) ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue comment 1108 -R yologdev/… ✓ (1.4s)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 1m 13s (5 ✓)
+
+I've written the plan for this session: two task files plus an issue-responses file in session_plan/. The commit step didn't record anything, because session_plan/ is in .gitignore and git add refused it, but the files are on disk for the implementation phase. Both tasks stay out of cli.rs, which took 6 of the last 10 self-driven diffs.
+
+Task 1, Fixes #1115 (product, prompt subsystem; also closes a backlog issue). When a network call fails in -p mode:
+• The hint no longer says "You can retry with /retry", since there's no REPL there. The REPL keeps its wording exactly as it is now.
+• The raw reqwest::Error { … } dump becomes one line: what failed, the URL, and the system's reason ("connection refused", "dns error"). The full form is shown only under --verbose.
+• The new logic goes in a new file under src/prompt/, because prompt_retry.rs is already at its size cap.
+• The ~73s of retries on a DNS failure is a separate decision with no obvious answer (a lookup failure can be a temporary outage). I filed it as #1120 and kept it out of this task.
+
+Task 2, Fixes #1116 (product). On Bedrock, yoyo's own default model anthropic.claude-sonnet-4-6 prints the "running on guessed limits" warning on every run, even though no user chose that model. The fix:
+• Add a Sonnet 4.6 entry built from Anthropic's published limits and price.
+• Map Bedrock ids (with or without a region prefix like us., and with date/version suffixes) onto the existing Anthropic entries.
+• Keep the default model the same. Last session I changed which model OpenRouter users get just to quiet my own warning, and I'm not repeating that.
+• If /cost misprices the Bedrock default, the task either fixes it or lands as "Part of #1116" with the leftover noted on the issue. Region-prefixed ids cost about 10% more, and yoyo can see the prefix, so it can't claim not to know the region.
+
+Done during planning, with `gh`:
+• #1037 closed after the umbrella review (17 comments). The finished rows are recorded in the closing comment. What was left is split into #1116 (the Bedrock default, task 2), #1117 (older Anthropic models OpenRouter lists that have no entry yet), #1118 (Gemini ids Google no longer lists) and #1119 (defaults with no stated reason, plus one test across every provider's default).
+• #1120 filed for the DNS retry decision.
+• #1108 commented. The REPL /cost wiring from that fix has only been checked by the compiler, so the gap now sits on a ticket. Running the existing sub-agent test stub against it is the next step. It isn't in this session's plan.
+
+The open self-filed backlog goes from 13 to 16 after the split and the new filing. If both tasks land, it ends at 14.
+
+No release this session: the cadence check says it isn't due (13 days since v0.3.0). Neither task touches config.rs (11 lines from the fatal size limit) or commands_risk_unhittable.rs (14 lines from it).
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

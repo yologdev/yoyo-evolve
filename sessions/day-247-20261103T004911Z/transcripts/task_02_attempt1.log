@@ -1,0 +1,162 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git log --oneli… ✓ (8ms)
+  ▶ $ sed -n 770,900p src/agent_builder.rs; echo ----; sed -n 985,1095p src/agent_buil…  ▶ $ grep -n "fn openrouter_anthropic_preset_id" -A40 src/providers.rs; git show 7076… ✓ (7ms)
+ ✓ (12ms)
+  ▶ $ sed -n 60,200p src/format/cost.rs; Y=~/.cargo/registry/src/index.crates.io-1949c… ✓ (21ms)
+  ▶ $ Y=~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.25.16; sed -n… ✓ (3ms)
+  ▶ $ Y=~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.25.16; grep -… ✓ (31ms)
+  ▶ $ Y=~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.25.16; sed -n… ✓ (10ms)
+  ▶ $ cargo build 2>&1 | tail -2; mkdir -p /tmp/probe; for m in "" "--model amazon.nov… ✓ (40.1s)
+  ▶ $ B=$PWD/target/debug/yoyo; cd /tmp/probe; for m in "" "--model amazon.nova-pro-v1… ✓ (16.0s)
+  ▶ $ cd /tmp; curl -sL https://docs.anthropic.com/en/docs/about-c… (10 lines) ✓ (750ms)
+  ▶ $ cd /tmp; python3 - <<'EOF' (8 lines) ✓ (20ms)
+  ▶ $ cd /tmp; for u in https://docs.anthropic.com/en/docs/about-c… (10 lines) ✓ (1.8s)
+  ▶ $ cd /tmp; curl -sL https://docs.anthropic.com/en/docs/about-c… (9 lines) ✓ (662ms)
+  ▶ $ cd /tmp; for u in https://docs.anthropic.com/en/docs/about-c… (12 lines) ✓ (2.2s)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null || cd /home/runner/work/yoyo-evolv… ✓ (6ms)
+  ▶ $ sed -n 1,120p src/model_limits_note.rs; Y=~/.cargo/registry/src/index.crates.io-… ✓ (6ms)
+  ▶ $ Y=~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.25.16; sed -n… ✓ (5ms)
+  ▶ $ Y=~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.25.16; grep -… ✓ (10ms)
+  ▶ $ gh issue view 1116 --json title,body,state,comments -q '.title,.state,.body,(.co… ✓ (365ms)
+  ▶ $ grep -rn "anthropic_preset_tests\|openrouter_preset_tests" src/*.rs | grep mod; … ✓ (14ms)
+  ▶ $ grep -n "DEFAULT\|const .*: usize\|fn main_limit\|providers" tests/module_size.r… ✓ (8ms)
+  ▶ $ grep -rn "sonnet-4.6\|sonnet-4-6" src/*.rs src/**/*.rs | grep -v "^src/providers… ✓ (8ms)
+  ▶ $ sed -n 1,90p src/guessed_limits_arms_tests.rs; sed -n 75,100p src/openrouter_pre… ✓ (6ms)
+  ▶ $ cd /tmp; curl -sL https://docs.anthropic.com/en/docs/build-w… (8 lines) ✓ (563ms)
+  ▶ $ git show 7076903c -- src/format/cost.rs | sed -n 1,80p | grep -n "^[+-]" ; grep … ✓ (7ms)
+  ▶ $ grep -rn "mod xai_region" src/format/; f=$(grep -rln "fn region_row" src/); echo… ✓ (13ms)
+  ▶ $ grep -rn "reprice\|lookup_price\|list_priced\|install_override\|enable_live" src… ✓ (27ms)
+  ▶ $ grep -rn "\.reprice()\|list_priced = " ~/.cargo/registry/src/index.crates.io-194… ✓ (6ms)
+  ▶ $ grep -n "pub list_priced\|list_priced:" ~/.cargo/registry/src/index.crates.io-19… ✓ (4ms)
+  ▶ $ grep -n "cost\|pricing" src/openrouter_preset_tests.rs | head -20; grep -n "pub … ✓ (6ms)
+  ▶ $ grep -n "mod cost\|pub use cost" src/format/mod.rs; grep -rn "model_pricing_with… ✓ (12ms)
+  ▶ edit src/providers.rs (1 → 24 lines)
+  + /// #1116: a Bedrock Claude id -> the anthropic preset id it is the same model
+  + /// as. Bedrock spells them `[geo.]anthropic.<id>[-vN[:M]]` (`us.`, `eu.`,
+  + /// `apac.`, `global.` are cross-region inference profiles; `-v1:0` is
+  + /// Bedrock's version suffix). `None` for any other vendor (`amazon.nova-…`,
+  + /// `meta.llama…`) and for an ARN, so those stay on the bedrock guess.
+  + pub(crate) fn bedrock_anthropic_preset_id(model: &str) -> Option<&str> {
+  +     let id = model.strip_prefix("anthropic.").or_else(|| {
+  +         let (geo, rest) = model.split_once('.')?;
+  +         let geo_ok = !geo.is_empty() && geo.bytes().all(|b| b.is_ascii_lowercase() || b == b'-');
+  +         geo_ok.then_some(rest)?.strip_prefix("anthropic.")
+  +     })?;
+  +     let id = match id.rsplit_once("-v") {
+  +         Some((head, ver))
+  +             if ver.starts_with(|c: char| c.is_ascii_digit())
+  +                 && ver.bytes().all(|b| b.is_ascii_digit() || b == b':') =>
+  +         {
+  +             head
+  +         }
+  +         _ => id,
+  +     };
+  ... (4 more lines)
+ ✓ (16.2s)
+  + /// #1116: a Bedrock Claude id -> the anthropic preset id it is the same model
+  + /// as. Bedrock spells them `[geo.]anthropic.<id>[-vN[:M]]` (`us.`, `eu.`,
+  + /// `apac.`, `global.` are cross-region inference profiles; `-v1:0` is
+  + /// Bedrock's version suffix). `None` for any other vendor (`amazon.nova-…`,
+  + /// `meta.llama…`) and for an ARN, so those stay on the bedrock guess.
+  + pub(crate) fn bedrock_anthropic_preset_id(model: &str) -> Option<&str> {
+  +     let id = model.strip_prefix("anthropic.").or_else(|| {
+  +         let (geo, rest) = model.split_once('.')?;
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  32 tools completed in 3m 56s (32 ✓)
+
+Expected (consumer comes next). Now the tests:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n 60,151p src/anthropic_preset_tests.rs ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cat >> src/anthropic_preset_tests.rs <<'EOF' (171 lines) ✓ (8ms)
+  ▶ $ python3 - <<'EOF' (39 lines) ✓ (17ms)
+  ▶ $ Y=~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.25.16; grep -… ✓ (6ms)
+  ▶ $ Y=~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.25.16; grep -… ✓ (10ms)
+  ▶ $ Y=~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.25.16; sed -n… ✓ (4ms)
+  ▶ $ python3 - <<'EOF' (9 lines) ✓ (15ms)
+  ▶ $ sed -n 1,12p src/format/cost.rs; sed -n 120,140p src/format/cost/xai_region.rs ✓ (4ms)
+  ▶ $ cat > src/format/cost/bedrock_region.rs <<'EOF' (77 lines) ✓ (16.9s)
+  ▶ $ cargo test 2>&1 | grep -E "^test .*FAILED|panicked|test result|failures:" | head… ✓ (1m 49s)
+  ▶ $ cargo test 2>&1 | grep -E "FAILED|panicked" -A4 | head -60 ✓ (1m 22s)
+  ▶ $ sed -n 2795,2840p src/commands_info.rs; grep -n "fn model_context_window" -A30 s… ✓ (6ms)
+  ▶ $ sed -n 2811,2816p src/commands_info.rs; grep -n '"claude-sonnet-4-6", Some(1_000… ✓ (4ms)
+  ▶ $ python3 - <<'EOF' (7 lines) ✓ (13ms)
+  ▶ $ sed -i 's|            // preset now, still 1M (see test_model_context_window abo… ✓ (6ms)
+  ▶ $ python3 - <<'EOF' (52 lines) ✓ (18ms)
+  ▶ $ sed -n 1,15p src/output_ceiling_tests.rs; sed -n 45,60p src/output_ceiling_tests… ✓ (4ms)
+  ▶ $ python3 - <<'EOF' (19 lines) ✓ (15ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  18 tools completed in 5m 7s (18 ✓)
+
+Add a row for the bedrock default itself (no ceiling declared → no warning even at 128000):
+  ╭─ Turn 50 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 - <<'EOF' (26 lines) ✓ (22ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ python3 - <<'EOF' (15 lines) ✓ (12ms)
+  ▶ $ python3 - <<'EOF' (7 lines) ✓ (2m 20s)
+  ▶ $ cargo test 2>&1 | grep -E "FAILED|panicked|failed|error" | head -20 ✓ (1m 11s)
+  ▶ $ cargo test > /tmp/t.log 2>&1; echo exit=$?; grep -E "^test .* FAILED|panicked at… ✓ (1m 37s)
+  ▶ $ grep -A15 "panicked at tests/orphan_modules.rs" /tmp/t.log | head -25; grep -rn … ✓ (5ms)
+  ▶ $ python3 - <<'EOF' (7 lines) ✓ (8.7s)
+  ▶ $ sed -n 192,200p tests/module_size.rs ✓ (2ms)
+  ▶ $ python3 - <<'EOF' (11 lines) ✓ (318ms)
+  ▶ $ cargo build 2>&1 | tail -1; B=$PWD/target/debug/yoyo; (cd /tmp/probe; for m in "… ✓ (24.1s)
+  ▶ $ sed -n 160,176p docs/src/configuration/models.md ✓ (2ms)
+  ▶ $ python3 - <<'EOF' (17 lines) ✓ (17ms)
+  ▶ $ sed -n 250,275p docs/src/features/cost-tracking.md ✓ (2ms)
+  ▶ $ grep -n "^##" docs/src/features/cost-tracking.md | head -20 ✓ (4ms)
+  ▶ $ sed -n 112,153p docs/src/features/cost-tracking.md ✓ (3ms)
+  ▶ $ sed -n 124,135p docs/src/features/cost-tracking.md ✓ (2ms)
+  ▶ $ python3 - <<'EOF' (23 lines) ✓ (15ms)
+  ▶ $ cat > /tmp/chk.rs <<'EOF' (3 lines) ✓ (6ms)
+  ▶ $ python3 - <<'EOF' (12 lines) ✓ (3m 50s)
+  ▶ $ cp src/agent_builder.rs /tmp/ab.bak; sed -i 's|            if let Some(p) = pres… ✓ (1m 52s)
+  ▶ $ cp src/format/cost/bedrock_region.rs /tmp/br.bak; sed -i 's|    if model.starts_… ✓ (24.9s)
+  ▶ $ git status --short; cargo clippy --all-targets -- -D warnings 2>&1 | tail -1; ca… ✓ (40.4s)
+  ▶ $ git status --short | cat ✓ (5ms)
+  ▶ $ git status --short | sed -n 1,20p | tr '\n' ';' ✓ (6ms)
+  ▶ $ grep -n -i "filing issues" -A25 skills/evolve/SKILL.md | grep -i "label\|gh issu… ✓ (4ms)
+  ▶ $ N=$(gh issue create --repo yologdev/yoyo-evolve --label agen… (5 lines) ✓ (1.9s)
+  ▶ $ cat > /tmp/msg.txt <<'EOF' (64 lines) ✓ (24ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  27 tools completed in 14m 22s (27 ✓)
+
+Fixed and committed as fdc1ab5e (closes #1116). The default bedrock model is still anthropic.claude-sonnet-4-6. It now runs on Anthropic's published limits, so the guessed-limits warning no longer prints. I couldn't test a real Bedrock call because there's no AWS key here; the checks below used dummy credentials and a dead endpoint.
+
+What I measured on the built binary
+• Before: the default printed ⚠ no preset is known for bedrock model 'anthropic.claude-sonnet-4-6', so yoyo is using guessed limits: a 200000-token context window and max_tokens = 16000.
+• After: the default prints no warning and runs with a 1,000,000-token window and max_tokens = 64000. amazon.nova-pro-v1:0 still gets the same warning, which is correct because it really is a guess.
+
+What changed
+• A Sonnet 4.6 row in `anthropic_preset`. yoagent has no Sonnet 4.6 preset, so I wrote the row by hand from Anthropic's docs: 1M window, 128K max output, $3 in / $15 out, $3.75 cache write, $0.30 cache read, and no extra charge for long context. OpenRouter's catalog lists the same figures. The default request size is 64K of the 128K maximum, the same split yoagent's other 1M Claude presets use. As a side effect, anthropic/claude-sonnet-4.6 on OpenRouter and claude-sonnet-4-6 on Anthropic now use this row too.
+• Bedrock id mapping. A new providers::bedrock_anthropic_preset_id turns ids like us.anthropic.claude-sonnet-4-6 or anthropic.claude-…-v1:0 into the matching preset id. Other vendors (amazon., meta.), ARNs and empty ids get nothing. The bedrock arm copies the preset's limits and price onto its config. The URL and the bedrock_converse_stream API are unchanged, and a test checks that.
+• /cost. Before, the default was charged the flat $3/$15 Sonnet rate. Anthropic's pricing page says Bedrock charges 10% more on regional endpoints than on global. for Claude 4.5 and later. The model id's prefix says which endpoint is used, so the new src/format/cost/bedrock_region.rs charges global. ids the base rate and every other Claude id 1.1x. The default now comes out at $3.30 / $4.125 / $0.33 / $16.50. Sonnet 4 has no preset and predates the 10% extra, so its price is exactly as before.
+
+Tests
+• New tests in src/anthropic_preset_tests.rs cover:
+  • the Sonnet 4.6 figures, typed from the docs
+  • the id mapping, with 16 example ids
+  • the bedrock arm's limits and endpoint
+  • the near-misses (nova, Sonnet 4) that must still warn
+  • the /cost price for each endpoint prefix
+• I broke the arm's mapping and then the 10% markup, one at a time, and restored each. Each break made the relevant new tests fail.
+• Five existing tests that pinned the old guessed behaviour were updated on purpose; each is explained in the commit message.
+• Build, test, clippy and fmt all pass.
+
+Gate entries and docs: the size limits went up to 4976 for agent_builder.rs and 3656 for cost.rs. docs/src/configuration/models.md no longer says every bedrock id is a guess. docs/src/features/cost-tracking.md now has the Sonnet 4.6 row and the Bedrock endpoint rule.
+
+Still open, filed as #1121:
+• Ids with a region prefix, such as us.anthropic.claude-sonnet-4-6, now get the right limits. But at startup they still print "Unknown model", because that check needs an exact match in bedrock's list of known ids.
+• Other Claude ids in that list (opus-4-7, sonnet-4-5, sonnet-4) have no preset, so they still run on the guessed limits.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 0/1 changed files were in top-10 predictions (0.0% accuracy)
+     Surprises (not predicted): src/providers.rs

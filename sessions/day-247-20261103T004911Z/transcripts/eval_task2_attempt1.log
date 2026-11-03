@@ -1,0 +1,36 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; ls target/debug… ✓ (2.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; B=$PWD/target/debug/yoyo; ls -l --… ✓ (375ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; mkdir -p sessi… (9 lines) ✓ (9ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 28.5s (3 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_2.md.
+
+Binary check. I ran the built binary from an empty temp directory, because the repo's own .yoyo.toml sets claude-opus-5-5 and that would have hidden the result. The binary was built after the last source edit.
+• --provider bedrock with no model (the default anthropic.claude-sonnet-4-6): no guessed-limits warning.
+• --model amazon.nova-pro-v1:0: still warns: `⚠ no preset is known for bedrock model 'amazon.nova-pro-v1:0', so yoyo is using guessed limits: a 200000-token context window and max_tokens = 16000…`
+
+What the diff does:
+• New preset row. claude-sonnet-4-6 now has its own entry, with Anthropic's figures and the source pages cited: a 1M window, max_tokens 64K out of the 128K maximum, $3 in / $15 out, cache write $3.75 and cache read $0.30.
+• Mapper. A new function, bedrock_anthropic_preset_id, turns Bedrock Claude ids into preset ids. Its table test covers:
+  • the bare default
+  • the us., eu., apac. and global. prefixes
+  • dated ids with a -v1:0 suffix
+  • Amazon Nova and Meta Llama ids, which return nothing
+  • an ARN and malformed ids, which also return nothing
+• Wiring. The preset is applied inside the bedrock arm of create_model_config, which build_agent calls. That is a different spot from the one the task named, but the effect is the same. The Bedrock URL and bedrock_converse_stream are unchanged and a test asserts them. The default model id is also unchanged, and asserted.
+• Pricing. This is modelled from the id prefix in a new file, cost/bedrock_region.rs. global. ids bill at the preset's rate. All other Bedrock Claude ids (bare, us., eu., apac.) bill at 1.1x, so the default comes to $3.30 / $16.50. With pricing done, the task allows Fixes #1116 rather than Part of #1116. I didn't see the commit message itself.
+
+Other checks:
+• New code is all used. Every new function has a caller in this diff. The tests whose assumptions changed were updated to match.
+• Size limits. The size-limit entries in tests/module_size.rs were raised with reason comments: agent_builder.rs to 4976 and cost.rs to 3656.
+• Docs. docs/src/configuration/models.md and docs/src/features/cost-tracking.md were both updated.
+• Off-limits files. src/config.rs and src/cli.rs were not touched.
+
+One small cleanup note: the diff also contains an unrelated line appended to .yoyo/risk_validations.jsonl. It's harmless and not a reason to fail.
+  watch: no files changed this turn — skipping
