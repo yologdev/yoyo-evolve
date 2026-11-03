@@ -822,18 +822,25 @@ pub(crate) fn outline_usage(surface: DoctorSurface) -> String {
     )
 }
 
+/// Split `/outline`'s text into (query, `--all` given). `--all` counts first
+/// or last (#1111: `yoyo outline --all x` used to search for "--all x").
+fn parse_outline_query(rest: &str) -> (&str, bool) {
+    if rest == "--all" {
+        ("", true)
+    } else if let Some(q) = rest.strip_suffix(" --all") {
+        (q.trim(), true)
+    } else if let Some(q) = rest.strip_prefix("--all ") {
+        (q.trim(), true)
+    } else {
+        (rest, false)
+    }
+}
+
 /// The `/outline` body; returns `false` when it printed usage (no query).
 fn outline_body(input: &str, surface: DoctorSurface) -> bool {
     let rest = input.strip_prefix("/outline").unwrap_or(input).trim();
 
-    // Parse --all flag
-    let (query, show_all) = if rest.ends_with(" --all") {
-        (rest.trim_end_matches(" --all").trim(), true)
-    } else if rest == "--all" {
-        ("", true)
-    } else {
-        (rest, false)
-    };
+    let (query, show_all) = parse_outline_query(rest);
 
     if query.is_empty() {
         println!("{}", outline_usage(surface));
@@ -1267,6 +1274,37 @@ pub struct GrepArgs {
     /// When true, show match counts per file instead of individual lines.
     pub count_only: bool,
 }
+
+/// Every flag [`parse_grep_args`] recognises (#1111). The shell door
+/// (`yoyo grep`) refuses any other dash-led word before `--` from this list, so
+/// it is the one authority: `grep_flag_list_matches_its_parser` fails if the
+/// parser's match arms and this list ever disagree.
+pub(crate) const GREP_FLAGS: &[&str] = &[
+    "-s",
+    "--case",
+    "-C",
+    "--context",
+    "-B",
+    "--before",
+    "-A",
+    "--after",
+    "--include",
+    "--exclude",
+    "-c",
+    "--count",
+];
+
+/// The [`GREP_FLAGS`] that take the next word as their value (N or a glob).
+pub(crate) const GREP_VALUE_FLAGS: &[&str] = &[
+    "-C",
+    "--context",
+    "-B",
+    "--before",
+    "-A",
+    "--after",
+    "--include",
+    "--exclude",
+];
 
 /// Parse `/grep` arguments.
 ///
@@ -2314,6 +2352,47 @@ mod tests {
             handle_outline_status("/outline zz_no_such_symbol_982", DoctorSurface::Repl),
             0
         );
+    }
+
+    /// #1111: `GREP_FLAGS` is what the shell door lets through, so it must be
+    /// exactly the dash-led literals `parse_grep_args` matches (both ways),
+    /// and every value flag must really consume its value.
+    #[test]
+    fn outline_all_counts_first_or_last() {
+        assert_eq!(parse_outline_query("--all"), ("", true));
+        assert_eq!(parse_outline_query("main --all"), ("main", true));
+        assert_eq!(parse_outline_query("--all main"), ("main", true));
+        assert_eq!(parse_outline_query("main"), ("main", false));
+        assert_eq!(parse_outline_query("--allx"), ("--allx", false));
+        assert_eq!(parse_outline_query(""), ("", false));
+    }
+
+    #[test]
+    fn grep_flag_list_matches_its_parser() {
+        let src = include_str!("commands_search.rs");
+        let start = src.find(&format!("pub fn {}(", "parse_grep_args")).unwrap();
+        let body = &src[start..];
+        let body = &body[..body.find("\n}\n").unwrap()];
+        let mut in_parser: Vec<&str> = body
+            .split('"')
+            .skip(1)
+            .step_by(2)
+            .filter(|l| l.starts_with('-') && *l != "--" && !l.contains(' '))
+            .collect();
+        in_parser.sort_unstable();
+        in_parser.dedup();
+        let mut listed = GREP_FLAGS.to_vec();
+        listed.sort_unstable();
+        assert_eq!(in_parser, listed, "GREP_FLAGS and parse_grep_args disagree");
+        for f in GREP_VALUE_FLAGS {
+            assert!(GREP_FLAGS.contains(f), "{f} is a value flag but not listed");
+            let args = parse_grep_args(&format!("/grep {f} 3 pat")).unwrap();
+            assert_eq!(args.pattern, "pat", "{f} did not consume its value");
+        }
+        for f in GREP_FLAGS.iter().filter(|f| !GREP_VALUE_FLAGS.contains(f)) {
+            let args = parse_grep_args(&format!("/grep {f} pat")).unwrap();
+            assert_eq!(args.pattern, "pat", "{f} was taken as the pattern");
+        }
     }
 
     #[test]

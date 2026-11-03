@@ -164,6 +164,28 @@ fn positional_after_verb(args: &[String]) -> Vec<&String> {
     out
 }
 
+/// Exit 2 before the handler runs when [`crate::verb_flags::verb_flag_refusal`]
+/// refuses (#1111):
+/// `yoyo find --bogus` used to search for `--bogus` and exit 0.
+fn refuse_unknown_verb_flag(args: &[String]) {
+    if let Some(msg) = crate::verb_flags::verb_flag_refusal(args) {
+        eprintln!("{RED}error:{RESET} {msg}");
+        exit_if_nonzero(2);
+    }
+}
+
+/// The operands after the verb with the first `--` removed (#1111), so
+/// `yoyo find -- --weird-name` searches for `--weird-name`. Refuses first.
+fn verb_operands(args: &[String]) -> Vec<String> {
+    refuse_unknown_verb_flag(args);
+    crate::verb_flags::drop_end_of_flags(args.get(2..).unwrap_or_default())
+}
+
+/// `["yoyo", verb] + ops` — for arms whose handler takes a joined command.
+fn verb_with(args: &[String], ops: &[String]) -> Vec<String> {
+    args[..2].iter().chain(ops).cloned().collect()
+}
+
 /// Refuse a stray argument with the usage-error code 2 (#982): `yoyo status
 /// zzz` used to print its normal output and exit 0, ignoring the typo.
 /// Nothing reaches stdout, since the refusal runs before the arm's handler.
@@ -520,7 +542,8 @@ pub(crate) fn try_dispatch_subcommand_in(
                 // #1009: plain join, not `quote_args_as_command` — `/outline`
                 // never tokenizes quotes, so `"dir sp/a b.rs"` was searched
                 // for with its quotes. Unspaced args join identically.
-                let input = join_args_as_command(args);
+                // #1111: an unknown flag (not `--all`) refuses; `--` is dropped.
+                let input = join_args_as_command(&verb_with(args, &verb_operands(args)));
                 // #982: 2 with no query (usage); no match stays 0.
                 exit_if_nonzero(crate::commands_search::handle_outline_status(&input, Shell));
                 return Some(None);
@@ -583,6 +606,9 @@ pub(crate) fn try_dispatch_subcommand_in(
                 return Some(None);
             }
             "grep" => {
+                // #1111: a flag not in GREP_FLAGS refuses; grep's own parser
+                // reads `--`, so the args go on unchanged.
+                refuse_unknown_verb_flag(args);
                 let input = quote_args_as_command(args);
                 exit_if_nonzero(crate::commands_search::handle_grep_status(&input, Shell));
                 return Some(None);
@@ -591,7 +617,8 @@ pub(crate) fn try_dispatch_subcommand_in(
                 // #1009: argv verbatim, not `quote_args_as_command`. #982: 2 for
                 // extra args or no pattern, 1 when a directory could not be read
                 // (find(1)'s code); no match stays 0.
-                let pattern = match find_pattern_from_argv(&args[2..]) {
+                // #1111: find has no flags; `-- -x` searches for `-x`.
+                let pattern = match find_pattern_from_argv(&verb_operands(args)) {
                     Ok(p) => p,
                     Err(refusal) => {
                         eprintln!("{refusal}");
@@ -622,7 +649,8 @@ pub(crate) fn try_dispatch_subcommand_in(
             "def" => {
                 // Same join reasoning; `normalize_symbol_query`'s forgiveness of
                 // `foo()` / `&foo` / `mod::foo` comes along unchanged.
-                let input = join_args_as_command(args);
+                // #1111: def has no flags; an unknown one refuses.
+                let input = join_args_as_command(&verb_with(args, &verb_operands(args)));
                 // #982: 2 with no symbol (usage); not found stays 0.
                 exit_if_nonzero(crate::commands_search::handle_def_status(&input, Shell));
                 return Some(None);
@@ -679,11 +707,14 @@ pub(crate) fn try_dispatch_subcommand_in(
             "docs" => {
                 // #1009: `/docs` splits on whitespace, so argv[2] goes in as the
                 // crate token whole (`cargo info "a b"` rejects it whole too).
-                exit_if_nonzero(match &args[2..] {
+                // #1111: refused before the docs.rs call for crate `--bogus`.
+                let ops = verb_operands(args);
+                exit_if_nonzero(match ops.as_slice() {
                     [] => crate::commands_project::handle_docs_status("/docs"),
                     // An empty/blank crate is still usage (exit 2), as before.
                     [krate, ..] if krate.trim().is_empty() => {
-                        crate::commands_project::handle_docs_status(&join_args_as_command(args))
+                        let input = join_args_as_command(&verb_with(args, &ops));
+                        crate::commands_project::handle_docs_status(&input)
                     }
                     [krate, item @ ..] => {
                         crate::commands_project::docs_lookup_status(krate, &item.join(" "))
@@ -748,7 +779,12 @@ pub(crate) fn try_dispatch_subcommand_in(
                 return Some(None);
             }
             "changelog" => {
-                let input = quote_args_as_command(args);
+                // #1111: one optional count, as `evolution`; a flag (even `-5`)
+                // or a second word refuses, so `--bogus` no longer prints 15.
+                let ops = verb_operands(args);
+                let numeric = ops.first().is_some_and(|a| a.parse::<usize>().is_ok());
+                refuse_stray_arg("changelog [N]", ops.get(usize::from(numeric)));
+                let input = format!("/changelog {}", ops.join(" "));
                 exit_if_nonzero(crate::commands_info::handle_changelog_status(&input));
                 return Some(None);
             }
@@ -871,7 +907,8 @@ pub(crate) fn try_dispatch_subcommand_in(
                 // Plain join: handle_memories treats the remainder verbatim as
                 // a search query (no tokenize_quoted in commands_memory.rs), so
                 // re-quoting a multi-word query would search for literal `"`s.
-                let input = join_args_as_command(args);
+                // #1111: an unknown flag refuses; `-- -x` searches for `-x`.
+                let input = join_args_as_command(&verb_with(args, &verb_operands(args)));
                 crate::commands_memory::handle_memories(&input);
                 return Some(None);
             }

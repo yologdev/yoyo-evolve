@@ -35,6 +35,13 @@ All commands start with `/`. Type `/help` inside yoyo to see the full list.
 > | `yoyo status` | Show version, git branch, and working directory |
 > | `yoyo undo` | Undo changes (e.g. `yoyo undo --last-commit`) |
 >
+> `grep`, `find`, `def`, `outline`, `memories`, `docs` and `changelog` refuse a dash-led word
+> that is not one of their own flags (exit 2, nothing runs): `yoyo find --bogus` used to
+> search for `--bogus`. Their own flags still work (`grep -c`, `grep --include '*.rs'`,
+> `outline handle --all`), and `--` ends flag parsing, so `yoyo find -- --weird-name`
+> searches for a name that starts with a dash. `changelog` takes one optional count
+> (`yoyo changelog 5`); any other word is refused.
+>
 > `doctor` honors `--provider` and `--model` if you want to point it at a non-default setup
 > (e.g. `yoyo doctor --provider openai`). Inside the REPL, the same checks are available
 > as `/doctor` and `/health`. When `doctor` finds any Warn/Fail check, it prints a one-line

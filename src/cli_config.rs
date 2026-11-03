@@ -464,6 +464,18 @@ Run yoyo --help for the list of flags."
 /// `positional_after_verb` (#1111), so both doors give one hint.
 pub(crate) fn unknown_flags_in(words: &[String]) -> Option<String> {
     use crate::cli::{FLAGS_NEEDING_VALUES, KNOWN_FLAGS};
+    unknown_flags_among(words, KNOWN_FLAGS, FLAGS_NEEDING_VALUES)
+}
+
+/// [`unknown_flags_in`] over any flag list: `known` are the flags that
+/// pass, `valued` the ones whose next word is skipped. A shell
+/// verb's own list (#1111: `grep`'s, `outline`'s, or none) uses this, so a
+/// subcommand typo gets the same wording and did-you-mean as a top-level one.
+pub(crate) fn unknown_flags_among(
+    words: &[String],
+    known: &[&str],
+    valued: &[&str],
+) -> Option<String> {
     let mut parts = Vec::new();
     let mut skip_next = false;
     for arg in words {
@@ -474,19 +486,19 @@ pub(crate) fn unknown_flags_in(words: &[String]) -> Option<String> {
         if !arg.starts_with('-') || arg == "-" || arg.chars().any(char::is_whitespace) {
             continue;
         }
-        if FLAGS_NEEDING_VALUES.contains(&arg.as_str()) {
+        if valued.contains(&arg.as_str()) {
             skip_next = true;
             continue;
         }
-        if KNOWN_FLAGS.contains(&arg.as_str()) {
+        if known.contains(&arg.as_str()) {
             continue;
         }
         let shown = crate::cli::sanitize_for_display(arg);
         let hint = match arg.split_once('=') {
-            Some((name, _)) if KNOWN_FLAGS.contains(&name) => {
+            Some((name, _)) if known.contains(&name) => {
                 format!(" (write the value as its own word: {name} <value>)")
             }
-            _ => crate::commands::closest_match(arg, KNOWN_FLAGS, 2)
+            _ => crate::commands::closest_match(arg, known, 2)
                 .map(|m| format!(" (did you mean {m}?)"))
                 .unwrap_or_default(),
         };

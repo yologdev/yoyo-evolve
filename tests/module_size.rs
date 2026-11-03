@@ -358,7 +358,10 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 248 (#1127): 4573 -> 4676 (+103): +20 earlier unrecorded drift (4593 at
     // HEAD), +83 for `grep_usage`/`def_usage`/`outline_usage(surface)` so the shell
     // says `yoyo grep` not `/grep`, and their per-surface + REPL byte-identity tests, pasted.
-    ("src/commands_search.rs", 4676),
+    // Day 248 (#1111): 4676 -> 4755 (+79: GREP_FLAGS / GREP_VALUE_FLAGS, the
+    // shell door's one authority for grep's flags, `parse_outline_query`, and
+    // their tests incl. the list-vs-parser pin), pasted.
+    ("src/commands_search.rs", 4755),
     // Day 163 (#716): +99 lines — spawn_dir_restrictions confines a spawn
     // worker's file tools to its worktree (bash_cwd only pinned bash), plus
     // three regression tests covering no-worktree passthrough, the confined
@@ -445,7 +448,10 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // exits 1 on an unreadable config; test in tests/integration.rs), pasted.
     // Day 248 (#1127): 2522 -> 2603 (+81), all earlier unrecorded drift; this task's
     // grep/def/outline arms passing `Shell` are line-neutral, pasted.
-    ("src/dispatch_sub.rs", 2603),
+    // Day 248 (#1111): 2603 -> 2640 (+37: the seven operand verbs' arms call
+    // `verb_operands` / `refuse_unknown_verb_flag`; the pure decision and its
+    // tests live in src/verb_flags.rs so this file did not absorb them), pasted.
+    ("src/dispatch_sub.rs", 2640),
     // Day 209: 3439 -> 3455 (+16, within the drift band, pasted rather than left to absorb).
     // #937 option 1: nine lines of doc above `builtin_model_pricing` naming both ignored
     // audit commands (deliverable 4 — an alarm nobody can find is the #745/#767/#769
