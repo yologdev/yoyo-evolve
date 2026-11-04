@@ -3876,6 +3876,49 @@ fn map_takes_one_spaced_argv_element_as_one_path() {
     assert!(String::from_utf8_lossy(&bare.stdout).contains("main"));
 }
 
+#[test]
+fn map_of_private_only_files_says_none_are_public_not_no_files() {
+    // Day 249: a file whose symbols are all private printed "(no supported
+    // source files with symbols found)", a false claim with no pointer at
+    // `--all`. The default map is public-only; the empty branch now names
+    // what the filter hid and the shell command that shows it.
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        dir.path().join("a.rs"),
+        "fn main(){}\nfn helper(x: i32) -> i32 { x }\n",
+    )
+    .unwrap();
+    let (code, out, err) = yoyo_plain_in(dir.path(), &["map"]);
+    assert_eq!(code, Some(0), "stdout={out:?} stderr={err:?}");
+    assert_eq!(
+        out,
+        "  Building repo map...\n  (2 symbols in 1 file, none public; run `yoyo map --all` to show them)\n\n"
+    );
+    let (code, out, _) = yoyo_plain_in(dir.path(), &["map", "a.rs"]);
+    assert_eq!(code, Some(0));
+    assert!(
+        out.contains("run `yoyo map --all a.rs` to show them"),
+        "{out:?}"
+    );
+    // Near misses: --all lists them; a dir with only an unsupported file and
+    // an empty dir keep the old message byte-identically.
+    let (code, out, _) = yoyo_plain_in(dir.path(), &["map", "--all"]);
+    assert_eq!(code, Some(0));
+    assert!(out.contains("fn helper"), "{out:?}");
+    for files in [&[][..], &["notes.txt"][..]] {
+        let empty = tempfile::tempdir().expect("tempdir");
+        for f in files {
+            std::fs::write(empty.path().join(f), "fn x(){}\n").unwrap();
+        }
+        let (code, out, _) = yoyo_plain_in(empty.path(), &["map"]);
+        assert_eq!(code, Some(0));
+        assert_eq!(
+            out, "  Building repo map...\n  (no supported source files with symbols found)\n\n",
+            "{files:?}"
+        );
+    }
+}
+
 /// Run yoyo in `dir` with `NO_COLOR=1` so the asserted bytes carry no ANSI.
 fn yoyo_plain_in(dir: &std::path::Path, args: &[&str]) -> (Option<i32>, String, String) {
     let ceiling = dir.parent().unwrap_or(dir);

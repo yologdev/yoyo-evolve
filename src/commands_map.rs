@@ -534,6 +534,45 @@ fn parse_map_tokens<'a>(parts: impl IntoIterator<Item = &'a str>) -> MapArgs {
 /// The honest-empty line `/map` prints (exit 0) when nothing has symbols.
 pub(crate) const MAP_EMPTY_MESSAGE: &str = "(no supported source files with symbols found)";
 
+/// What `/map` prints when its public-only build came back empty, given the
+/// all-symbols build of the same files. Empty `all_entries` is the honest
+/// "nothing here" ([`MAP_EMPTY_MESSAGE`], byte-identical). Otherwise symbols
+/// exist and the public-only filter hid every one (a Rust binary crate, a
+/// script dir, a Python module of `_private` names), so saying "no supported
+/// source files" would be false: this names the counts and the `--all` command
+/// in the caller's own syntax (`all_cmd`, from [`map_all_command`]).
+pub(crate) fn map_empty_message(all_entries: &[FileSymbols], all_cmd: &str) -> String {
+    if all_entries.is_empty() {
+        return MAP_EMPTY_MESSAGE.to_string();
+    }
+    let symbols: usize = all_entries.iter().map(|e| e.symbols.len()).sum();
+    let files = all_entries.len();
+    format!(
+        "({symbols} symbol{} in {files} file{}, none public; run `{all_cmd}` to show them)",
+        if symbols == 1 { "" } else { "s" },
+        if files == 1 { "" } else { "s" },
+    )
+}
+
+/// The `--all` command to suggest, in the surface's syntax: `prefix` is
+/// `"yoyo map"` (shell) or `"/map"` (REPL), and the path filter is carried so
+/// the suggestion maps the same files. A shell path with characters outside a
+/// plain set is single-quoted; the REPL splits on whitespace, so its path can
+/// never need quoting.
+pub(crate) fn map_all_command(prefix: &str, path: Option<&str>) -> String {
+    let Some(path) = path else {
+        return format!("{prefix} --all");
+    };
+    let plain = path
+        .chars()
+        .all(|c| c.is_alphanumeric() || "/._-+,:@%=".contains(c));
+    if plain || prefix.starts_with('/') {
+        format!("{prefix} --all {path}")
+    } else {
+        format!("{prefix} --all '{}'", path.replace('\'', "'\\''"))
+    }
+}
+
 /// Exit status for `yoyo map` when its path does not exist (#982): 1, the
 /// same code `yoyo blame <missing path>` uses.
 pub(crate) const MAP_MISSING_PATH_EXIT: i32 = 1;
@@ -572,16 +611,18 @@ pub fn handle_map(input: &str) {
 /// exist, [`MAP_USAGE_EXIT`] for an argument error.
 pub fn handle_map_status(input: &str) -> i32 {
     let rest = input.strip_prefix("/map").unwrap_or("").trim();
-    map_status_for(parse_map_args(rest))
+    map_status_for(parse_map_args(rest), "/map")
 }
 
 /// Shell door for `yoyo map <argv…>` (#1009): argv elements reach the parser
 /// verbatim, never through `quote_args_as_command`'s `"..."` wrapping.
 pub fn handle_map_argv_status(argv: &[String]) -> i32 {
-    map_status_for(parse_map_argv(argv))
+    map_status_for(parse_map_argv(argv), "yoyo map")
 }
 
-fn map_status_for(parsed: MapArgs) -> i32 {
+/// `surface` is the command word as the user typed it (`"/map"` or
+/// `"yoyo map"`), used only to spell the `--all` suggestion.
+fn map_status_for(parsed: MapArgs, surface: &str) -> i32 {
     let (show_all, force_regex, path_filter) = match parsed {
         MapArgs::Ok {
             show_all,
@@ -616,7 +657,15 @@ fn map_status_for(parsed: MapArgs) -> i32 {
                 return MAP_MISSING_PATH_EXIT;
             }
         }
-        println!("{DIM}  {MAP_EMPTY_MESSAGE}{RESET}\n");
+        // Only an empty public-only map pays for the second, all-symbols
+        // scan: it tells "nothing here" apart from "all private".
+        let message = if public_only {
+            let (all, _) = build_repo_map_with_backend(path_filter, false, force_regex);
+            map_empty_message(&all, &map_all_command(surface, path_filter))
+        } else {
+            MAP_EMPTY_MESSAGE.to_string()
+        };
+        println!("{DIM}  {message}{RESET}\n");
         return 0;
     }
 
@@ -1139,6 +1188,94 @@ mod tests {
         // An unknown flag is a usage error.
         assert_eq!(handle_map_status("/map --bogus-flag"), MAP_USAGE_EXIT);
         assert_eq!(MAP_USAGE_EXIT, 2);
+    }
+
+    /// Build `files` (name, content) in a scratch dir and run the real map
+    /// build over it, so every count below is derived by the code path, never
+    /// typed into a fixture (lesson d210).
+    fn map_scratch(files: &[(&str, &str)], public_only: bool) -> Vec<FileSymbols> {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let names: Vec<String> = files.iter().map(|(n, _)| n.to_string()).collect();
+        for (name, body) in files {
+            std::fs::write(dir.path().join(name), body).unwrap();
+        }
+        let tl = dir.path().to_string_lossy().to_string();
+        build_repo_map_core(&names, Some(&tl), None, public_only, true, None).0
+    }
+
+    #[test]
+    fn map_empty_message_says_symbols_exist_but_none_are_public() {
+        let private = [("a.rs", "fn main(){}\nfn helper(x: i32) -> i32 { x }\n")];
+        // The default (public-only) build really is empty for this file...
+        assert!(map_scratch(&private, true).is_empty());
+        // ...and the all-symbols build is what the message counts.
+        let all = map_scratch(&private, false);
+        let shell = map_empty_message(&all, &map_all_command("yoyo map", None));
+        assert_eq!(
+            shell,
+            "(2 symbols in 1 file, none public; run `yoyo map --all` to show them)"
+        );
+        assert!(!shell.contains("no supported source files"));
+        // The REPL surface names its own syntax.
+        assert_eq!(
+            map_empty_message(&all, &map_all_command("/map", None)),
+            "(2 symbols in 1 file, none public; run `/map --all` to show them)"
+        );
+        // A path filter is carried into the suggested command.
+        assert_eq!(
+            map_empty_message(&all, &map_all_command("yoyo map", Some("a.rs"))),
+            "(2 symbols in 1 file, none public; run `yoyo map --all a.rs` to show them)"
+        );
+    }
+
+    #[test]
+    fn map_empty_message_near_misses_keep_the_old_text() {
+        let cmd = map_all_command("yoyo map", None);
+        // Truly empty: nothing to count.
+        assert_eq!(
+            map_empty_message(&map_scratch(&[], false), &cmd),
+            MAP_EMPTY_MESSAGE
+        );
+        // Only an unsupported file.
+        assert_eq!(
+            map_empty_message(&map_scratch(&[("notes.txt", "fn x(){}\n")], false), &cmd),
+            MAP_EMPTY_MESSAGE
+        );
+        assert_eq!(
+            MAP_EMPTY_MESSAGE,
+            "(no supported source files with symbols found)"
+        );
+        // A private-only file with --all lists its symbols (unchanged).
+        let all = map_scratch(&[("a.rs", "fn main(){}\nfn helper(){}\n")], false);
+        let names: Vec<&str> = all[0].symbols.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, ["main", "helper"]);
+        // One pub + one private, default: the pub one is listed (unchanged).
+        let mixed = map_scratch(&[("m.rs", "pub fn shown(){}\nfn hidden(){}\n")], true);
+        let names: Vec<&str> = mixed[0].symbols.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, ["shown"]);
+        // Plural/singular agree.
+        let one = map_scratch(&[("o.rs", "fn only(){}\n")], false);
+        assert_eq!(
+            map_empty_message(&one, &cmd),
+            "(1 symbol in 1 file, none public; run `yoyo map --all` to show them)"
+        );
+    }
+
+    #[test]
+    fn map_all_command_quotes_a_shell_path_only_when_needed() {
+        assert_eq!(
+            map_all_command("yoyo map", Some("src/")),
+            "yoyo map --all src/"
+        );
+        assert_eq!(
+            map_all_command("yoyo map", Some("dir sp")),
+            "yoyo map --all 'dir sp'"
+        );
+        assert_eq!(
+            map_all_command("yoyo map", Some("it's")),
+            "yoyo map --all 'it'\\''s'"
+        );
+        assert_eq!(map_all_command("/map", Some("src/")), "/map --all src/");
     }
 
     #[test]
