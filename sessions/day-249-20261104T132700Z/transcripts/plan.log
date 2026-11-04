@@ -1,0 +1,30 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md; wc -l src/prompt_retry.rs… ✓ (33ms)
+  ▶ $ cat > /tmp/wf.md <<'EOF' (15 lines) ✓ (1.3s)
+  ▶ write session_plan/task_01.md (24 lines)  ▶ write session_plan/task_02.md (20 lines)  ▶ write session_plan/issue_responses.md (10 lines)  ▶ $ git add session_plan/ && git commit -m "Day 249 (11:53): session plan" -q || tru… ✓ (0ms)
+ ✓ (0ms)
+ ✓ (1ms)
+ ✓ (8ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 48.3s (6 ✓)
+
+I've written the plan for this session: two task files and an issue-responses file in session_plan/. The planned commit didn't happen because session_plan/ is in .gitignore, so git refused to add it. The files are on disk for the implementation phase to read.
+
+Task 1 (my own pick, outside dispatch): `yoyo map` gives a false empty message. When every symbol in a project is private, yoyo map says "(no supported source files with symbols found)". The assessment found this on the built binary with a file holding two private functions. The fix:
+• In that case, say how many symbols in how many files were hidden and point at --all.
+• A genuinely empty directory and a directory of unsupported files keep today's message exactly.
+• The second, all-symbols scan runs only when the first comes back empty, so the common case costs nothing extra.
+
+It goes to commands_map.rs because dispatch took 6 of the last 9 of my own diffs.
+
+Task 2 (closing a backlog issue): Fixes #1126, the DNS hint that never fires. The matcher looks for "dns resolution failed", but the real error says "dns error" / "failed to lookup address information", so an ordinary DNS failure ends with no hint. The test will use the real error text already captured in src/prompt/reserved_dns.rs, plus the macOS and glibc wordings. A non-DNS connect error must still not get the DNS hint. The task also includes a sabotage-and-restore check run as one command. prompt_retry.rs is exactly at its size-gate entry (2787 lines), so the same diff updates that entry in tests/module_size.rs. The REPL-syntax wording of the other hints in that file stays on #1128.
+
+Planning actions:
+• New issue: I filed #1137. yoyo goal set and yoyo init print a write failure but still exit 0, so yoyo goal set ... && next-step carries on as if it saved. The rest of that check should cover every verb in KNOWN_SUBCOMMANDS. Its fix touches the over-concentrated dispatch code, so it waits for a later session.
+• Deferred: #1136 is the third follow-up in a chain (#1111 → #1132 → #1136). The next slice there should check every subcommand against every dash-word shape, not fix one more verb. #1135 is in the same file as Task 1 but is a separate change, so I kept it out to keep that task small.
+• No release: v0.4.0 went out earlier today.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

@@ -1,0 +1,115 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh… ✓ (24ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 670,710p src/prompt_retry.r… ✓ (20ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 680,690p src/prompt_retry.r… ✓ (31ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; awk 'NR>=683 && NR<=688' src/promp… ✓ (17ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; for i in 684 685 686 687 688; do s… ✓ (13ms)
+  ▶ read src/prompt.rs:1344..1404 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "REPL_RETRY_LINE" -A3 src/… ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 46.4s (7 ✓)
+
+Now write the test file first.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ write src/prompt_retry_dns_tests.rs (50 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (25 lines) ✓ (3m 36s)
+ ✓ (3m 36s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3m 41s (2 ✓)
+
+Red for the right reason (None). Now the fix:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt_retry.rs (1 → 4 lines)
+  -         || lower.contains("name resolution failed")
+  +         // reqwest's real text (#1126): "dns error" / getaddrinfo's own wording.
+  +         || lower.contains("dns error")
+  +         || lower.contains("failed to lookup address information")
+  +         || lower.contains("name resolution")
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test --bin yoyo prompt_retry… ✓ (5m 42s)
+  -         || lower.contains("name resolution failed")
+  +         // reqwest's real text (#1126): "dns error" / getaddrinfo's own wording.
+  +         || lower.contains("dns error")
+  +         || lower.contains("failed to lookup address information")
+  +         || lower.contains("name resolution")
+ ✗ (5m 42s)
+    │ Command timed out after 120s. Output so far:
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5m 48s (1 ✓, 1 ✗)
+
+Positive control, one atomic command (mutate → run → restore → run):
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/prompt_retry.rs /tmp/pr.bak… ✓ (1m 18s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control reddened both real-text tests and restored green. Now the register entry and the live probe.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (9 lines) ✓ (3m 13s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Before: no 💡 line. After: 💡 Network error — could not reach the API. (the REPL /retry line is correctly dropped on -p). Now the full gate.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt && cargo fmt -- --check … ✓ (27.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 590 cargo test 2>&1 | grep… ✓ (5m 0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 590 cargo test 2>&1 > /tmp… ✓ (4m 2s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 9m 46s (3 ✓)
+
+All green (exit 0, 34 test binaries ok, no failures; the size warnings are pre-existing drift in other files, prompt_retry.rs is exactly on its new entry). Commit:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git status --s… (42 lines) ✓ (22ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rln "could not reach the API… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n -i "dns\|could not reach" … ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 13.1s (3 ✓)
+
+Fixed #1126 and committed as f61f588b. An ordinary DNS failure now ends with the 💡 network hint. Before this fix it retried six times and stopped without one. fmt, clippy -D warnings, build and the full cargo test run all pass.
+
+The cause: diagnose_api_error only looked for "dns resolution failed" and "name resolution failed". The real reqwest error (ConnectError("dns error", … "failed to lookup address information: Name or service not known")) contains neither, so the hint never fired.
+
+The fix is in src/prompt_retry.rs. The network branch now also matches:
+• "dns error"
+• "failed to lookup address information" (the wording on Linux and macOS)
+• "name resolution", widened from "name resolution failed" so Temporary failure in name resolution (a temporary resolver failure on Linux) matches too
+
+The hint goes out through the same branch as before, so -p still drops the REPL-only /retry line.
+
+Checked on the built binary with --base-url http://no-such-host-yoyo-probe-4821.com -p hi:
+• Before: (failed after 6 attempts) and no 💡 line.
+• After: 💡 Network error — could not reach the API.
+
+Tests are in a new file, src/prompt_retry_dns_tests.rs:
+• They reuse the captured REAL error text rather than retyping it, and compare the whole hint string.
+• There are rows for the macOS and temporary-failure wordings and for both old spellings.
+• Two near-misses: Connection refused gets the same hint as before, byte for byte, and image resolution too large gets no network hint.
+• The old test_diagnose_dns_resolution_failed test is untouched.
+
+As a positive control, I disabled the three new matches (marked NEUTERED) and restored them in one command. The two real-text tests failed by name, then all three passed after the restore.
+
+Reserved names (.invalid, .test, …) still stop early through reserved_dns before any hint is printed, so there is no duplicate, and the reserved_dns tests still pass.
+
+To share REAL, I moved it out of reserved_dns's test module into a test-only pub(crate) const. I also changed mod reserved_dns to pub(crate) in src/prompt.rs, which wasn't in the task's file list. Neither change touches any logic.
+
+prompt_retry.rs grew from 2787 to 2793 lines, and I updated its entry in tests/module_size.rs with a comment naming #1126. The troubleshooting doc didn't need changing: it says non-reserved DNS failures keep the normal retries, which is still true. The wording of the billing and model hints (#1128) was out of scope and is unchanged.
+
+  (interrupted)
