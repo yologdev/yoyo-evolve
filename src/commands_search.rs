@@ -839,9 +839,22 @@ fn parse_outline_query(rest: &str) -> (&str, bool) {
 /// The `/outline` body; returns `false` when it printed usage (no query).
 fn outline_body(input: &str, surface: DoctorSurface) -> bool {
     let rest = input.strip_prefix("/outline").unwrap_or(input).trim();
-
     let (query, show_all) = parse_outline_query(rest);
+    outline_query_body(query, show_all, surface)
+}
 
+/// `yoyo outline` from argv already split by `verb_flags::verb_split` (#1133):
+/// the query is never re-read for `--all`, so `outline -- --all` searches it.
+pub(crate) fn handle_outline_split_status(query: &str, show_all: bool, s: DoctorSurface) -> i32 {
+    if outline_query_body(query.trim(), show_all, s) {
+        0
+    } else {
+        SEARCH_USAGE_EXIT
+    }
+}
+
+/// The `/outline` body for a parsed query; `false` when it printed usage.
+fn outline_query_body(query: &str, show_all: bool, surface: DoctorSurface) -> bool {
     if query.is_empty() {
         println!("{}", outline_usage(surface));
         return false;
@@ -1335,8 +1348,12 @@ pub fn parse_grep_args(input: &str) -> Option<GrepArgs> {
         return None;
     }
 
-    let tokens = tokenize_quoted(rest);
+    parse_grep_tokens(tokenize_quoted(rest))
+}
 
+/// [`parse_grep_args`] over words already split: the shell door hands argv
+/// here (own flags, `--`, operands) so nothing is joined and re-split (#1133).
+pub(crate) fn parse_grep_tokens(tokens: Vec<String>) -> Option<GrepArgs> {
     let mut case_sensitive = false;
     let mut count_only = false;
     let mut context_before: Option<u32> = None;
@@ -1553,7 +1570,7 @@ pub(crate) fn run_grep_in(
             "--exclude-dir=__pycache__",
             "--exclude-dir=.venv",
         ]);
-        cmd.arg(&args.pattern);
+        cmd.arg("--").arg(&args.pattern); // `--`: a dash-led pattern is a pattern (#1133)
         cmd.args(&args.paths);
         // Same wrapper text as before. The git arm's inner `e` now carries the
         // chokepoint's own error string; both arms still surface as
@@ -1687,7 +1704,7 @@ pub(crate) fn run_grep_count_in(
             "--exclude-dir=__pycache__",
             "--exclude-dir=.venv",
         ]);
-        cmd.arg(&args.pattern);
+        cmd.arg("--").arg(&args.pattern); // `--`: a dash-led pattern is a pattern (#1133)
         cmd.args(&args.paths);
         // Same wrapper text as before. The git arm's inner `e` now carries the
         // chokepoint's own `git not found: …` prefix, in a branch that is
@@ -1867,7 +1884,7 @@ pub(crate) fn run_grep_with_context_in(
             "--exclude-dir=__pycache__",
             "--exclude-dir=.venv",
         ]);
-        cmd.arg(&args.pattern);
+        cmd.arg("--").arg(&args.pattern); // `--`: a dash-led pattern is a pattern (#1133)
         cmd.args(&args.paths);
         // Same wrapper text as before. The git arm's inner `e` now carries the
         // chokepoint's own error string; both arms still surface as
@@ -2251,7 +2268,12 @@ pub fn handle_grep(input: &str) {
 /// could not be spawned, [`SEARCH_USAGE_EXIT`] (2) when there is no pattern —
 /// the usage text stays on stdout byte-identical, the `def`/`outline` policy.
 pub fn handle_grep_status(input: &str, surface: DoctorSurface) -> i32 {
-    let args = match parse_grep_args(input) {
+    handle_grep_args_status(parse_grep_args(input), surface)
+}
+
+/// [`handle_grep_status`] for arguments already parsed (`None` → usage, 2).
+pub(crate) fn handle_grep_args_status(args: Option<GrepArgs>, surface: DoctorSurface) -> i32 {
+    let args = match args {
         Some(a) => a,
         None => {
             print!("{}", grep_usage(surface));
@@ -2370,7 +2392,10 @@ mod tests {
     #[test]
     fn grep_flag_list_matches_its_parser() {
         let src = include_str!("commands_search.rs");
-        let start = src.find(&format!("pub fn {}(", "parse_grep_args")).unwrap();
+        // #1133: the arms live in parse_grep_tokens; parse_grep_args delegates.
+        let start = src
+            .find(&format!("pub(crate) fn {}(", "parse_grep_tokens"))
+            .unwrap();
         let body = &src[start..];
         let body = &body[..body.find("\n}\n").unwrap()];
         let mut in_parser: Vec<&str> = body

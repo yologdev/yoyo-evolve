@@ -270,6 +270,31 @@ pub(crate) fn review_args(rest: &[String]) -> ReviewArgs {
     }
 }
 
+/// `yoyo <verb> <rest>` split once into (the verb's own flags, each value
+/// flag followed by its value; the operands), the way [`review_args`] reads
+/// review (#1133). Flags count only before the first `--`; every word after
+/// it is an operand, so a handler that takes this split never sees `--` and
+/// cannot re-read an operand as a flag. Unknown dash-led words before `--`
+/// are [`policy_refusal`]'s job; here they are left with the operands.
+pub(crate) fn verb_split(verb: &str, rest: &[String]) -> (Vec<String>, Vec<String>) {
+    let (own, takes_value) = verb_own_flags(verb);
+    let end = rest.iter().position(|a| a == "--").unwrap_or(rest.len());
+    let (mut flags, mut operands) = (Vec::new(), Vec::new());
+    let mut words = rest[..end].iter();
+    while let Some(word) = words.next() {
+        if own.contains(&word.as_str()) {
+            flags.push(word.clone());
+            if takes_value.contains(&word.as_str()) {
+                flags.extend(words.next().cloned());
+            }
+        } else {
+            operands.push(word.clone());
+        }
+    }
+    operands.extend(rest.iter().skip(end + 1).cloned());
+    (flags, operands)
+}
+
 /// `rest` without its first `--`: the end-of-flags marker is not an operand.
 pub(crate) fn drop_end_of_flags(rest: &[String]) -> Vec<String> {
     let mut out = rest.to_vec();
@@ -540,5 +565,68 @@ mod tests {
         ] {
             assert_eq!(policy_refusal(&argv(row)), None, "{row:?}");
         }
+    }
+
+    /// #1133: every grep flag placed after `--` is an operand (the pattern),
+    /// iterated from GREP_FLAGS, never typed; before `--` it is a flag and a
+    /// value flag takes its value with it.
+    #[test]
+    fn verb_split_counts_flags_only_before_double_dash() {
+        use crate::commands_search::{parse_grep_tokens, GREP_FLAGS, GREP_VALUE_FLAGS};
+        for flag in GREP_FLAGS {
+            let (flags, ops) = verb_split("grep", &argv(&["--", flag, "y.txt"]));
+            assert!(flags.is_empty(), "{flag}");
+            assert_eq!(ops, argv(&[flag, "y.txt"]), "{flag}");
+            let parsed = parse_grep_tokens([flags, argv(&["--"]), ops].concat()).unwrap();
+            assert_eq!(parsed.pattern, *flag, "{flag}");
+            assert_eq!(parsed.paths, ["y.txt"], "{flag}");
+
+            let before = if GREP_VALUE_FLAGS.contains(flag) {
+                argv(&[flag, "1"])
+            } else {
+                argv(&[flag])
+            };
+            let rest = [before.clone(), argv(&["pat", "src"])].concat();
+            assert_eq!(verb_split("grep", &rest), (before, argv(&["pat", "src"])));
+        }
+        assert_eq!(
+            verb_split("outline", &argv(&["--", "--all", "x.rs"])),
+            (vec![], argv(&["--all", "x.rs"]))
+        );
+        assert_eq!(
+            verb_split("outline", &argv(&["foo", "--all"])),
+            (argv(&["--all"]), argv(&["foo"]))
+        );
+        // Only the FIRST `--` ends flags; a second one is an operand.
+        assert_eq!(
+            verb_split("outline", &argv(&["--", "--"])),
+            (vec![], argv(&["--"]))
+        );
+        assert_eq!(verb_split("outline", &[]), (vec![], vec![]));
+    }
+
+    /// Near-miss: the REPL door still parses its text exactly as before, and
+    /// the shell door's split reaches the same GrepArgs for input without `--`.
+    #[test]
+    fn repl_grep_parse_agrees_with_the_shell_split_without_double_dash() {
+        use crate::commands_search::{parse_grep_args, parse_grep_tokens};
+        for line in [
+            "-c foo",
+            "foo -c src",
+            "-C 2 --include *.rs foo",
+            "-s Foo a b",
+        ] {
+            let words: Vec<String> = line.split(' ').map(String::from).collect();
+            let (mut flags, ops) = verb_split("grep", &words);
+            flags.push("--".into());
+            assert_eq!(
+                parse_grep_tokens([flags, ops].concat()),
+                parse_grep_args(&format!("/grep {line}")),
+                "{line}"
+            );
+        }
+        // REPL `/grep -- --count foo` keeps its own `--` handling (#706).
+        let repl = parse_grep_args("/grep -- --count foo").unwrap();
+        assert_eq!((repl.pattern.as_str(), repl.count_only), ("--count", false));
     }
 }

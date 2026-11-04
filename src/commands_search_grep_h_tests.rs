@@ -183,3 +183,85 @@ fn strip_ansi_for_test(s: &str) -> String {
     }
     out
 }
+
+/// #1133: the three system-grep arms put `--` before the pattern, as the git
+/// arm always did, so a dash-led pattern after the user's `--` is searched for
+/// and not read by grep as its own option (`--count`, `-x`).
+fn dash_scratch() -> tempfile::TempDir {
+    let tmp = non_git_scratch();
+    std::fs::write(tmp.path().join("y.txt"), "--count here\n-x here\n").unwrap();
+    tmp
+}
+
+#[test]
+fn dash_led_pattern_after_end_of_flags_matches_outside_git_1133() {
+    let tmp = dash_scratch();
+    for (input, text, line) in [
+        ("/grep -- --count y.txt", "--count here", 1),
+        ("/grep -- -x y.txt", "-x here", 2),
+    ] {
+        let run = run_grep_in(tmp.path(), &args(input)).unwrap();
+        assert_eq!(run.error, None, "{input}");
+        assert_eq!(
+            run.found,
+            vec![GrepMatch {
+                file: "y.txt".to_string(),
+                line_num: line,
+                text: text.to_string(),
+            }],
+            "{input}"
+        );
+    }
+}
+
+#[test]
+fn dash_led_pattern_count_and_context_modes_match_outside_git_1133() {
+    let tmp = dash_scratch();
+    let count = run_grep_count_in(tmp.path(), &args("/grep -c -- -x y.txt")).unwrap();
+    assert_eq!(count.error, None);
+    assert_eq!(
+        count.found,
+        vec![GrepCountEntry {
+            file: "y.txt".to_string(),
+            count: 1
+        }]
+    );
+    let ctx = run_grep_with_context_in(tmp.path(), &args("/grep -C 1 -- -x y.txt")).unwrap();
+    assert_eq!(ctx.error, None);
+    assert_eq!(ctx.found, "y.txt-1---count here\ny.txt:2:-x here\n");
+}
+
+#[test]
+fn ordinary_pattern_matches_identically_in_git_and_non_git_dirs_1133() {
+    // Near-miss: an ordinary pattern is unaffected by the added `--`, and the
+    // git arm (which always had it) agrees with the plain-grep arm.
+    let plain = dash_scratch();
+    let git = dash_scratch();
+    let g = git.path().to_string_lossy().into_owned();
+    // A fresh tempdir, never the project root, through the git chokepoint.
+    let git_ok = |a: &[&str]| {
+        crate::git::run_git_output(&[&["-C", &g][..], a].concat())
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    };
+    assert!(git_ok(&["init", "-q"]), "git init in a tempdir");
+    assert!(git_ok(&["add", "y.txt"]));
+    let expected = vec![
+        GrepMatch {
+            file: "y.txt".to_string(),
+            line_num: 1,
+            text: "--count here".to_string(),
+        },
+        GrepMatch {
+            file: "y.txt".to_string(),
+            line_num: 2,
+            text: "-x here".to_string(),
+        },
+    ];
+    for root in [plain.path(), git.path()] {
+        let run = run_grep_in(root, &args("/grep here y.txt")).unwrap();
+        assert_eq!(run.found, expected, "{}", root.display());
+        let dashed = run_grep_in(root, &args("/grep -- -x y.txt")).unwrap();
+        assert_eq!(dashed.found, expected[1..].to_vec(), "{}", root.display());
+    }
+}

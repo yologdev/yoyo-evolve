@@ -181,6 +181,13 @@ fn verb_operands(args: &[String]) -> Vec<String> {
     crate::verb_flags::drop_end_of_flags(args.get(2..).unwrap_or_default())
 }
 
+/// [`crate::verb_flags::verb_split`] of the words after the verb (#1133),
+/// for handlers that take the split instead of a re-joined command. Refuses first.
+fn verb_split(args: &[String]) -> (Vec<String>, Vec<String>) {
+    refuse_unknown_verb_flag(args);
+    crate::verb_flags::verb_split(&args[1], args.get(2..).unwrap_or_default())
+}
+
 /// `["yoyo", verb] + ops` — for arms whose handler takes a joined command.
 fn verb_with(args: &[String], ops: &[String]) -> Vec<String> {
     args[..2].iter().chain(ops).cloned().collect()
@@ -543,10 +550,13 @@ pub(crate) fn try_dispatch_subcommand_in(
                 // #1009: plain join, not `quote_args_as_command` — `/outline`
                 // never tokenizes quotes, so `"dir sp/a b.rs"` was searched
                 // for with its quotes. Unspaced args join identically.
-                // #1111: an unknown flag (not `--all`) refuses; `--` is dropped.
-                let input = join_args_as_command(&verb_with(args, &verb_operands(args)));
+                // #1111: an unknown flag (not `--all`) refuses. #1133: `--all`
+                // counts only before `--`; operands are joined, never re-read.
+                let (flags, ops) = verb_split(args);
+                let all = !flags.is_empty();
                 // #982: 2 with no query (usage); no match stays 0.
-                exit_if_nonzero(crate::commands_search::handle_outline_status(&input, Shell));
+                let status = crate::commands_search::handle_outline_split_status;
+                exit_if_nonzero(status(&ops.join(" "), all, Shell));
                 return Some(None);
             }
             "run" => {
@@ -608,10 +618,14 @@ pub(crate) fn try_dispatch_subcommand_in(
                 return Some(None);
             }
             "grep" => {
-                // #1111: a flag not in GREP_FLAGS refused above the match;
-                // grep's own parser reads `--`, so the args go on unchanged.
-                let input = quote_args_as_command(args);
-                exit_if_nonzero(crate::commands_search::handle_grep_status(&input, Shell));
+                // #1111: a flag not in GREP_FLAGS refused above the match.
+                // #1133: argv split once, never quoted, joined and re-split.
+                let (mut words, ops) = verb_split(args);
+                words.push("--".into());
+                let parsed = crate::commands_search::parse_grep_tokens([words, ops].concat());
+                exit_if_nonzero(crate::commands_search::handle_grep_args_status(
+                    parsed, Shell,
+                ));
                 return Some(None);
             }
             "find" => {

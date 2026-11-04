@@ -39,7 +39,9 @@ All commands start with `/`. Type `/help` inside yoyo to see the full list.
 > that is not one of their own flags (exit 2, nothing runs): `yoyo find --bogus` used to
 > search for `--bogus`. Their own flags still work (`grep -c`, `grep --include '*.rs'`,
 > `outline handle --all`), and `--` ends flag parsing, so `yoyo find -- --weird-name`
-> searches for a name that starts with a dash. `changelog` takes one optional count
+> searches for a name that starts with a dash (and `yoyo grep -- --count y.txt` searches
+> for `--count`, inside a git repository or not; `yoyo outline -- --all` searches for
+> `--all` instead of listing everything). `changelog` takes one optional count
 > (`yoyo changelog 5`); any other word is refused.
 >
 > `doctor` honors `--provider` and `--model` if you want to point it at a non-default setup
@@ -910,7 +912,7 @@ Features:
 - **Colored output** — filenames in green, line numbers in cyan, matches highlighted in yellow
 - **Truncated results** — shows up to 50 matches with a "narrow your search" hint
 - **Optional path** — `/grep pattern src/` restricts search to a specific file or directory. Several paths are each searched, as grep and `git grep` do: `/grep pattern src/ tests/`. A path containing a space is one path when quoted (`/grep pattern "my dir"`). If one of several paths is missing, plain grep still shows the other paths' matches and reports the error (exit 2); `git grep` refuses the whole search with an error naming the missing path
-- **Literal flag names** — `--` ends flag parsing, so `/grep -- -C src/` searches for the literal text `-C`. A value-taking flag whose value is missing or unparseable (e.g. `/grep -C src/`) is treated as the search pattern rather than being silently dropped.
+- **Literal flag names** — `--` ends flag parsing, so `/grep -- -C src/` searches for the literal text `-C`, inside a git repository or outside one (outside one, grep(1) used to read a dash-led pattern as its own option and report no matches). A value-taking flag whose value is missing or unparseable (e.g. `/grep -C src/`) is treated as the search pattern rather than being silently dropped.
 - **Errors are not "no matches"** — if the path does not exist or cannot be read, `/grep` prints grep's error (to stderr) instead of `No matches found.`, and `yoyo grep` exits 2. Matches found before the error are still shown. A genuine search with zero matches still prints `No matches found.`, and `yoyo grep` exits 1 (as grep(1) does). Inside a git repo the search runs through `git grep`, which cannot search a path outside the repository, so that also reports an error.
 
 The `/tree` command uses `git ls-files` to show tracked files in a visual tree structure, automatically respecting your `.gitignore`. You can specify a depth limit:

@@ -361,7 +361,9 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 248 (#1111): 4676 -> 4755 (+79: GREP_FLAGS / GREP_VALUE_FLAGS, the
     // shell door's one authority for grep's flags, `parse_outline_query`, and
     // their tests incl. the list-vs-parser pin), pasted.
-    ("src/commands_search.rs", 4755),
+    // Day 249 (#1133): 4755 -> 4778 (+23): parse_grep_tokens / handle_grep_args_status /
+    // handle_outline_split_status let the shell door hand argv in without a re-split, pasted.
+    ("src/commands_search.rs", 4778),
     // Day 163 (#716): +99 lines — spawn_dir_restrictions confines a spawn
     // worker's file tools to its worktree (bash_cwd only pinned bash), plus
     // three regression tests covering no-worktree passthrough, the confined
@@ -455,7 +457,9 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // verb_flags::review_arg, the review arm gained its flag refusal), pasted.
     // Day 249 (#1132): 2637 -> 2636: one policy refusal above the match replaced
     // the review and grep arms' own calls; ast/blame arm edits were line-neutral.
-    ("src/dispatch_sub.rs", 2636),
+    // Day 249 (#1133): 2636 -> 2650 (+14): the verb_split wrapper, and the grep/outline
+    // arms take the split instead of a joined command, pasted.
+    ("src/dispatch_sub.rs", 2650),
     // Day 209: 3439 -> 3455 (+16, within the drift band, pasted rather than left to absorb).
     // #937 option 1: nine lines of doc above `builtin_model_pricing` naming both ignored
     // audit commands (deliverable 4 — an alarm nobody can find is the #745/#767/#769

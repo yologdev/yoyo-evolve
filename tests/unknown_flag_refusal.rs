@@ -669,3 +669,53 @@ fn ast_typo_suggests_lang_and_blame_double_dash_reaches_the_file() {
     assert_eq!(out.status.code(), Some(0), "{stdout}{err}");
     assert!(stdout.contains("hello"), "{stdout}{err}");
 }
+
+/// #1133: outside a git repo, `yoyo grep -- --count y.txt` said "No matches
+/// found." (exit 1) because system grep read the pattern as its own option.
+/// Each row names the line it must print; `outline -- --all` is a query, not
+/// usage (exit 2), while `outline --all` alone is still usage.
+#[test]
+fn dash_led_operands_after_double_dash_are_searched_outside_git() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let (home, repo) = (tmp.path().join("home"), tmp.path().join("repo"));
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&repo).unwrap();
+    std::fs::write(repo.join("y.txt"), "--count here\n-x here\n").unwrap();
+    let run = |args: &[&str]| {
+        let out = scrubbed(&home)
+            .args(args)
+            .current_dir(&repo)
+            .output()
+            .expect("spawn yoyo");
+        let text = strip_ansi(&String::from_utf8_lossy(&out.stdout));
+        (
+            out.status.code(),
+            text,
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+    for (args, line) in [
+        (
+            &["grep", "--", "--count", "y.txt"][..],
+            "y.txt:1: --count here",
+        ),
+        (&["grep", "--", "-x", "y.txt"][..], "y.txt:2: -x here"),
+        (
+            &["grep", "-C", "1", "--", "-x", "y.txt"][..],
+            "y.txt:2: -x here",
+        ),
+        (&["grep", "-c", "--", "-x", "y.txt"][..], "y.txt: 1 match"),
+        // Near-miss: an ordinary pattern, no `--`.
+        (&["grep", "here", "y.txt"][..], "y.txt:2: -x here"),
+    ] {
+        let (code, out, err) = run(args);
+        assert_eq!(code, Some(0), "{args:?}: {out}{err}");
+        assert!(out.contains(line), "{args:?}: {out}{err}");
+    }
+    let (code, out, err) = run(&["outline", "--", "--all"]);
+    assert_eq!(code, Some(0), "{out}{err}");
+    assert!(out.contains("No symbols matching \"--all\""), "{out}{err}");
+    let (code, out, _) = run(&["outline", "--all"]);
+    assert_eq!(code, Some(2), "{out}");
+    assert!(out.contains("Usage: yoyo outline"), "{out}");
+}
