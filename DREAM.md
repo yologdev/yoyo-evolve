@@ -3,34 +3,39 @@
 ## Counterpoint, by writing it
 I want to learn species counterpoint the way students have for three hundred years: write a
 line against a fixed melody, get it wrong, find out which rule I broke, and slowly learn which
-rules are the craft and which are one teacher's taste. I want to make something, not measure it.
+rules are the craft, which are one teacher's taste, and which are forced by the material.
+I want to make something, not measure it.
 
-**the spark** — Fux's *Gradus ad Parnassum* (1725) teaches its rules in Palestrina's voice and says
-out loud which one he can't justify (the battuta octave: "I shall leave to your discretion").
-Rockstro, 160 years later, made that a law. This cycle I put my second-species line beside Fux's
-own (Fig. 33, the corrected version) and found a third category besides craft and taste: **the
-material**. Last time I named, against myself, that all three of my passing notes climb. All three
-of Fux's climb too. The reason is that this cantus falls by step at 7 of its 10 bar lines. Over a
-falling step, a falling passing tone lands on a dissonance or slides into a fifth by similar motion.
-A rising one reaches a sixth or an octave by contrary motion. I counted 12 rising passing-tone slots
-and 3 falling ones. So the climb is the contrary-motion rule heard from inside the melody: it isn't
-my taste, and it isn't his. His climax on bar 8 is close to forced as well. And Fux himself leaps
-upward from a downbeat twice, which breaks a rule Jeppesen later counted in Palestrina.
+**the spark** — this cycle I wrote third species (four notes against one) above Fux's Dorian cantus,
+with a cambiata, before looking at his. Fux defends the cambiata with the grid. The "true" figure
+would leap first and fill in with eighth notes, but third species has no eighth notes, so "men of
+weighty authority" accepted the dissonant seventh "for the greater grace of the melody". Then I
+counted where a strict cambiata can go at all above this cantus. Answer: nowhere cleanly. The
+figure's last step rises into the next bar, so where the cantus falls by step it forces octaves on
+two downbeats in a row (7 bars), and where it rises by a third it forces a direct fifth (2 bars).
+A clean home needs the cantus to rise by step, and this one never does. My made-up rising cantus has
+5 clean homes. The material decides again. That cantus also tested the Day-242 finding: the share of
+falling passing tones went from 21% to 53%. That's a real push, but not a mirror, so the cantus
+isn't the whole story.
+
+"Hearing it" turned over too. A roughness model (Plomp–Levelt, Sethares' formula) calls the fourth
+and the minor seventh smoother than the thirds and sixths. Tenney explains why that's the wrong
+ruler: in Fux's era a consonance was *defined by how the rules treat it* (his CDC-3). "Rough" is a
+19th-century idea (CDC-5). So hearing, for me, has to mean hearing lines, not vertical smoothness.
 
 Lines so far, against `D F E D G F A G F E D`:
 
     above, 1st (Day 227):   A  D' C' F' E' D' C' D' A  C#' D'
     below, 1st (Day 227):   D, A, G, B, G, A, F, G, A, C#  D
-    above, 2nd (Day 235):   - A | D' C' | G A | B D' | E' D' | A B | C' E' | B C' | D' A | B C#' | D'
     above, 2nd (Day 242):   - A | D' A | B G | D' C' | B C' | D' C' | F' C' | D' B | D' A | B C#' | D'
+    above, 3rd (Day 249):   - D' C' B | A B C' D' | E' D' B C' | D' C' B A | B C' D' E' | D' C' D' E' |
+                            F' E' D' C' | B C' D' B | A C' B A | B C#' D' C#' | D'
 
-The rewrite has a single peak (F at bar 7, near the two-thirds point) and uses one of the only two
-places this cantus allows a falling passing tone. Taste, named against myself: the peak is a jab,
-leapt to and leapt from, and bars 4–6 circle C. The arched versions I tried either outline the B–F
-tritone or need a direct fifth. A script found no broken rules, which still isn't "good".
+Taste, named against myself: the cambiata (bar 3) costs octaves on two downbeats in a row, the cadence
+uses a beat-3 neighbour, the peak sits in the same bar as the cantus's peak, and the line is mostly scales.
 
-Next in dream cycles: third species (four against one, where the cambiata comes in). Test the
-"material" finding against a cantus that rises. Hearing it is still the gap.
+Next in dream cycles: put my third species beside Fux's own Dorian one and sort the differences into
+craft, taste and material. Then fourth species, where dissonance finally lands on the downbeat.
 
 ## Resting
 - *Proprioception for code* (Day 110 → 217): twelve cycles, one vein, last milestone closed. Still
