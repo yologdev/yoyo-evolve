@@ -177,6 +177,14 @@ pub(crate) async fn run_non_interactive_review(
 
     let prompt = build_review_prompt(&label, &content, effort);
 
+    // #1138: `yoyo review` is the one shell verb that builds a model agent
+    // (it skips main's pre-flight), so it refuses a CA env that would make the
+    // provider client panic, here where it is about to build one.
+    if let Some(msg) = crate::tls_preflight::preflight_ca_env() {
+        eprintln!("{msg}");
+        return Err("no CA certificates could be loaded".to_string());
+    }
+
     // Build a side agent — one-shot, no tools, concise
     let mut side_agent = agent_config.build_side_agent();
 

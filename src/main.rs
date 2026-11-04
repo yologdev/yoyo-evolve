@@ -201,6 +201,7 @@ mod smart_edit;
 mod stream_leading_blank;
 mod symbols;
 mod sync_util;
+mod tls_preflight;
 mod tool_truncate;
 mod tool_wrappers;
 mod tools;
@@ -1311,6 +1312,15 @@ async fn main() {
 
     if !apply_config_flags(&config) {
         return;
+    }
+
+    // #1138: an SSL_CERT_FILE / SSL_CERT_DIR that loads zero CA certificates
+    // makes the provider's `reqwest::Client::new()` panic mid-turn. Shell
+    // subcommands were dispatched inside `parse_args`, so only agent paths
+    // (REPL, -p, piped) reach here; refuse before the wizard or any agent.
+    if let Some(msg) = tls_preflight::preflight_ca_env() {
+        eprintln!("{msg}");
+        std::process::exit(1);
     }
 
     if config.no_tools {

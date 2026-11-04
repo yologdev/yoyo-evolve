@@ -43,6 +43,20 @@ To get going: fix the named lines, or move the file aside (`mv .yoyo.toml .yoyo.
 
 The inspection commands (`yoyo config get`, `yoyo config show`, `yoyo doctor`, `yoyo model`, `yoyo permissions`) and `yoyo setup` still run, with a `warning: config file is malformed` line instead, so you can look at what yoyo read while you fix it. The detector skips the inside of multi-line strings (`"""` / `'''`), so their contents never trigger it.
 
+## "error: no CA certificates could be loaded"
+
+```
+error: no CA certificates could be loaded, so yoyo cannot open any HTTPS connection (including to the model provider).
+  SSL_CERT_FILE is "/etc/corp/ca.pem", which is empty.
+Point SSL_CERT_FILE at a PEM CA bundle, or unset it.
+```
+
+**Cause:** on Linux, when `SSL_CERT_FILE` or `SSL_CERT_DIR` is set, yoyo's HTTPS client trusts *only* the certificates in those paths, not the system store. If they load none (the file is missing, empty, a directory, or holds no PEM `-----BEGIN CERTIFICATE-----` block; the directory is missing, empty, or holds no PEM files), every connection would fail, even to an `http://` local model. Corporate-proxy setups often set these variables. Before this check, yoyo crashed mid-turn with a `panicked at ... No CA certificates were loaded` line and `(reply cut off ...)`.
+
+yoyo now refuses with this message and **exit code 1** before any agent is built (REPL, `yoyo -p`, piped input, `yoyo review`). It asks the same certificate loader the HTTPS client uses, so it only refuses when *nothing* loads: a bad `SSL_CERT_FILE` next to a working `SSL_CERT_DIR` (or the reverse) is left alone, because it works. Other commands (`yoyo doctor`, `yoyo grep`, ...) are not affected.
+
+**Fix:** point the named variable at a real PEM CA bundle (often `/etc/ssl/certs/ca-certificates.crt`, or the bundle your IT team gave you) or a directory of PEM certificates, or `unset SSL_CERT_FILE SSL_CERT_DIR` to use the system store. On macOS and Windows yoyo's HTTPS client does not read these variables, so the check does not run there.
+
 ## "No API key found"
 
 ```
