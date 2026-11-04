@@ -1,0 +1,228 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n 'Command::new("grep")\|cmd… ✓ (5ms)
+ ✓ (16ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2.0s (2 ✓)
+
+Step 1 first: the three system-grep arms.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1495,1580p src/commands_sea… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -c '        cmd.arg(&args.pat… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n 'fn run_grep_in\|fn run_gr… ✓ (16ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; wc -l src/commands_search_grep_*te… ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 80,185p src/commands_search… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 21.5s (5 ✓)
+
+Now append the non-git dash-pattern tests.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat >> src/com… (88 lines) ✓ (35.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control (atomic mutate → run → restore):
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/commands_search.rs /tmp/cs.… ✓ (36.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control reddened all three; restored. Now step 2 — read verb_flags and the dispatch arms.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1,260p src/verb_flags.rs  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 260,330p src/verb_flags.rs;… ✓ (6ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 170,235p src/dispatch_sub.r… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n 'fn outline_body' -A60 src… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n 'fn parse_outline_query' -… ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1280,1475p src/commands_sea… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 2240,2275p src/commands_sea… ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 1m 6s (7 ✓)
+
+Now the refactor. commands_search.rs: split parse/handle so a token vector / split can enter directly.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (53 lines) ✓ (20ms)
+
+Now the split in verb_flags.rs (placed next to `drop_end_of_flags`).
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/verb_flags.rs (1 → 26 lines)
+  + /// `yoyo <verb> <rest>` split once into (the verb's own flags, each value
+  + /// flag followed by its value; the operands), the way [`review_args`] reads
+  + /// review (#1133). Flags count only before the first `--`; every word after
+  + /// it is an operand, so a handler that takes this split never sees `--` and
+  + /// cannot re-read an operand as a flag. Unknown dash-led words before `--`
+  + /// are [`policy_refusal`]'s job; here they are left with the operands.
+  + pub(crate) fn verb_split(verb: &str, rest: &[String]) -> (Vec<String>, Vec<String>) {
+  +     let (own, takes_value) = verb_own_flags(verb);
+  +     let end = rest.iter().position(|a| a == "--").unwrap_or(rest.len());
+  +     let (mut flags, mut operands) = (Vec::new(), Vec::new());
+  +     let mut words = rest[..end].iter();
+  +     while let Some(word) = words.next() {
+  +         if own.contains(&word.as_str()) {
+  +             flags.push(word.clone());
+  +             if takes_value.contains(&word.as_str()) {
+  +                 flags.extend(words.next().cloned());
+  +             }
+  +         } else {
+  +             operands.push(word.clone());
+  +         }
+  ... (6 more lines)
+ ✓ (24.7s)
+  + /// `yoyo <verb> <rest>` split once into (the verb's own flags, each value
+  + /// flag followed by its value; the operands), the way [`review_args`] reads
+  + /// review (#1133). Flags count only before the first `--`; every word after
+  + /// it is an operand, so a handler that takes this split never sees `--` and
+  + /// cannot re-read an operand as a flag. Unknown dash-led words before `--`
+  + /// are [`policy_refusal`]'s job; here they are left with the operands.
+  + pub(crate) fn verb_split(verb: &str, rest: &[String]) -> (Vec<String>, Vec<String>) {
+  +     let (own, takes_value) = verb_own_flags(verb);
+  ... (13 more lines)
+
+Expected; now the consumers in dispatch_sub.rs.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (19 lines) ✓ (24ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n '"outline" => {' src/dispa… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; awk 'NR>=543 &… (3 lines) ✓ (20ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (28 lines) ✓ (13.0s)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 26.9s (4 ✓)
+
+Builds. Probe with the real binary in a non-git dir and a git dir:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; B=$PWD/target/… (4 lines) ✓ (63ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Exit codes properly (the $? above was sed's), plus outline:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; B=$PWD/target/… (5 lines) ✓ (4.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Behaviour is right. Now tests: verb_flags unit rows (iterated from GREP_FLAGS) and real-binary rows. First check module_size caps and the existing test file's style.
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n 'verb_flags\|DEFAULT\|cons… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 365,395p tests/unknown_flag… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat >> tests/u… (43 lines) ✓ (8ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 13.3s (3 ✓)
+
+Now the verb_split unit rows in verb_flags.rs, plus REPL-path near-miss rows.
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; tail -5 src/verb_flags.rs ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (67 lines) ✓ (23ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt && cargo clippy --all-ta… ✓ (1m 17s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 35s (3 ✓)
+
+Positive control on the split (treat -- as nothing → flags after it become flags), atomic and serial:
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/verb_fl… (9 lines) ✓ (51.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both reddened by name; restored (0 markers). Now line caps:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; wc -l src/commands_search.rs src/d… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (9 lines) ✗ (2m 0s)
+    │ Command timed out after 120s. Output so far:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test > /tmp/t.log 2>&1; echo… ✓ (2m 20s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 2385,2420p src/commands_sea… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 2391,2396p src/commands_sea… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 4m 34s (4 ✓, 1 ✗)
+
+The source guard slices parse_grep_args's body, and the match arms moved into parse_grep_tokens. Point the guard at where the arms now live:
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 2396,2398p src/commands_sea… ✓ (38.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n 'fn grep_flag_list_matches… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit src/commands_search.rs (1 → 2 lines)
+  -         let start = src.find(&format!("pub fn {}(", "parse_grep_args")).unwrap();
+  +         // #1133: the arms live in parse_grep_tokens; parse_grep_args delegates.
+  +         let start = src.find(&format!("pub(crate) fn {}(", "parse_grep_tokens")).unwrap();
+ ✓ (3m 28s)
+  -         let start = src.find(&format!("pub fn {}(", "parse_grep_args")).unwrap();
+  +         // #1133: the arms live in parse_grep_tokens; parse_grep_args delegates.
+  +         let start = src.find(&format!("pub(crate) fn {}(", "parse_grep_tokens")).unwrap();
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; wc -l src/commands_search.rs; sed … ✓ (2m 58s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -A15 'chokepoint_or_registere… ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 7m 19s (5 ✓)
+
+Route through the chokepoint instead of registering a bypass:
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (17 lines) ✓ (37.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Make the git half non-vacuous (no silent early return — git is always present where this suite runs):
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (11 lines) ✓ (5m 13s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All green. Docs check — what do the docs say about -- for grep/outline?
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n -- 'outline\|yoyo grep\|/g… ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 36,44p docs/src/usage/comma… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 -c " (3 lines) ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (22 lines) ✓ (38ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n 'join_args_as_command(&ver… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -i 's/and the other operand ve… ✓ (12ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 24.8s (6 ✓)
+
+Quick probe of the residue verbs so the comment states facts, not guesses:
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp && B=/home/runner/work/yoyo-evolve/yoyo-evolve/target/debug/yoyo; for c … ✓ (57ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+ast -- --lang is the same join-then-reread class (re-reads --lang as a flag); that goes into the #1133 comment. Final full gate:
+  ╭─ Turn 49 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt -- --check && cargo clip… ✓ (4m 45s)
+
+  (interrupted)

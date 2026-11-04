@@ -1,0 +1,33 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls target/debug/yoyo && B=$PWD/t… ✓ (87ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p ses… (9 lines) ✓ (12ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 18.7s (2 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_2.md. I ran the built target/debug/yoyo in a temp directory that is not a git repo, and both fixes work.
+
+| Command | Result | Exit |
+|---|---|---|
+| grep -- --count y.txt | y.txt:1: --count here | 0 |
+| grep -- -x y.txt | y.txt:2: -x here | 0 |
+| grep -c -- -x y.txt | y.txt: 1 match | 0 |
+| grep -C 1 -- -x y.txt | the -x here line plus one context line | 0 |
+| outline -- --all | searches for "--all" (no usage text) | 0 |
+| grep -c foo | -c still read as a flag, "No matches found." | 1 |
+| outline foo --all | --all still read as a flag, searches for "foo" | 0 |
+
+The last two rows show that commands without -- still work as before.
+
+• Intent: The fix covers both causes the task named:
+  • Missing `--`: the three plain grep calls now pass -- before the pattern.
+  • Join-then-resplit: grep and outline now receive the arguments already split by the new verb_flags::verb_split, so nothing is joined and re-read. It reads flags only before --, the same way review_args already does.
+• Forgotten touchpoints: every new function is called in this diff. The line-count caps for commands_search.rs (now 4778) and dispatch_sub.rs (now 2650) were updated in the same diff, and no enum variants were added.
+• Docs: docs/src/usage/commands.md and ARCHITECTURE.md are both updated.
+• Product surface: inputs without -- behave the same. A test checks the in-session /grep parser against the new split, and the binary runs above agree.
+
+One small mismatch with the task text: outline -- --all x.rs searches for "--all x.rs" as one query, not for "--all" alone. That is how outline has always handled multiple words (it joins them into one query), so I didn't count it against the fix.
+  watch: no files changed this turn — skipping

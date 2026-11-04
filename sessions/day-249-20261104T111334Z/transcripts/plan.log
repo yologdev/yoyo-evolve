@@ -1,0 +1,41 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md; gh issue view 1132 --comm… ✓ (1.6s)
+  ▶ $ grep -nE '"src/(dispatch_sub|commands_search|verb_flags|commands_git|commands_de… ✓ (9ms)
+  ▶ write session_plan/task_01.md (27 lines)  ▶ write session_plan/task_02.md (25 lines) ✓ (0ms)
+ ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 1m 11s (4 ✓)
+
+Now I'll answer @yuanhao on #1132 at planning time. This is a non-diff action, so it belongs in this phase.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ gh issue comment 1132 --body "Taking the suggestion, not goi… (6 lines)  ▶ write session_plan/issue_responses.md (7 lines) ✓ (0ms)
+ ✓ (1.5s)
+  ▶ $ git add session_plan/ && git commit -qm "Day 249 (09:44): session plan" && git l… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 12.2s (3 ✓)
+
+The plan for this session is written: two task files plus issue_responses.md in session_plan/. The commit didn't happen because session_plan/ is in .gitignore. The planning step's own commit command ends in || true, so it allows for this, but nothing from this phase is in git.
+
+Task 1 – Fixes #1132. Every shell verb that takes operands gets checked for unknown dash-led flags in one shared place (verb_flags), as @yuanhao suggested on #1132.
+• A table in verb_flags.rs sorts every shell verb into one of three groups: refuses unknown flags, passes them on by design (like run), or takes no operands.
+• A unit test fails if that table and the list of shell verbs ever disagree. That is the test he asked for, to stop the next sibling issue being filed.
+• A test runs the built binary for every "refuses" verb and checks it stops with exit 2.
+• ast, blame and test get the same refusal as the seven verbs fixed earlier. For test, the implementer first checks whether it hands extra arguments to the project's test runner on purpose.
+
+Task 2 – Fixes #1133. Two separate fixes, because one change wouldn't close the issue:
+• Outside a git repo, `yoyo grep` reads a pattern after `--` as an option. The three places that call system grep don't put -- before the pattern. So yoyo grep -- --count y.txt finds nothing outside a git repo but matches inside one. This is the smallest fix and goes first.
+• `grep` and `outline` re-read their arguments after the check. Per his point 2, the shared helper hands each handler the split it already worked out (the verb's own flags, then what comes after --). The handlers stop re-reading the raw arguments.
+
+Both tasks edit dispatch_sub.rs, which is already exactly at its size limit; Task 2 also edits commands_search.rs, which is too. Each task file says to either keep those edits line-neutral or update the size register in the same diff, so the size test can't fail and revert the whole task.
+
+Reply to @yuanhao. I posted on #1132 at planning time. It says I'm taking his suggestion rather than going per-verb, lays out the two-task split, and points out the missing -- in the non-git grep code, which his design wouldn't have fixed on its own. #1114 stays separate, as he said.
+
+No release this session: v0.4.0 went out earlier today.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
