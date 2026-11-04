@@ -87,7 +87,12 @@ fn near_misses_stay_on_the_guess_and_still_warn() {
         "anthropic/claude-unknown-9.9",
         // Not mapped at all.
         "anthropic/claude-sonnet-5.5:batch",
-        "openai/gpt-6-sol",
+        "anthropic/claude-sonnet-4.6:batch",
+        // Day 249 (#1122): `openai/gpt-6-sol` LEFT this list on purpose: it
+        // now takes yoagent's openai preset (see the vendor test below).
+        // These have no yoagent row (or an unknown vendor) and still guess.
+        "openai/gpt-6",
+        "meta-llama/llama-4",
     ] {
         let c = create_model_config("openrouter", model, None);
         assert_eq!((c.context_window, c.max_tokens), guess(), "{model}");
@@ -129,5 +134,71 @@ fn cost_prices_a_dotted_id_like_its_anthropic_preset() {
         let a = crate::format::estimate_cost(&usage, dotted).expect(dotted);
         let b = crate::format::estimate_cost(&usage, dashed).expect(dashed);
         assert!((a - b).abs() < 1e-9, "{dotted}: {a} vs {dashed}: {b}");
+    }
+}
+
+/// #1122 (Day 249): non-Anthropic `vendor/id`s take yoagent's routed vendor
+/// preset limits instead of the 128K / 4096 guess. Expected values are READ
+/// from `ModelConfig::preset("openrouter", ..)`, never typed, and checked
+/// against the first-party vendor preset so the routing is what is tested.
+#[test]
+fn other_vendors_take_yoagents_routed_preset_limits() {
+    use yoagent::provider::ModelConfig;
+    for (model, vendor, bare) in [
+        ("google/gemini-3.6-flash", "google", "gemini-3.6-flash"),
+        ("google/gemini-3.8-flash", "google", "gemini-3.8-flash"),
+        ("x-ai/grok-4.7", "xai", "grok-4.7"),
+        ("openai/gpt-6-sol", "openai", "gpt-6-sol"),
+    ] {
+        let routed = ModelConfig::preset("openrouter", model).expect("premise: yoagent row");
+        let first_party = ModelConfig::preset(vendor, bare).expect("premise: vendor row");
+        assert_eq!(
+            (routed.context_window, routed.max_tokens),
+            (first_party.context_window, first_party.max_tokens),
+            "premise: yoagent routes {model} to the {vendor} row"
+        );
+        let c = create_model_config("openrouter", model, None);
+        assert_eq!(
+            (c.context_window, c.max_tokens),
+            (routed.context_window, routed.max_tokens),
+            "{model}"
+        );
+        assert_eq!(c.reasoning, routed.reasoning, "{model}");
+        // Anti-vacuous: the preset really differs from the guess it replaces.
+        assert_ne!((c.context_window, c.max_tokens), guess(), "{model}");
+        assert!(!runs_on_guessed_limits("openrouter", model), "{model}");
+        // The wire stays yoyo's: provider, URL, the user's id.
+        assert_eq!(c.provider, "openrouter");
+        assert_eq!(c.base_url, "https://openrouter.ai/api/v1");
+        assert_eq!(c.id, model);
+        // A user's --base-url still wins over yoagent's hardcoded one.
+        let custom = create_model_config("openrouter", model, Some("http://gw.local/v1"));
+        assert_eq!(custom.base_url, "http://gw.local/v1", "{model}");
+        assert_eq!(custom.max_tokens, routed.max_tokens, "{model}");
+    }
+}
+
+/// Order matters (#1122): yoyo's anthropic mapping runs FIRST, because yoagent
+/// refuses the dashed spelling existing configs carry and has no price. The
+/// dashed ids are the rows where the two resolvers disagree.
+#[test]
+fn dashed_anthropic_ids_still_resolve_where_yoagent_refuses_them() {
+    use yoagent::provider::ModelConfig;
+    for (dashed, dotted) in [
+        ("anthropic/claude-sonnet-4-6", "anthropic/claude-sonnet-4.6"),
+        ("anthropic/claude-opus-5-5", "anthropic/claude-opus-5.5"),
+    ] {
+        assert!(
+            ModelConfig::preset("openrouter", dashed).is_none(),
+            "premise: yoagent refuses {dashed}"
+        );
+        let a = create_model_config("openrouter", dashed, None);
+        let b = create_model_config("openrouter", dotted, None);
+        assert_eq!(
+            (a.context_window, a.max_tokens),
+            (b.context_window, b.max_tokens)
+        );
+        assert!(a.cost.is_some() && b.cost.is_some(), "{dashed}: priced");
+        assert!(!runs_on_guessed_limits("openrouter", dashed), "{dashed}");
     }
 }

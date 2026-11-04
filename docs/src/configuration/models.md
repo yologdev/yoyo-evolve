@@ -55,6 +55,12 @@ Use `--provider <name>` to select a provider. Each provider has a default model 
 > onto its Anthropic preset, so those models get their real context window,
 > output limit and price. A `:variant` id (such as `:batch`) and a Claude id
 > with no Anthropic preset still run on guessed limits, and yoyo warns about them.
+>
+> Other vendors' ids on OpenRouter (`openai/`, `google/`, `x-ai/`, `z-ai/`, `qwen/`) take the
+> vendor's preset limits when yoagent has a row for that model: for example
+> `google/gemini-3.6-flash` gets Gemini's 1M window and 65,536 output tokens, not the 4096 guess.
+> Ids yoagent has no row for (such as `openai/gpt-6` or `meta-llama/...`) still run on guessed
+> limits and warn. A `--base-url` you set is kept.
 
 ### Examples
 

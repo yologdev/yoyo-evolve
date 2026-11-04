@@ -201,7 +201,8 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // yoagent constructor) and the bedrock arm mapping Claude ids onto it.
     // Day 248 (#1122, yoagent 0.26): +1, the `gpt-6.1-terra` arm of
     // `openai_preset` routing yoagent 0.26.4's new GPT-6.1 Terra preset.
-    ("src/agent_builder.rs", 4977),
+    // Day 249 (#1122): +4, the openrouter arm's second lookup (yoagent routed presets).
+    ("src/agent_builder.rs", 4981),
     // Day 164 (#728): +98 lines — `/skill install`'s destination becomes a third
     // auto-discovery source, so an explicitly installed skill actually loads.
     // The two near-identical per-directory blocks were collapsed into one loop
