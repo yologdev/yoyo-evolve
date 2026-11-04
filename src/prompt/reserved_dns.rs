@@ -62,12 +62,14 @@ pub(crate) fn no_retry_note(err: &str) -> Option<String> {
     loopback_refused_note(err).or_else(|| reserved_dns_note(err))
 }
 
+/// The real error text measured on Day 248 (`--verbose`, built binary).
+/// Shared with `prompt_retry_dns_tests` (#1126) so neither retypes it.
+#[cfg(test)]
+pub(crate) const REAL: &str = r#"Network error: reqwest::Error { kind: Request, url: "http://nonexistent.invalid/v1/chat/completions", source: hyper_util::client::legacy::Error(Connect, ConnectError("dns error", Custom { kind: Uncategorized, error: "failed to lookup address information: Name or service not known" })) }"#;
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// The real error text measured on Day 248 (`--verbose`, built binary).
-    const REAL: &str = r#"Network error: reqwest::Error { kind: Request, url: "http://nonexistent.invalid/v1/chat/completions", source: hyper_util::client::legacy::Error(Connect, ConnectError("dns error", Custom { kind: Uncategorized, error: "failed to lookup address information: Name or service not known" })) }"#;
 
     fn with_host(host: &str) -> String {
         let out = REAL.replace("nonexistent.invalid", host);

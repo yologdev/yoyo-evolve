@@ -18,7 +18,7 @@ mod interrupt;
 mod loopback_refused;
 pub(crate) mod network_error_summary;
 mod output_limit;
-mod reserved_dns;
+pub(crate) mod reserved_dns;
 mod retry_after_partial;
 mod retry_safe_pipe;
 mod sigterm;

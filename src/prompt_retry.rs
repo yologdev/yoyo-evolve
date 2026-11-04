@@ -568,6 +568,9 @@ pub fn auth_failure_message(provider: &str, env_var: &str, source: &KeySource) -
 #[cfg(test)]
 #[path = "prompt_retry_auth_tests.rs"]
 mod prompt_retry_auth_tests;
+#[cfg(test)]
+#[path = "prompt_retry_dns_tests.rs"]
+mod prompt_retry_dns_tests;
 
 /// Diagnose a non-retriable API error and return a user-friendly message
 /// with actionable suggestions. Returns `None` for errors that don't match
@@ -684,7 +687,10 @@ pub fn diagnose_api_error(error: &str, model: &str) -> Option<String> {
         || lower.contains("connection reset")
         || lower.contains("connection closed")
         || lower.contains("dns resolution failed")
-        || lower.contains("name resolution failed")
+        // reqwest's real text (#1126): "dns error" / getaddrinfo's own wording.
+        || lower.contains("dns error")
+        || lower.contains("failed to lookup address information")
+        || lower.contains("name resolution")
         || lower.contains("no route to host")
     {
         let mut msg = String::from("Network error — could not reach the API.\n");
