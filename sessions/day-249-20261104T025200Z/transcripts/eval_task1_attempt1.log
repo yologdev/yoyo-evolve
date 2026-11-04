@@ -1,0 +1,29 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && which -a sg ast-grep; sg --versi… ✓ (1.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p ses… (8 lines) ✓ (9ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 21.0s (2 ✓)
+
+Verdict: PASS. The fix works: on this runner, util-linux's sg no longer passes for ast-grep. I wrote the verdict to session_plan/eval_task_1.md.
+
+What I ran: this runner has /usr/bin/sg, and sg --version prints sg from util-linux 2.41.3. There is no ast-grep installed. The bug was that yoyo took this sg for ast-grep.
+• ./target/debug/yoyo ast foo printed "ast-grep (sg) is not installed." and exited 2. Before the fix it failed with "unrecognized option '--pattern'".
+• ./target/debug/yoyo map --all ended with "6499 symbols across 253 files (using regex)", so it no longer claims to be using ast-grep.
+
+What the diff does:
+• The check: one check, run once per process, tries ast-grep first, then sg. It accepts a program only if --version exits 0 and the first line starts with the word ast-grep. Both places that used to start sg directly now go through it. A search for Command::new("sg") in src finds nothing left.
+• Tests:
+  • A table test rejects the exact util-linux line and accepts ast-grep 0.39.5.
+  • Tests of the probe order cover four cases: only util-linux sg, a real ast-grep installed only as sg, both installed (where sg is never tried), and a failed exit status.
+  • The old test that only asserted when sg was missing now always asserts something.
+  • A new integration test uses a fake util-linux sg and checks for exit 2 and the not-installed message.
+• Line counts: the symbols.rs edit swaps one line for one line, so its frozen 3804-line count is unchanged.
+• Leftovers: every new function and constant is used in this diff, and no new enum variants were added.
+• Docs: docs/src/usage/commands.md now says how ast-grep is found and that util-linux sg counts as not installed, in both the exit-code paragraph and the /map paragraph.
+
+The fix doesn't touch the not-installed message, so it still says "ast-grep (sg)" even though yoyo now looks for ast-grep first.
+  watch: no files changed this turn — skipping
