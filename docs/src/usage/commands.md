@@ -994,7 +994,7 @@ src/cli.rs (400 lines)
 
 **Supported languages:** Rust, Python, JavaScript, TypeScript, Go, Java, C, C++, Ruby, Shell.
 
-**ast-grep integration:** When [ast-grep](https://ast-grep.github.io/) is installed (as `ast-grep`, or as an `sg` whose `--version` says ast-grep), `/map` uses it for more accurate AST-based symbol extraction. When ast-grep is not available, it falls back to built-in regex extractors. The output footer shows which backend was used. Use `--regex` to force the regex backend for comparison or debugging.
+**ast-grep integration:** When [ast-grep](https://ast-grep.github.io/) is installed (as `ast-grep`, or as an `sg` whose `--version` says ast-grep), `/map` uses it for more accurate AST-based symbol extraction. When ast-grep is not available, or its scan fails for a file, it falls back to built-in regex extractors. The output footer shows which backend actually produced the symbols, counted per file: `(using ast-grep)`, `(using regex)`, or, when some files fell back, `(using ast-grep for N files, regex for M files)`. Use `--regex` to force the regex backend for comparison or debugging.
 
 **Automatic system prompt integration:** The repo map is automatically included in the system prompt at the start of every session, giving the AI structural awareness of your codebase without you needing to manually add files. This is similar to Aider's repo-map feature. The system prompt version is limited to public symbols and capped at ~16K characters to avoid bloating context.
 

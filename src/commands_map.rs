@@ -17,12 +17,16 @@ pub fn build_repo_map(root: Option<&str>, public_only: bool) -> Vec<FileSymbols>
 /// Build a repo map with explicit backend control.
 ///
 /// When `force_regex` is true, skip ast-grep even if available.
-/// Returns the file symbols and which backend was actually used.
+/// Returns the file symbols and, per extractor, how many files it actually
+/// produced symbols for (#1135). That is counted inside the loop that does the
+/// work, never read off the availability probe: a real ast-grep whose
+/// `sg scan` fails on every file falls back to regex per file, and the counts
+/// say so even though the probe said "available".
 pub fn build_repo_map_with_backend(
     root: Option<&str>,
     public_only: bool,
     force_regex: bool,
-) -> (Vec<FileSymbols>, MapBackend) {
+) -> (Vec<FileSymbols>, MapBackendUsed) {
     let files = list_project_files();
 
     // Resolve git toplevel so file reads use absolute paths,
@@ -67,17 +71,82 @@ fn build_repo_map_core(
         &crate::config::DirectoryRestrictions,
         &crate::cd_deny::DenyAdditions,
     )>,
-) -> (Vec<FileSymbols>, MapBackend, MapOmitted) {
+) -> (Vec<FileSymbols>, MapBackendUsed, MapOmitted) {
+    // The probe only decides whether ast-grep is *tried*; what gets reported
+    // is counted per file in `build_repo_map_core_with` (#1135).
+    let use_ast_grep = !force_regex && is_ast_grep_available();
+    let ast_extractor: Option<&AstExtractor> = if use_ast_grep {
+        Some(&extract_symbols_ast_grep)
+    } else {
+        None
+    };
+    build_repo_map_core_with(files, toplevel, root, public_only, ast_extractor, fence)
+}
+
+/// The ast-grep extractor seam: `(path, language) -> Some(symbols)` when
+/// ast-grep produced the result, `None` when the caller must fall back to regex.
+/// Production passes `extract_symbols_ast_grep`; tests pass a closure, so the
+/// "probe says available, every scan fails" case is drivable without a real `sg`.
+type AstExtractor = dyn Fn(&str, &str) -> Option<Vec<Symbol>>;
+
+/// Which extractor produced each scanned file's symbols, counted where the
+/// extraction happens. A file counts once, whether or not any of its symbols
+/// survive the public-only filter: the label describes the engine, not the output.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct MapBackendUsed {
+    pub ast_grep_files: usize,
+    pub regex_files: usize,
+}
+
+impl MapBackendUsed {
+    fn record(&mut self, produced: MapBackend) {
+        match produced {
+            MapBackend::AstGrep => self.ast_grep_files += 1,
+            MapBackend::Regex => self.regex_files += 1,
+        }
+    }
+
+    /// The footer text, e.g. `using ast-grep`.
+    pub fn label(&self) -> String {
+        map_backend_label(self.ast_grep_files, self.regex_files)
+    }
+}
+
+/// Pure: the `(using …)` footer label from the per-extractor file counts.
+/// All ast-grep → `using ast-grep`; all regex → `using regex` (byte-identical
+/// to the pre-#1135 label); both → `using ast-grep for N files, regex for M`;
+/// neither (nothing scanned — the caller prints no footer then) says so
+/// rather than naming an engine that did not run.
+pub fn map_backend_label(ast_grep_files: usize, regex_files: usize) -> String {
+    let files = |n: usize| if n == 1 { "file" } else { "files" };
+    match (ast_grep_files, regex_files) {
+        (0, 0) => "no files scanned".to_string(),
+        (_, 0) => "using ast-grep".to_string(),
+        (0, _) => "using regex".to_string(),
+        (a, r) => format!(
+            "using ast-grep for {a} {}, regex for {r} {}",
+            files(a),
+            files(r)
+        ),
+    }
+}
+
+/// [`build_repo_map_core`] with the ast-grep extractor injected: `None` means
+/// ast-grep is not tried at all (probe unavailable, or `--regex`).
+fn build_repo_map_core_with(
+    files: &[String],
+    toplevel: Option<&str>,
+    root: Option<&str>,
+    public_only: bool,
+    ast_extractor: Option<&AstExtractor>,
+    fence: Option<(
+        &crate::config::DirectoryRestrictions,
+        &crate::cd_deny::DenyAdditions,
+    )>,
+) -> (Vec<FileSymbols>, MapBackendUsed, MapOmitted) {
     let mut result = Vec::new();
     let mut omitted = MapOmitted::default();
-
-    // Check ast-grep availability once upfront
-    let use_ast_grep = !force_regex && is_ast_grep_available();
-    let backend = if use_ast_grep {
-        MapBackend::AstGrep
-    } else {
-        MapBackend::Regex
-    };
+    let mut used = MapBackendUsed::default();
 
     for path in files {
         // If a root filter is given, only include matching files
@@ -120,12 +189,14 @@ fn build_repo_map_core(
         };
         let line_count = content.lines().count();
 
-        // Try ast-grep first, fall back to regex
-        let mut symbols = if use_ast_grep {
-            extract_symbols_ast_grep(path, lang).unwrap_or_else(|| extract_symbols(&content, lang))
-        } else {
-            extract_symbols(&content, lang)
+        // Try ast-grep first, fall back to regex — and record which one
+        // actually produced this file's symbols (#1135).
+        let ast_symbols = ast_extractor.and_then(|extract| extract(path, lang));
+        let (mut symbols, produced) = match ast_symbols {
+            Some(symbols) => (symbols, MapBackend::AstGrep),
+            None => (extract_symbols(&content, lang), MapBackend::Regex),
         };
+        used.record(produced);
 
         if public_only {
             symbols.retain(|s| s.is_public);
@@ -141,7 +212,7 @@ fn build_repo_map_core(
 
     // Sort by line count descending (biggest/most important files first)
     result.sort_by_key(|b| std::cmp::Reverse(b.lines));
-    (result, backend, omitted)
+    (result, used, omitted)
 }
 
 /// Files a fenced repo-map build left out, by the list that refused them:
@@ -675,10 +746,7 @@ fn map_status_for(parsed: MapArgs, surface: &str) -> i32 {
     let formatted = format_repo_map_colored(&entries);
     print!("{formatted}");
 
-    let backend_label = match backend {
-        MapBackend::AstGrep => "using ast-grep",
-        MapBackend::Regex => "using regex",
-    };
+    let backend_label = backend.label();
 
     println!(
         "\n{DIM}  {} symbol{} across {} file{} ({backend_label}){RESET}\n",
@@ -1333,7 +1401,9 @@ mod tests {
     #[test]
     fn build_repo_map_with_regex_backend() {
         let (entries, backend) = build_repo_map_with_backend(Some("src/"), true, true);
-        assert_eq!(backend, MapBackend::Regex);
+        // `--regex` never tries ast-grep, so no file can be credited to it.
+        assert_eq!(backend.ast_grep_files, 0);
+        assert_eq!(backend.label(), "using regex");
         // entries may be empty if another parallel test changed CWD via
         // set_current_dir (global process state race). Only assert non-empty
         // when we can confirm we're still in the project root.
@@ -1844,3 +1914,7 @@ mod tmp_manual {
         super::handle_map("/map --al");
     }
 }
+
+#[cfg(test)]
+#[path = "commands_map_backend_tests.rs"]
+mod commands_map_backend_tests;
