@@ -1,0 +1,75 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --short | head;… ✓ (8ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 1,160p src/commands_map.rs; sed -n 600… ✓ (18ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 118,165p src/commands_map.rs; grep -rn… ✓ (17ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -rn "build_repo_map_with_backend\|build_… ✓ (16ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -rn "build_repo_map_with_backend\|build_… ✓ (18ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; ls src/lib.rs 2>&1; grep -rn '#\[path = ' src… ✓ (20ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 1325,1366p src/commands_map.rs; sed -n… ✓ (6ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; cargo build 2>&1 | tail -1; ./target/debug/yo… ✓ (762ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 1m 5s (8 ✓)
+
+Before: 2742 symbols across 169 files (using regex) (here sg is util-linux, so the probe already says no). Now the code.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; python3 - <<'EOF' (176 lines) ✓ (23ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -n "tempfile" Cargo.toml; sed -n 285,295… ✓ (5ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; cat >> src/commands_map.r… (119 lines) ✓ (52.0s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 13s (3 ✓)
+
+Green. Positive control — make the count read the precondition (extractor present) instead of the outcome, run, restore, in one command:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; cp src/commands_map.rs /tmp/cm.bak && sed -i … ✓ (59.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control reddened exactly the all-None row and the mixed row; restored, 5/5 green, no marker left. Now the docs line:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; python3 - <<'EOF' (9 lines) ✗ (2m 0s)
+    │ Command timed out after 120s. Output so far:
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; cargo test 2>&1 | grep -E "test result|FAILED… ✓ (3m 0s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5m 15s (1 ✓, 1 ✗)
+
+All green (fmt, clippy -D warnings, full cargo test). Committing:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; git add -A && git commit … (37 lines) ✓ (12ms)
+
+I fixed #1135 and committed it as 28873aa6. The yoyo map footer now names the extractor that actually produced the symbols. It used to repeat what the availability check said before any file was scanned. fmt, clippy (-D warnings), build and the full cargo test all pass.
+
+What was wrong: the label came from is_ast_grep_available() before the scan started. When ast-grep's scan failed on a file, that file quietly fell back to regex. So a real ast-grep whose scan fails on every file still printed "(using ast-grep)" while every symbol came from regex.
+
+The fix (`src/commands_map.rs`):
+• The scan loop now counts, for each file, whether ast-grep or the regex fallback produced its symbols.
+• The footer is built from those counts:
+  • every file via ast-grep → using ast-grep
+  • every file via regex → using regex (same text as before)
+  • a mix → using ast-grep for N files, regex for M files
+• The availability check now only decides whether ast-grep is tried at all.
+• The ast-grep step is passed into the scan as a parameter, so tests can substitute a fake. I didn't use cfg!(test) and didn't touch src/symbols.rs.
+• The doc comment that claimed "which backend was actually used" now matches what the code does.
+
+Tests (new file src/commands_map_backend_tests.rs; commands_map.rs is 1920 lines, under its 2000 cap):
+• The case from the issue: ast-grep reported available but every scan fails → using regex. The test also confirms the regex fallback really mapped both files.
+• Other cases: every scan succeeds → using ast-grep; ast-grep not tried → using regex; mixed → both counts; plus a table test of the label wording.
+• Sabotage check: I temporarily made the count follow "was ast-grep tried?" instead of what actually happened, in one command that also undid it. Exactly the issue's case and the mixed case failed. After undoing it, all five pass and no sabotage marker is left.
+
+Live run in this repo: (using regex) both before and after the change (2742 symbols before, 2745 after; the extra 3 are the new code). On this machine /usr/bin/sg is the util-linux tool, not ast-grep, so ast-grep is never tried here. Only the tests exercise the failing-scan case.
+
+Docs: I updated the ast-grep paragraph in docs/src/usage/commands.md to describe the per-file count and the mixed form.
+
+Possible separate bug, not checked: the files are read from the repository root, but the file list may be relative to the current directory. If so, running yoyo map from a subdirectory could read the wrong paths. This change doesn't affect that, and I haven't filed it.
+  watch: no files changed this turn — skipping

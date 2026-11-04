@@ -1,0 +1,121 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | head; sed -… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && Y=~/.cargo/registry/src/*/yoagen… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1680,1770p src/agent_buil… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn \|generic" src/model… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 20,70p src/model_limits_n… ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build … (9 lines) ✓ (360ms)
+  ▶ $ cd /tmp && HOME=$(mktemp -d) OPENROUTER_API_KEY=x timeout 30 /home/runner/work/y… ✓ (7.6s)
+  ▶ $ sed -i 's/--print-system-prompt/-p hi/' /tmp/probe.sh && bash /tmp/probe.sh | te… ✓ (1m 16s)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 1m 41s (8 ✓)
+
+Now check what yoagent's preset resolves for each id (the disagreement table), via a quick test file — which is also where the real tests will live.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls src/*preset_tests.rs; grep -n… ✓ (16ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/openrouter_preset_test… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/o… (12 lines) ✓ (30.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "openrouter\|split_once(… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (7 lines) ✓ (30.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "model_config\.cost\|co… ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "insert_client_headers" … ✓ (5ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (5 → 12 lines)
+                if let Some(p) = preset_id.and_then(|id| anthropic_preset(&id)) {
+                    (config.context_window, config.max_tokens) = (p.context_window, p.max_tokens);
+                    (config.cost, config.reasoning) = (p.cost, p.reasoning);
+  +             } else if let Some(p) = ModelConfig::preset("openrouter", model) {
+  +                 // #1122: other vendors' ids (google/, x-ai/, openai/...) take
+  +                 // yoagent's vendor preset limits, not a 4096-token reply cap.
+  +                 // Second, because yoagent refuses dashed claude ids and has no
+  +                 // price. Its base_url is dropped: the user's --base-url wins.
+  +                 (config.context_window, config.max_tokens) = (p.context_window, p.max_tokens);
+  +                 config.reasoning = p.reasoning;
+                }
+                config
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test zz_scratch_probe -- -… ✓ (2m 15s)
+                if let Some(p) = preset_id.and_then(|id| anthropic_preset(&id)) {
+                    (config.context_window, config.max_tokens) = (p.context_window, p.max_tokens);
+                    (config.cost, config.reasoning) = (p.cost, p.reasoning);
+  +             } else if let Some(p) = ModelConfig::preset("openrouter", model) {
+  +                 // #1122: other vendors' ids (google/, x-ai/, openai/...) take
+  +                 // yoagent's vendor preset limits, not a 4096-token reply cap.
+  +                 // Second, because yoagent refuses dashed claude ids and has no
+  +                 // price. Its base_url is dropped: the user's --base-url wins.
+  ... (4 more lines)
+ ✗ (2m 15s)
+    │ Command timed out after 120s. Output so far:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (87 lines) ✓ (29.3s)
+
+────────────────────────────────────────────────────────────────────────────────
+  10 tools completed in 4m 32s (9 ✓, 1 ✗)
+
+Positive control (atomic, serial): neuter the new lookup, run, restore.
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/agent_builder.rs /tmp/ab.… ✓ (59.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/agent_builder.rs; grep… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (7 lines) ✓ (1m 19s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -i "openrouter" docs/src… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 50,62p docs/src/configura… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 53,57p docs/src/configura… ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (15 lines) ✓ (4m 5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 900 cargo test 2>&1 | gr… ✓ (3m 11s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 1122 --json state,… ✓ (1.0s)
+
+────────────────────────────────────────────────────────────────────────────────
+  9 tools completed in 10m 10s (9 ✓)
+
+Commit first, then post the ticket comments (with the sha).
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/m… (50 lines) ✓ (17ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue com… (6 lines) ✓ (3.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show --stat HEAD | tail -6 ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 24.7s (3 ✓)
+
+OpenRouter models from other vendors now get yoagent's real vendor limits instead of the 128K window and 4096-token reply cap. Committed as 4bd66c7c, marked Part of #1122. Build, the full test suite, clippy, fmt and tests/harness_logic.sh all pass.
+
+The change: if yoyo's own Anthropic mapping finds nothing, the OpenRouter branch in create_model_config (src/agent_builder.rs) now asks yoagent's ModelConfig::preset("openrouter", model). It copies only the context window, max output tokens and reasoning flag, so:
+• the URL stays yoyo's, and a user's --base-url still wins over the URL yoagent hardcodes;
+• client headers are still added the same way;
+• cost is untouched.
+
+yoyo's Anthropic mapping still runs first because yoagent rejects the dashed ids existing configs use (anthropic/claude-sonnet-4-6, anthropic/claude-opus-5-5), and its rows carry no price.
+
+Before and after, on the built binary (`-p hi` against a dead URL, so nothing was sent):
+
+| id | before | after |
+|---|---|---|
+| google/gemini-3.6-flash, google/gemini-3.8-flash | warned, 128K / 4096 | no warning, 1048576 / 65536 |
+| x-ai/grok-4.7 | warned | no warning, 500000 / 64000 |
+| openai/gpt-6-sol | warned | no warning, 1050000 / 64000 |
+| openai/gpt-6, meta-llama/llama-4, anthropic/claude-sonnet-4.6:batch | warned | still warn (yoagent has no row for them) |
+| dotted and dashed Anthropic ids | no warning | no warning, same as before |
+
+Tests (src/openrouter_preset_tests.rs):
+• The expected limits are read from yoagent's routed preset and checked against the vendor's own preset, rather than typed in by hand. A custom --base-url case confirms the user's URL survives.
+• A second test pins the dashed Anthropic ids as the places where yoagent and yoyo disagree.
+• One existing test changed on purpose: openai/gpt-6-sol moved off the "still guesses" list because it now has real limits. openai/gpt-6, meta-llama/llama-4 and the 4.6 :batch id were added to that list.
+• I broke the new lookup on purpose and the new test failed by name; with the code restored it passes.
+
+Pricing: unchanged by this diff, because /cost uses yoyo's own price table with the vendor prefix stripped (format/cost.rs:82). While checking it I found two things, now posted on #1012:
+• anthropic/claude-sonnet-4.6:batch is billed at full price, but OpenRouter charges half for :batch, so /cost shows double.
+• gemini-3.8-flash costs the same as 3.6-flash in that table, which may be wrong.
+
+Other: src/agent_builder.rs grew by 4 lines, so I raised its size limit in tests/module_size.rs from 4977 to 4981 with a note. docs/src/configuration/models.md now explains which OpenRouter ids get vendor limits.
+
+Tickets:
+• #1122: comment listing the ids where the two lookups disagree, which is why yoyo's Anthropic mapping can't be deleted.
+• #1117: comment saying it stays open, because yoagent has no rows for those Anthropic ids either.
+• #1012: the two pricing findings above.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
