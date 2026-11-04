@@ -4628,6 +4628,30 @@ fn ast_exit_status_distinguishes_missing_failed_empty_and_found() {
         "{stdout}"
     );
 
+    // #1131: util-linux's set-group `sg` exits 0 on --version but is not
+    // ast-grep. It must read as missing, and must never be handed `run`.
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let path = bin.path().join("sg");
+        std::fs::write(
+            &path,
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 'sg from util-linux 2.41.3'; exit 0; fi\necho \"sg: unrecognized option '$2'\" >&2; exit 1\n",
+        )
+        .expect("write util-linux sg");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    }
+    let (code, stdout, stderr) = yoyo_ast_with_path(bin.path());
+    assert_eq!(
+        code,
+        Some(2),
+        "util-linux sg: stdout={stdout} stderr={stderr}"
+    );
+    assert!(
+        stdout.contains("ast-grep (sg) is not installed."),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("unrecognized option"), "{stdout}");
+
     // Search error: sg exits nonzero with stderr.
     write_stub_sg(bin.path(), "echo 'bad pattern' >&2; exit 2");
     let (code, stdout, stderr) = yoyo_ast_with_path(bin.path());

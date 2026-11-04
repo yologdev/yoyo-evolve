@@ -62,3 +62,56 @@ fn usage_errors_exit_two_before_sg_is_looked_for() {
         assert_eq!(handle_ast_grep_status(input), 2, "{input:?}");
     }
 }
+
+#[test]
+fn version_output_accepts_ast_grep_and_rejects_util_linux_sg() {
+    // Captured verbatim on the Day-248 runner: `/usr/bin/sg --version`.
+    assert!(!is_ast_grep_version_output("sg from util-linux 2.41.3\n"));
+    // Near-miss that must pass: ast-grep's own line, under either name.
+    assert!(is_ast_grep_version_output("ast-grep 0.39.5\n"));
+    assert!(is_ast_grep_version_output("  ast-grep 0.39.5"));
+    assert!(is_ast_grep_version_output("ast-grep"));
+    for reject in ["", "\n", "garbage", "ast-grepper 1.0", "not ast-grep 0.1"] {
+        assert!(!is_ast_grep_version_output(reject), "{reject:?}");
+    }
+}
+
+#[test]
+fn resolver_prefers_ast_grep_and_accepts_sg_only_when_it_is_ast_grep() {
+    let util_linux = || Some((true, "sg from util-linux 2.41.3\n".to_string()));
+    let real = || Some((true, "ast-grep 0.39.5\n".to_string()));
+    // The #1131 host: no ast-grep, util-linux sg exits 0 -> not installed.
+    let got = resolve_ast_grep_binary(AST_GREP_CANDIDATES, |n| {
+        if n == "sg" {
+            util_linux()
+        } else {
+            None
+        }
+    });
+    assert_eq!(got, None);
+    // Real ast-grep installed only as `sg` (older packages) still resolves.
+    let got = resolve_ast_grep_binary(
+        AST_GREP_CANDIDATES,
+        |n| {
+            if n == "sg" {
+                real()
+            } else {
+                None
+            }
+        },
+    );
+    assert_eq!(got, Some("sg"));
+    // Both present: `ast-grep` wins, and `sg` is never probed.
+    let mut probed = Vec::new();
+    let got = resolve_ast_grep_binary(AST_GREP_CANDIDATES, |n| {
+        probed.push(n.to_string());
+        real()
+    });
+    assert_eq!(got, Some("ast-grep"));
+    assert_eq!(probed, ["ast-grep"]);
+    // ast-grep-looking stdout with a failed exit does not count.
+    let got = resolve_ast_grep_binary(AST_GREP_CANDIDATES, |_| {
+        Some((false, "ast-grep 0.39.5".to_string()))
+    });
+    assert_eq!(got, None);
+}

@@ -1667,7 +1667,7 @@ fn first_ident_uppercase(line: &str) -> bool {
 pub fn extract_symbols_ast_grep(path: &str, language: &str) -> Option<Vec<Symbol>> {
     let rule = ast_grep_rule_for_language(language)?;
 
-    let output = std::process::Command::new("sg")
+    let output = std::process::Command::new(crate::commands_ast_grep::ast_grep_binary()?)
         .arg("scan")
         .arg("--json")
         .arg("--inline-rules")

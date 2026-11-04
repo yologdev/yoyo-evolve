@@ -5,15 +5,59 @@ use crate::format::*;
 /// Subcommand completions for `/ast <Tab>`.
 pub const AST_GREP_FLAGS: &[&str] = &["--lang", "--in"];
 
-/// Check if ast-grep's `sg` binary is available on PATH.
+/// Does this `--version` stdout come from ast-grep? Its first line starts
+/// with the word `ast-grep` (`ast-grep 0.39.5`), whichever name the binary was
+/// run under. util-linux's set-group `sg` also exits 0 on `--version`, but
+/// prints `sg from util-linux 2.41.3`, so exit status alone cannot tell them
+/// apart (#1131): on stock Debian/Ubuntu that `sg` passed as ast-grep.
+pub fn is_ast_grep_version_output(stdout: &str) -> bool {
+    let first = stdout.trim_start().lines().next().unwrap_or("");
+    first
+        .strip_prefix("ast-grep")
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with(char::is_whitespace))
+}
+
+/// The ast-grep binary names, in probe order. `ast-grep` first: upstream is
+/// retiring the short `sg` name (ast-grep#56), and `sg` is the one a
+/// different program may own.
+pub const AST_GREP_CANDIDATES: &[&str] = &["ast-grep", "sg"];
+
+/// Pick the first candidate whose `--version` both succeeded and reads as
+/// ast-grep. `probe` returns `(exit ok, stdout)` or `None` when it could not
+/// run; it is a parameter so the order and the acceptance rule are testable
+/// without what happens to be on PATH.
+pub fn resolve_ast_grep_binary(
+    candidates: &[&'static str],
+    mut probe: impl FnMut(&str) -> Option<(bool, String)>,
+) -> Option<&'static str> {
+    candidates.iter().copied().find(|name| {
+        probe(name).is_some_and(|(ok, stdout)| ok && is_ast_grep_version_output(&stdout))
+    })
+}
+
+/// The ast-grep binary on PATH that really is ast-grep, probed once per
+/// process. `None` means not installed (or only a non-ast-grep `sg`).
+pub fn ast_grep_binary() -> Option<&'static str> {
+    static RESOLVED: std::sync::OnceLock<Option<&'static str>> = std::sync::OnceLock::new();
+    *RESOLVED.get_or_init(|| {
+        resolve_ast_grep_binary(AST_GREP_CANDIDATES, |name| {
+            let out = std::process::Command::new(name)
+                .arg("--version")
+                .stdin(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .output()
+                .ok()?;
+            Some((
+                out.status.success(),
+                String::from_utf8_lossy(&out.stdout).into_owned(),
+            ))
+        })
+    })
+}
+
+/// Is a real ast-grep on PATH? See [`ast_grep_binary`].
 pub fn is_ast_grep_available() -> bool {
-    std::process::Command::new("sg")
-        .arg("--version")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    ast_grep_binary().is_some()
 }
 
 /// Maximum number of lines `/ast` prints from one search.
@@ -45,8 +89,8 @@ pub fn cap_ast_output(out: &str) -> String {
 /// shell door also turns it into an exit status ([`ast_outcome_status`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AstOutcome {
-    /// `sg` is not on PATH (or is not ast-grep: shadow-utils' `sg` fails
-    /// `--version`), so nothing was searched.
+    /// Neither `ast-grep` nor an `sg` that is ast-grep is on PATH (util-linux's
+    /// set-group `sg` does not count, #1131), so nothing was searched.
     Missing,
     /// The search ran and printed matches (already capped).
     Matches(String),
@@ -84,10 +128,10 @@ pub fn ast_outcome_status(outcome: &AstOutcome) -> i32 {
 
 /// Run ast-grep structural search, keeping every outcome distinct.
 pub fn run_ast_grep_outcome(pattern: &str, lang: Option<&str>, path: Option<&str>) -> AstOutcome {
-    if !is_ast_grep_available() {
+    let Some(bin) = ast_grep_binary() else {
         return AstOutcome::Missing;
-    }
-    let mut cmd = std::process::Command::new("sg");
+    };
+    let mut cmd = std::process::Command::new(bin);
     cmd.arg("run").arg("--pattern").arg(pattern);
     if let Some(l) = lang {
         cmd.arg("--lang").arg(l);
@@ -101,7 +145,7 @@ pub fn run_ast_grep_outcome(pattern: &str, lang: Option<&str>, path: Option<&str
             &String::from_utf8_lossy(&out.stdout),
             &String::from_utf8_lossy(&out.stderr),
         ),
-        Err(e) => AstOutcome::Error(format!("Failed to run sg: {e}")),
+        Err(e) => AstOutcome::Error(format!("Failed to run {bin}: {e}")),
     }
 }
 
@@ -313,11 +357,15 @@ mod tests {
     }
 
     #[test]
-    fn test_ast_grep_search_no_sg() {
-        // When sg is not installed, should return a helpful error
-        if !is_ast_grep_available() {
-            let result = run_ast_grep_outcome("$X.unwrap()", None, None);
+    fn test_ast_grep_search_follows_the_resolver() {
+        // Whatever this host has, the search and the resolver agree: no real
+        // ast-grep means Missing, never an `sg` run (util-linux's `sg` used to
+        // get `run --pattern` and fail with "unrecognized option", #1131).
+        let result = run_ast_grep_outcome("$X.unwrap()", None, None);
+        if ast_grep_binary().is_none() {
             assert_eq!(result, AstOutcome::Missing);
+        } else {
+            assert_ne!(result, AstOutcome::Missing);
         }
     }
 
