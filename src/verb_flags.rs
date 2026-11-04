@@ -19,6 +19,8 @@ pub(crate) fn verb_own_flags(verb: &str) -> (&'static [&'static str], &'static [
     use crate::commands_search::{GREP_FLAGS, GREP_VALUE_FLAGS};
     match verb {
         "grep" => (GREP_FLAGS, GREP_VALUE_FLAGS),
+        // `/ast <pattern> [--lang <lang>] [--in <path>]`; both take a value.
+        "ast" => (&["--lang", "--in"], &["--lang", "--in"]),
         "outline" => (&["--all"], &[]),
         "review" => (REVIEW_FLAGS, REVIEW_VALUE_FLAGS),
         _ => (&[], &[]),
@@ -39,6 +41,146 @@ pub(crate) fn verb_flag_refusal(args: &[String]) -> Option<String> {
     let msg = crate::cli_config::unknown_flags_among(flags, own, valued)?;
     let verb = crate::cli::sanitize_for_display(verb);
     Some(format!("{msg} for `yoyo {verb}`. Nothing ran."))
+}
+
+/// What `yoyo <verb>` does with a dash-led word it does not know (#1132).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DashPolicy {
+    /// [`verb_flag_refusal`] runs before the verb's handler: exit 2,
+    /// "Nothing ran", did-you-mean from [`verb_own_flags`]. `--` escapes.
+    Refuse,
+    /// Refused with exit 2 before anything runs, by the verb's own parser
+    /// or door; the reason names which one.
+    OwnRefusal(&'static str),
+    /// Handed on by design; the reason says to whom.
+    Passthrough(&'static str),
+}
+
+use DashPolicy::{OwnRefusal, Passthrough, Refuse};
+
+const GLOBAL: DashPolicy = OwnRefusal(
+    "positional_after_verb refuses it (same message), but accepts yoyo's global flags (status --model m)",
+);
+
+/// One row per [`crate::cli::KNOWN_SUBCOMMANDS`] entry, in its order (#1132).
+/// A test fails when the two lists differ in either direction, so a new verb
+/// cannot ship without a decision here; the dispatch arms are pinned to
+/// KNOWN_SUBCOMMANDS by `known_subcommands_names_every_dispatch_arm`.
+/// `tests/unknown_flag_refusal.rs` reads the `Refuse` rows from this source.
+pub(crate) const VERB_DASH_POLICY: &[(&str, DashPolicy)] = &[
+    ("ast", Refuse),
+    ("blame", Refuse),
+    ("changelog", Refuse),
+    (
+        "commit",
+        OwnRefusal("its own git-style flag list, with did-you-mean (#1107)"),
+    ),
+    (
+        "config",
+        OwnRefusal("an unknown subcommand needs a session: exit 2, nothing runs"),
+    ),
+    ("def", Refuse),
+    (
+        "diff",
+        OwnRefusal("its own git-style flag list: usage line, exit 2 (#1107)"),
+    ),
+    ("docs", Refuse),
+    ("doctor", GLOBAL),
+    ("evolution", GLOBAL),
+    (
+        "extended",
+        OwnRefusal("session-only: every form exits 2 and nothing runs"),
+    ),
+    ("find", Refuse),
+    (
+        "gasp",
+        OwnRefusal("the first word must be one of its arms; anything else exits 2"),
+    ),
+    (
+        "goal",
+        OwnRefusal("the first word is a subcommand; an unknown one exits 2"),
+    ),
+    ("grep", Refuse),
+    ("health", GLOBAL),
+    ("help", GLOBAL),
+    (
+        "index",
+        OwnRefusal("its argv parser takes no flags: usage, exit 2"),
+    ),
+    ("init", GLOBAL),
+    (
+        "lint",
+        OwnRefusal("the first word is a subcommand; an unknown one exits 2"),
+    ),
+    (
+        "map",
+        OwnRefusal("its argv parser knows --all and --regex: usage, exit 2"),
+    ),
+    ("memories", Refuse),
+    (
+        "model",
+        OwnRefusal("the first word is a subcommand; an unknown one exits 2"),
+    ),
+    ("outline", Refuse),
+    ("permissions", GLOBAL),
+    ("review", Refuse),
+    (
+        "risk",
+        OwnRefusal("the first word is a subcommand (--all is one); unknown exits 2"),
+    ),
+    (
+        "run",
+        Passthrough("the words are a shell command line: `yoyo run ls -la`"),
+    ),
+    ("security", GLOBAL),
+    (
+        "setup",
+        OwnRefusal("interactive wizard: refused without a terminal, nothing written"),
+    ),
+    (
+        "skill",
+        OwnRefusal("the first word is a subcommand; an unknown one exits 2"),
+    ),
+    ("status", GLOBAL),
+    (
+        "test",
+        Passthrough(
+            "extra words go verbatim to the project's test runner (#745): `yoyo test --release`",
+        ),
+    ),
+    (
+        "todo",
+        OwnRefusal("the first word is a subcommand; an unknown one exits 2"),
+    ),
+    ("tree", OwnRefusal("takes only a depth: usage, exit 2")),
+    (
+        "undo",
+        OwnRefusal("takes N, --all or --last-commit: usage, exit 2"),
+    ),
+    ("update", GLOBAL),
+    ("version", GLOBAL),
+    (
+        "watch",
+        OwnRefusal("session setting: every form but `status` exits 2, nothing runs"),
+    ),
+];
+
+/// The verb's row in [`VERB_DASH_POLICY`], or None for a word that is not a verb.
+pub(crate) fn dash_policy(verb: &str) -> Option<DashPolicy> {
+    VERB_DASH_POLICY
+        .iter()
+        .find(|(v, _)| *v == verb)
+        .map(|(_, p)| *p)
+}
+
+/// [`verb_flag_refusal`] for the verbs whose row is `Refuse`, else None.
+/// `dispatch_sub` calls this once before its `match`, so the table, not each
+/// arm, decides which verbs refuse (#1132).
+pub(crate) fn policy_refusal(args: &[String]) -> Option<String> {
+    let verb = args.get(1)?;
+    (dash_policy(verb) == Some(Refuse))
+        .then(|| verb_flag_refusal(args))
+        .flatten()
 }
 
 /// `yoyo review`'s own flags (#1129). Before this, `review --quik` was read
@@ -339,5 +481,64 @@ mod tests {
         );
         assert_eq!(drop_end_of_flags(&argv(&["serde"])), argv(&["serde"]));
         assert!(drop_end_of_flags(&[]).is_empty());
+    }
+
+    /// #1132's forcing function: every verb `yoyo` dispatches has exactly one
+    /// policy row and every row is a verb, so a new verb fails here until
+    /// someone decides what it does with `--bogus`.
+    #[test]
+    fn every_known_subcommand_has_exactly_one_dash_policy_row() {
+        let verbs = crate::cli::KNOWN_SUBCOMMANDS;
+        for verb in verbs {
+            let rows = VERB_DASH_POLICY.iter().filter(|(v, _)| v == verb).count();
+            assert_eq!(
+                rows, 1,
+                "KNOWN_SUBCOMMANDS has {verb:?}; VERB_DASH_POLICY rows: {rows}"
+            );
+        }
+        for (verb, _) in VERB_DASH_POLICY {
+            assert!(
+                verbs.contains(verb),
+                "policy row {verb:?} is not a subcommand"
+            );
+        }
+        assert_eq!(VERB_DASH_POLICY.len(), verbs.len());
+    }
+
+    /// The three verbs #1132 routed, plus their near-misses: ast's own
+    /// flags and values, `--` escaping, and `test`/`run` passing on.
+    #[test]
+    fn ast_and_blame_refuse_and_test_passes_on() {
+        for (row, want) in [
+            (
+                &["yoyo", "ast", "--bogus"][..],
+                "unknown flag '--bogus' for `yoyo ast`. Nothing ran.",
+            ),
+            (
+                &["yoyo", "ast", "--lnag", "rust", "f($A)"],
+                "unknown flag '--lnag' (did you mean --lang?) for `yoyo ast`. Nothing ran.",
+            ),
+            (
+                &["yoyo", "blame", "--bogus"],
+                "unknown flag '--bogus' for `yoyo blame`. Nothing ran.",
+            ),
+        ] {
+            assert_eq!(policy_refusal(&argv(row)).as_deref(), Some(want), "{row:?}");
+        }
+        for row in [
+            &["yoyo", "ast", "f($A)", "--lang", "rust", "--in", "src/"][..],
+            &["yoyo", "ast", "--in", "-dir", "f($A)"],
+            &["yoyo", "ast", "-- f($A)"],
+            &["yoyo", "ast", "--", "-$X"],
+            &["yoyo", "blame", "src/a.rs:1-5"],
+            &["yoyo", "blame", "--", "--weird"],
+            &["yoyo", "test", "--release"],
+            &["yoyo", "run", "ls", "-la"],
+            // Global-flag verbs keep their own door, which accepts --model.
+            &["yoyo", "status", "--no-color"],
+            &["yoyo", "nonverb", "--bogus"],
+        ] {
+            assert_eq!(policy_refusal(&argv(row)), None, "{row:?}");
+        }
     }
 }

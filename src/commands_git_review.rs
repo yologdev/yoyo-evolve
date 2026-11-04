@@ -540,7 +540,7 @@ pub fn handle_blame_status(input: &str) -> i32 {
     if let Some((start, end)) = args.range {
         cmd.push(format!("-L{start},{end}"));
     }
-    cmd.push(args.file.clone());
+    cmd.extend(["--".to_string(), args.file.clone()]); // #1132: `--weird` is a file
 
     let cmd_refs: Vec<&str> = cmd.iter().map(|s| s.as_str()).collect();
     match run_git(&cmd_refs) {

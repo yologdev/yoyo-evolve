@@ -583,3 +583,89 @@ fn strip_ansi(s: &str) -> String {
     }
     out
 }
+
+/// The `Refuse` rows of `VERB_DASH_POLICY`, read from its source: this is a
+/// binary crate, so the table cannot be imported (#1132). Iterating the table
+/// keeps a new `Refuse` row covered here without editing this file.
+fn refuse_rows() -> Vec<String> {
+    let src = include_str!("../src/verb_flags.rs");
+    let start = src
+        .find("pub(crate) const VERB_DASH_POLICY")
+        .expect("table");
+    let table = &src[start..start + src[start..].find("\n];").expect("table end")];
+    let rows: Vec<String> = table
+        .lines()
+        .filter_map(|l| l.trim().strip_prefix("(\"")?.strip_suffix("\", Refuse),"))
+        .map(String::from)
+        .collect();
+    // Anti-vacuous: every `Refuse)` in the table was parsed as a row.
+    assert_eq!(rows.len(), table.matches(" Refuse)").count(), "{rows:?}");
+    assert!(rows.len() >= 10, "the parse is broken: {rows:?}");
+    rows
+}
+
+/// #1132: every verb whose policy row is `Refuse` refuses `--bogus` with
+/// exit 2 and "Nothing ran", before its handler (nothing on stdout), with no
+/// stub: a refused run never builds a request.
+#[test]
+fn every_refuse_row_refuses_an_unknown_flag_on_the_real_binary() {
+    for verb in refuse_rows() {
+        let (code, out, err, _tmp) = run_verb(&[&verb, "--bogus"]);
+        assert_eq!(code, Some(2), "{verb}: stdout: {out}\nstderr: {err}");
+        assert!(
+            err.contains(&format!(
+                "unknown flag '--bogus' for `yoyo {verb}`. Nothing ran."
+            )),
+            "{verb}: {err}"
+        );
+        assert!(out.is_empty(), "{verb} ran its handler: {out}");
+    }
+}
+
+/// #1132 typo rows: `ast --lnag` names `--lang` even where ast-grep is not
+/// installed (the refusal comes first), and `blame -- --weird` blames a file
+/// literally named `--weird` instead of handing git an option.
+#[test]
+fn ast_typo_suggests_lang_and_blame_double_dash_reaches_the_file() {
+    let (code, out, err, _tmp) = run_verb(&["ast", "--lnag", "rust", "f($A)"]);
+    assert_eq!(code, Some(2), "{out}{err}");
+    assert!(err.contains("did you mean --lang?"), "{err}");
+    assert!(
+        !err.contains("not installed") && out.is_empty(),
+        "{out}{err}"
+    );
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let (home, repo) = (tmp.path().join("home"), tmp.path().join("repo"));
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&repo).unwrap();
+    let git = |args: &[&str]| {
+        let ok = Command::new("git")
+            .args(["-c", "user.email=a@b", "-c", "user.name=a"])
+            .args(args)
+            .current_dir(&repo)
+            .env("HOME", &home)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .expect("git")
+            .status
+            .success();
+        assert!(ok, "git {args:?}");
+    };
+    git(&["init", "-q"]);
+    std::fs::write(repo.join("--weird"), "hello\n").unwrap();
+    git(&["add", "--", "--weird"]);
+    git(&["commit", "-qm", "i"]);
+    let out = scrubbed(&home)
+        .args(["blame", "--", "--weird"])
+        .current_dir(&repo)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .expect("spawn yoyo");
+    let (stdout, err) = (
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    assert_eq!(out.status.code(), Some(0), "{stdout}{err}");
+    assert!(stdout.contains("hello"), "{stdout}{err}");
+}

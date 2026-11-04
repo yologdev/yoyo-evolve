@@ -453,7 +453,9 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // tests live in src/verb_flags.rs so this file did not absorb them), pasted.
     // Day 248 (#1129): 2640 -> 2637 (-3: build_review_arg's body moved to
     // verb_flags::review_arg, the review arm gained its flag refusal), pasted.
-    ("src/dispatch_sub.rs", 2637),
+    // Day 249 (#1132): 2637 -> 2636: one policy refusal above the match replaced
+    // the review and grep arms' own calls; ast/blame arm edits were line-neutral.
+    ("src/dispatch_sub.rs", 2636),
     // Day 209: 3439 -> 3455 (+16, within the drift band, pasted rather than left to absorb).
     // #937 option 1: nine lines of doc above `builtin_model_pricing` naming both ignored
     // audit commands (deliverable 4 — an alarm nobody can find is the #745/#767/#769

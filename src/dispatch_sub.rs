@@ -164,11 +164,11 @@ fn positional_after_verb(args: &[String]) -> Vec<&String> {
     out
 }
 
-/// Exit 2 before the handler runs when [`crate::verb_flags::verb_flag_refusal`]
-/// refuses (#1111):
+/// Exit 2 before the handler runs when the verb's `VERB_DASH_POLICY` row is
+/// `Refuse` and [`crate::verb_flags::verb_flag_refusal`] refuses (#1111, #1132):
 /// `yoyo find --bogus` used to search for `--bogus` and exit 0.
 fn refuse_unknown_verb_flag(args: &[String]) {
-    if let Some(msg) = crate::verb_flags::verb_flag_refusal(args) {
+    if let Some(msg) = crate::verb_flags::policy_refusal(args) {
         eprintln!("{RED}error:{RESET} {msg}");
         exit_if_nonzero(2);
     }
@@ -404,6 +404,7 @@ pub(crate) fn try_dispatch_subcommand_in(
         std::process::exit(2);
     }
     if let Some(sub) = args.get(1) {
+        refuse_unknown_verb_flag(args); // #1132: every `Refuse` row, before any arm
         match sub.as_str() {
             "doctor" => {
                 // Respect --provider / --model flags if present, else fall back to
@@ -578,8 +579,7 @@ pub(crate) fn try_dispatch_subcommand_in(
             "review" => {
                 // Non-interactive code review: build an agent, run the review
                 // prompt, print the result to stdout, and exit. #1129: a
-                // mistyped flag exits 2 here instead of becoming a path.
-                refuse_unknown_verb_flag(args);
+                // mistyped flag exits 2 (above the match) instead of a path.
                 let review = build_review_arg(args);
                 let exit_code = run_review_subcommand(args, &review);
                 std::process::exit(exit_code);
@@ -590,7 +590,7 @@ pub(crate) fn try_dispatch_subcommand_in(
                 // the REPL does, so the added `"..."` made `yoyo blame "a b.rs"`
                 // look up a name containing quote characters and report a
                 // committed file as missing. Unspaced args join identically.
-                let input = join_args_as_command(args);
+                let input = join_args_as_command(&verb_with(args, &verb_operands(args)));
                 exit_if_nonzero(crate::commands_git_review::handle_blame_status(&input));
                 return Some(None);
             }
@@ -608,9 +608,8 @@ pub(crate) fn try_dispatch_subcommand_in(
                 return Some(None);
             }
             "grep" => {
-                // #1111: a flag not in GREP_FLAGS refuses; grep's own parser
-                // reads `--`, so the args go on unchanged.
-                refuse_unknown_verb_flag(args);
+                // #1111: a flag not in GREP_FLAGS refused above the match;
+                // grep's own parser reads `--`, so the args go on unchanged.
                 let input = quote_args_as_command(args);
                 exit_if_nonzero(crate::commands_search::handle_grep_status(&input, Shell));
                 return Some(None);
@@ -644,7 +643,7 @@ pub(crate) fn try_dispatch_subcommand_in(
                 // the pattern/symbol. Args reach the handler verbatim, so every
                 // correction the REPL path earned — #767's bare-path refusal,
                 // `cap_ast_output`'s 200-line bound — applies here too.
-                let input = join_args_as_command(args);
+                let input = join_args_as_command(&verb_with(args, &verb_operands(args)));
                 exit_if_nonzero(crate::commands_ast_grep::handle_ast_grep_status(&input));
                 return Some(None);
             }
