@@ -337,7 +337,10 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // than moving to `commands_risk_unhittable.rs` because `yoyo risk`'s report
     // body is this file's, and the feature's own module already carries the
     // pass. Pasted from what the gate printed.
-    ("src/commands_risk.rs", 6601),
+    // Day 250: #1137 — `risk snapshot` / `validate` / `harvest` exit 1 on a
+    // runtime failure: the RISK_FAILED flag (+6) plus one store per failure
+    // arm (+7); the other +1 was drift already present at HEAD (6602). Pasted.
+    ("src/commands_risk.rs", 6615),
     // Day 162 (#707): +68 lines — format_project_index no longer byte-slices a
     // path tail (live panic on any non-ASCII path >50 bytes) and measures its
     // column in chars; 62 of the 68 lines are the two regression tests, one of
@@ -460,7 +463,9 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // the review and grep arms' own calls; ast/blame arm edits were line-neutral.
     // Day 249 (#1133): 2636 -> 2650 (+14): the verb_split wrapper, and the grep/outline
     // arms take the split instead of a joined command, pasted.
-    ("src/dispatch_sub.rs", 2650),
+    // Day 250: #1137 — risk_status returns 1 when `snapshot` failed to write
+    // (+5); the other +7 was drift already inside the grace band. Pasted.
+    ("src/dispatch_sub.rs", 2662),
     // Day 209: 3439 -> 3455 (+16, within the drift band, pasted rather than left to absorb).
     // #937 option 1: nine lines of doc above `builtin_model_pricing` naming both ignored
     // audit commands (deliverable 4 — an alarm nobody can find is the #745/#767/#769

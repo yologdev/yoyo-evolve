@@ -114,10 +114,15 @@ pub(crate) fn find_pattern_from_argv(rest: &[String]) -> Result<String, String> 
 }
 
 /// Exit status for `yoyo risk <sub>` (#982): 2 (usage) for a verb
-/// `handle_risk` refuses, using its own sub extraction and classifier.
+/// `handle_risk` refuses, using its own sub extraction and classifier; 1 when
+/// the verb failed at runtime (#1137, the flag its failure arms set).
 pub(crate) fn risk_status(input: &str) -> i32 {
     let sub = input.strip_prefix("/risk").unwrap_or(input).trim();
-    2 * i32::from(crate::commands_risk::is_unknown_risk_subcommand(sub))
+    if crate::commands_risk::is_unknown_risk_subcommand(sub) {
+        return 2;
+    }
+    let failed = &crate::commands_risk::RISK_FAILED;
+    i32::from(failed.load(std::sync::atomic::Ordering::Relaxed))
 }
 
 /// Exit nonzero when a shell subcommand's child failed or never ran; success

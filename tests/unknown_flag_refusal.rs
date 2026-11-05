@@ -891,3 +891,253 @@ fn goal_set_and_init_in_a_writable_dir_still_exit_0() {
     let kept = std::fs::read_to_string(tmp.path().join("repo/YOYO.md")).unwrap();
     assert_eq!(kept, "mine\n");
 }
+
+/// #1137: `yoyo skill init x` into a read-only `.yoyo/` printed "error
+/// creating directory" and exited 0; `yoyo risk snapshot` printed "Error
+/// saving risk snapshot" and exited 0. Both now exit 1 and write nothing.
+#[cfg(unix)]
+#[test]
+fn skill_init_and_risk_snapshot_into_a_read_only_yoyo_dir_exit_1() {
+    if chmod_is_ignored() {
+        return;
+    }
+    let read_only_yoyo = |repo: &std::path::Path| {
+        std::fs::create_dir(repo.join(".yoyo")).unwrap();
+        chmod(&repo.join(".yoyo"), 0o555);
+    };
+    let (code, out, err, tmp) = run_verb_in(read_only_yoyo, &["skill", "init", "myskill"]);
+    assert_eq!(code, Some(1), "stdout: {out}\nstderr: {err}");
+    assert!(err.contains("error creating directory"), "{err}");
+    assert!(!tmp.path().join("repo/.yoyo/skills").exists());
+    chmod(&tmp.path().join("repo/.yoyo"), 0o755);
+
+    let (code, out, err, tmp) = run_verb_in(read_only_yoyo, &["risk", "snapshot"]);
+    assert_eq!(code, Some(1), "stdout: {out}\nstderr: {err}");
+    assert!(err.contains("Error saving risk snapshot"), "{err}");
+    assert!(!out.contains("Snapshot saved"), "{out}");
+    chmod(&tmp.path().join("repo/.yoyo"), 0o755);
+}
+
+/// #1137 near-misses: writable `skill init` and `risk snapshot` still exit 0
+/// and really write; an existing skill left alone is not a failure (like
+/// `yoyo init`); an invalid name is a usage refusal (2), not a runtime 1.
+#[cfg(unix)]
+#[test]
+fn skill_init_and_risk_snapshot_in_a_writable_dir_still_exit_0() {
+    let (code, out, err, tmp) = run_verb_in(|_| {}, &["skill", "init", "myskill"]);
+    assert_eq!(code, Some(0), "stdout: {out}\nstderr: {err}");
+    assert!(tmp
+        .path()
+        .join("repo/.yoyo/skills/myskill/SKILL.md")
+        .exists());
+
+    let (code, out, err, _tmp) = run_verb_in(
+        |repo| {
+            std::fs::create_dir_all(repo.join(".yoyo/skills/myskill")).unwrap();
+            std::fs::write(repo.join(".yoyo/skills/myskill/SKILL.md"), "mine\n").unwrap();
+        },
+        &["skill", "init", "myskill"],
+    );
+    assert_eq!(code, Some(0), "existing skill kept: {out}{err}");
+
+    let (code, out, err, _tmp) = run_verb_in(|_| {}, &["skill", "init", "Bad_Name"]);
+    assert_eq!(code, Some(2), "stdout: {out}\nstderr: {err}");
+
+    let (code, out, err, tmp) = run_verb_in(|_| {}, &["risk", "snapshot"]);
+    assert_eq!(code, Some(0), "stdout: {out}\nstderr: {err}");
+    assert!(out.contains("Snapshot saved"), "{out}");
+    assert!(tmp.path().join("repo/.yoyo").exists());
+}
+
+/// #1137: run `yoyo <args>` with `stubs` (name, shell script) first on PATH,
+/// so `skill search` / `skill install gh:` fail without touching the network.
+#[cfg(unix)]
+fn run_with_path_stubs(
+    stubs: &[(&str, &str)],
+    setup: impl FnOnce(&std::path::Path, &std::path::Path),
+    args: &[&str],
+) -> (Option<i32>, String, String, tempfile::TempDir) {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let (home, repo, bin) = (
+        tmp.path().join("home"),
+        tmp.path().join("repo"),
+        tmp.path().join("bin"),
+    );
+    for d in [&home, &repo, &bin] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    for (name, body) in stubs {
+        std::fs::write(bin.join(name), format!("#!/bin/sh\n{body}\n")).unwrap();
+        chmod(&bin.join(name), 0o755);
+    }
+    setup(&home, &repo);
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let out = scrubbed(&home)
+        .env("PATH", path)
+        .args(args)
+        .current_dir(&repo)
+        .output()
+        .expect("spawn yoyo");
+    (
+        out.status.code(),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+        tmp,
+    )
+}
+
+/// #1137: `skill search` and `skill install` printed their failure and exited
+/// 0. A failing fetch (gh missing, gh search erroring, git clone failing), a
+/// missing local source, and an unwritable install dir now exit 1. Stubbed
+/// `gh`/`git`, so no network.
+#[cfg(unix)]
+#[test]
+fn skill_search_and_install_failures_exit_1() {
+    let none = |_: &std::path::Path, _: &std::path::Path| {};
+    let (code, out, err, _t) =
+        run_with_path_stubs(&[("gh", "exit 1")], none, &["skill", "search", "foo"]);
+    assert_eq!(code, Some(1), "gh not found: {out}{err}");
+    assert!(err.contains("gh CLI not found"), "{err}");
+
+    let failing_search = "[ \"$1\" = --version ] && exit 0; echo boom >&2; exit 1";
+    let (code, out, err, _t) =
+        run_with_path_stubs(&[("gh", failing_search)], none, &["skill", "search", "foo"]);
+    assert_eq!(code, Some(1), "search failed: {out}{err}");
+    assert!(err.contains("search failed"), "{err}");
+
+    let (code, out, err, _t) =
+        run_with_path_stubs(&[], none, &["skill", "install", "/nonexistent-skill-dir"]);
+    assert_eq!(code, Some(1), "{out}{err}");
+    assert!(err.contains("path does not exist"), "{err}");
+
+    let failing_clone = "echo 'fatal: offline stub' >&2; exit 128";
+    let (code, out, err, _t) = run_with_path_stubs(
+        &[("git", failing_clone)],
+        none,
+        &["skill", "install", "gh:nobody/none"],
+    );
+    assert_eq!(code, Some(1), "clone failed: {out}{err}");
+    assert!(err.contains("git clone failed"), "{err}");
+
+    if chmod_is_ignored() {
+        return;
+    }
+    let skill_src_and_read_only_config = |home: &std::path::Path, repo: &std::path::Path| {
+        std::fs::create_dir_all(repo.join("src-skill")).unwrap();
+        std::fs::write(
+            repo.join("src-skill/SKILL.md"),
+            "---\nname: s1\n---\nbody\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(home.join(".config")).unwrap();
+        chmod(&home.join(".config"), 0o555);
+    };
+    let (code, out, err, tmp) = run_with_path_stubs(
+        &[],
+        skill_src_and_read_only_config,
+        &["skill", "install", "src-skill"],
+    );
+    chmod(&tmp.path().join("home/.config"), 0o755);
+    assert_eq!(code, Some(1), "{out}{err}");
+    assert!(err.contains("error creating directory"), "{err}");
+}
+
+/// #1137 near-misses: an empty search result and a good local install (and
+/// re-installing over it, which leaves it alone) still exit 0.
+#[cfg(unix)]
+#[test]
+fn skill_search_empty_and_local_install_still_exit_0() {
+    let none = |_: &std::path::Path, _: &std::path::Path| {};
+    let (code, out, err, _t) =
+        run_with_path_stubs(&[("gh", "echo '[]'")], none, &["skill", "search", "foo"]);
+    assert_eq!(code, Some(0), "no results is not a failure: {out}{err}");
+    assert!(err.contains("no skills found"), "{err}");
+
+    let skill_src = |_: &std::path::Path, repo: &std::path::Path| {
+        std::fs::create_dir_all(repo.join("src-skill")).unwrap();
+        std::fs::write(
+            repo.join("src-skill/SKILL.md"),
+            "---\nname: s1\n---\nbody\n",
+        )
+        .unwrap();
+    };
+    let (code, out, err, tmp) =
+        run_with_path_stubs(&[], skill_src, &["skill", "install", "src-skill"]);
+    assert_eq!(code, Some(0), "{out}{err}");
+    assert!(tmp
+        .path()
+        .join("home/.config/yoyo/skills/s1/SKILL.md")
+        .exists());
+
+    let already_installed = |home: &std::path::Path, repo: &std::path::Path| {
+        skill_src(home, repo);
+        std::fs::create_dir_all(home.join(".config/yoyo/skills/s1")).unwrap();
+    };
+    let (code, out, err, _t) =
+        run_with_path_stubs(&[], already_installed, &["skill", "install", "src-skill"]);
+    assert_eq!(code, Some(0), "already installed is left alone: {out}{err}");
+    assert!(err.contains("already installed"), "{err}");
+}
+
+/// #1137 census rows: `risk validate` printed "Error parsing snapshot" (and
+/// its git-log / no-top_10 / ledger-write siblings) and `risk harvest`
+/// printed "Harvest skipped: <fetch error>", both exit 0. Both now exit 1;
+/// no snapshot at all stays the 0 "run snapshot first" note.
+#[cfg(unix)]
+#[test]
+fn risk_validate_and_harvest_failures_exit_1() {
+    let garbage_snapshot = |repo: &std::path::Path| {
+        std::fs::create_dir(repo.join(".yoyo")).unwrap();
+        std::fs::write(repo.join(".yoyo/risk_snapshots.jsonl"), "not json\n").unwrap();
+    };
+    let (code, out, err, _t) = run_verb_in(garbage_snapshot, &["risk", "validate"]);
+    assert_eq!(code, Some(1), "stdout: {out}\nstderr: {err}");
+    assert!(err.contains("Error parsing snapshot"), "{err}");
+
+    // A snapshot with one prediction, then harvest outside any git repo: the
+    // CI fetch cannot run, so nothing was harvested.
+    let one_snapshot = |repo: &std::path::Path| {
+        std::fs::create_dir(repo.join(".yoyo")).unwrap();
+        let row = r#"{"day":1,"git_hash":"abc1234","ts":"2026-11-05T00:00:00Z","top_10":[{"path":"src/a.rs"}]}"#;
+        std::fs::write(repo.join(".yoyo/risk_snapshots.jsonl"), format!("{row}\n")).unwrap();
+    };
+    let (code, out, err, _t) = run_verb_in(one_snapshot, &["risk", "harvest"]);
+    assert!(
+        out.contains("Harvest skipped"),
+        "stdout: {out}\nstderr: {err}"
+    );
+    assert_eq!(code, Some(1), "stdout: {out}\nstderr: {err}");
+
+    for verb in ["validate", "harvest"] {
+        let (code, out, err, _t) = run_verb_in(|_| {}, &["risk", verb]);
+        assert_eq!(code, Some(0), "no snapshot is not a failure: {out}{err}");
+        assert!(out.contains("No snapshots found"), "{verb}: {out}");
+    }
+}
+
+/// #1137 census row: `yoyo lint unsafe` outside a Rust project printed "only
+/// available for Rust projects" and exited 0, while `lint` / `lint strict`
+/// there exit 1 (#982, no recognized project). It now exits 1 too; with a
+/// Cargo.toml it still scans and exits 0.
+#[cfg(unix)]
+#[test]
+fn lint_unsafe_outside_a_rust_project_exits_1() {
+    let (code, out, err, _t) = run_verb_in(|_| {}, &["lint", "unsafe"]);
+    assert_eq!(code, Some(1), "stdout: {out}\nstderr: {err}");
+    assert!(out.contains("only available for Rust projects"), "{out}");
+
+    let (code, out, err, _t) = run_verb_in(
+        |repo| {
+            std::fs::write(repo.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+            std::fs::create_dir(repo.join("src")).unwrap();
+            std::fs::write(repo.join("src/main.rs"), "fn main() {}\n").unwrap();
+        },
+        &["lint", "unsafe"],
+    );
+    assert_eq!(code, Some(0), "stdout: {out}\nstderr: {err}");
+    assert!(out.contains("Scanning for unsafe code"), "{out}");
+}

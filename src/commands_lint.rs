@@ -248,7 +248,10 @@ pub(crate) fn handle_lint_status(input: &str) -> (Option<String>, i32) {
 
     // Dispatch to specialized subcommand handlers
     if arg == "unsafe" {
-        return (handle_lint_unsafe(), 0);
+        // #1137: no Cargo.toml means nothing was scanned: 1, like the
+        // no-recognized-project 1 below.
+        let code = i32::from(!std::path::Path::new("Cargo.toml").exists());
+        return (handle_lint_unsafe(), code);
     }
 
     // `/lint fix` is routed to handle_lint_fix (dispatch.rs), which needs a live

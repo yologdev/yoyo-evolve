@@ -5,6 +5,7 @@
 //! over Days 111-113 as the dream milestone infrastructure.
 
 use crate::format::*;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 // The retrospective half of the unhittable-surprise join (Day 206) — imported
 // directly, the way this file's other `commands_risk_unhittable` call sites name
@@ -981,6 +982,11 @@ fn handle_risk_predict() {
 }
 
 /// Handle `/risk snapshot` — save current risk predictions to JSONL.
+/// Set when a `/risk` verb failed at runtime (#1137): `snapshot` or `validate`
+/// could not write or read what it needs, or `harvest` could not fetch or
+/// record. The shell door's [`crate::dispatch_sub::risk_status`] exits 1.
+pub(crate) static RISK_FAILED: AtomicBool = AtomicBool::new(false);
+
 fn handle_risk_snapshot() {
     let risks = compute_file_risk_scores();
     let emerging = detect_emerging_risks(&risks);
@@ -1010,6 +1016,7 @@ fn handle_risk_snapshot() {
         }
         Err(e) => {
             eprintln!("  {RED}Error saving risk snapshot: {e}{RESET}");
+            RISK_FAILED.store(true, Ordering::Relaxed);
         }
     }
 }
@@ -2666,6 +2673,7 @@ fn handle_risk_harvest() {
         Ok(j) => j,
         Err(reason) => {
             println!("  {DIM}Harvest skipped: {reason}{RESET}");
+            RISK_FAILED.store(true, Ordering::Relaxed);
             return;
         }
     };
@@ -2822,6 +2830,7 @@ fn handle_risk_harvest() {
                 "  {RED}could not record CI failure event for run {}: {e}{RESET}",
                 run.run_id
             );
+            RISK_FAILED.store(true, Ordering::Relaxed);
             continue;
         }
 
@@ -2877,6 +2886,7 @@ fn handle_risk_validate() {
         Ok(v) => v,
         Err(e) => {
             eprintln!("  {RED}Error parsing snapshot: {e}{RESET}");
+            RISK_FAILED.store(true, Ordering::Relaxed);
             return;
         }
     };
@@ -2899,6 +2909,7 @@ fn handle_risk_validate() {
 
     if top_10.is_empty() {
         eprintln!("  {RED}Snapshot has no top_10 predictions.{RESET}");
+        RISK_FAILED.store(true, Ordering::Relaxed);
         return;
     }
 
@@ -2912,6 +2923,7 @@ fn handle_risk_validate() {
         Ok(o) => o,
         Err(e) => {
             eprintln!("  {RED}Error running git log: {e}{RESET}");
+            RISK_FAILED.store(true, Ordering::Relaxed);
             return;
         }
     };
@@ -3003,6 +3015,7 @@ fn handle_risk_validate() {
             )),
         ) {
             eprintln!("  {DIM}(warning: could not record risk validation event: {e}){RESET}");
+            RISK_FAILED.store(true, Ordering::Relaxed);
         }
     } else {
         // Third value (#717): the window claims a repair of a `src/` file but

@@ -18,6 +18,9 @@ pub fn handle_skill(input: &str, skills: &yoagent::skills::SkillSet) {
 /// arm uses (#982): 1 when `show` names a skill that is not loaded (or whose
 /// file cannot be read), 2 for an unknown subcommand (the usage-error code
 /// `risk`/`config` use), 0 otherwise. Decided from the branch, never from text.
+/// #1137: `init`, `install` and `search` return 1 when their write, copy,
+/// clone or fetch fails (2 for an invalid `init` name); an existing skill
+/// left alone and an empty search result stay 0, like `yoyo init`.
 pub fn handle_skill_status(input: &str, skills: &yoagent::skills::SkillSet) -> i32 {
     let sub = input.strip_prefix("/skill").unwrap_or(input).trim();
 
@@ -41,7 +44,7 @@ pub fn handle_skill_status(input: &str, skills: &yoagent::skills::SkillSet) -> i
                 "{DIM}  install a skill from a local directory or GitHub repository{RESET}\n"
             );
         } else {
-            skill_install(source);
+            return skill_install(source);
         }
     } else if sub == "install" {
         eprintln!("{YELLOW}  usage: /skill install <path|gh:user/repo>{RESET}");
@@ -49,19 +52,19 @@ pub fn handle_skill_status(input: &str, skills: &yoagent::skills::SkillSet) -> i
     } else if let Some(query) = sub.strip_prefix("search ") {
         let query = query.trim();
         if query.is_empty() {
-            handle_skill_search(None);
+            return handle_skill_search(None);
         } else {
-            handle_skill_search(Some(query));
+            return handle_skill_search(Some(query));
         }
     } else if sub == "search" {
-        handle_skill_search(None);
+        return handle_skill_search(None);
     } else if let Some(name) = sub.strip_prefix("init ") {
         let name = name.trim();
         if name.is_empty() {
             eprintln!("{YELLOW}  usage: /skill init <name>{RESET}");
             eprintln!("{DIM}  scaffold a new skill in .yoyo/skills/<name>/SKILL.md{RESET}\n");
         } else {
-            skill_init(name);
+            return skill_init(name);
         }
     } else if sub == "init" {
         eprintln!("{YELLOW}  usage: /skill init <name>{RESET}");
@@ -143,12 +146,12 @@ fn skill_init_template(name: &str) -> String {
 ///
 /// Creates the directory and writes a template SKILL.md with correct YAML
 /// frontmatter. Refuses to overwrite an existing skill.
-fn skill_init(name: &str) {
+fn skill_init(name: &str) -> i32 {
     if !is_valid_skill_name(name) {
         eprintln!("{RED}  invalid skill name: {name}{RESET}");
         eprintln!("{DIM}  names must be kebab-case: lowercase letters, digits, and hyphens{RESET}");
         eprintln!("{DIM}  examples: my-skill, code-review, lint-fix{RESET}\n");
-        return;
+        return 2;
     }
 
     let dir = std::path::PathBuf::from(".yoyo/skills").join(name);
@@ -157,7 +160,7 @@ fn skill_init(name: &str) {
     if file.exists() {
         eprintln!("{YELLOW}  skill already exists: {}{RESET}", file.display());
         eprintln!("{DIM}  delete it first if you want to start over{RESET}\n");
-        return;
+        return 0;
     }
 
     if let Err(e) = std::fs::create_dir_all(&dir) {
@@ -165,19 +168,20 @@ fn skill_init(name: &str) {
             "{RED}  error creating directory {}: {e}{RESET}\n",
             dir.display()
         );
-        return;
+        return 1;
     }
 
     let content = skill_init_template(name);
     if let Err(e) = std::fs::write(&file, &content) {
         eprintln!("{RED}  error writing {}: {e}{RESET}\n", file.display());
-        return;
+        return 1;
     }
 
     println!("{GREEN}  ✓ created skill '{name}'{RESET}");
     println!("{DIM}  {}{RESET}", file.display());
     println!("{DIM}  edit the SKILL.md to define your skill's behavior{RESET}");
     println!("{DIM}  load with: --skills .yoyo/skills{RESET}\n");
+    0
 }
 
 /// List all loaded skills with name and description.
@@ -306,7 +310,7 @@ struct SkillSearchResult {
 /// Searches for repositories with the `yoyo-skill` topic. If no topic-based
 /// results are found, falls back to a text search for "yoyo-skill".
 /// Displays results in a formatted table with install hints.
-fn handle_skill_search(query: Option<&str>) {
+fn handle_skill_search(query: Option<&str>) -> i32 {
     // Check if gh CLI is available
     let gh_check = std::process::Command::new("gh")
         .arg("--version")
@@ -319,7 +323,7 @@ fn handle_skill_search(query: Option<&str>) {
         eprintln!(
             "{DIM}  install the GitHub CLI to search for skills: https://cli.github.com/{RESET}\n"
         );
-        return;
+        return 1;
     }
 
     println!("{DIM}  searching for yoyo skills...{RESET}");
@@ -334,7 +338,7 @@ fn handle_skill_search(query: Option<&str>) {
                 Ok(r) => r,
                 Err(e) => {
                     eprintln!("{RED}  search failed: {e}{RESET}\n");
-                    return;
+                    return 1;
                 }
             }
         }
@@ -344,7 +348,7 @@ fn handle_skill_search(query: Option<&str>) {
         let q = query.unwrap_or("(all)");
         eprintln!("{YELLOW}  no skills found for: {q}{RESET}");
         eprintln!("{DIM}  try a different query, or browse: https://github.com/topics/yoyo-skill{RESET}\n");
-        return;
+        return 0;
     }
 
     // Find max name length for alignment
@@ -382,6 +386,7 @@ fn handle_skill_search(query: Option<&str>) {
     }
 
     println!("\n{DIM}  install with: /skill install gh:<owner>/<repo>{RESET}\n");
+    0
 }
 
 /// Search GitHub repos by the `yoyo-skill` topic.
@@ -617,10 +622,9 @@ pub(crate) fn skill_install_dir_from(
 /// and copies the entire directory to `~/.config/yoyo/skills/<name>/`.
 ///
 /// If the source starts with `gh:`, delegates to [`skill_install_from_github`].
-fn skill_install(source: &str) {
+fn skill_install(source: &str) -> i32 {
     if source.starts_with("gh:") {
-        skill_install_from_github(source);
-        return;
+        return skill_install_from_github(source);
     }
 
     let source_path = std::path::Path::new(source);
@@ -628,12 +632,12 @@ fn skill_install(source: &str) {
     // Validate source exists and is a directory
     if !source_path.exists() {
         eprintln!("{RED}  error: path does not exist: {source}{RESET}\n");
-        return;
+        return 1;
     }
     if !source_path.is_dir() {
         eprintln!("{RED}  error: not a directory: {source}{RESET}");
         eprintln!("{DIM}  /skill install expects a skill directory containing SKILL.md{RESET}\n");
-        return;
+        return 1;
     }
 
     // Validate SKILL.md exists
@@ -641,7 +645,7 @@ fn skill_install(source: &str) {
     if !skill_md_path.exists() {
         eprintln!("{RED}  error: no SKILL.md found in {source}{RESET}");
         eprintln!("{DIM}  a skill directory must contain a SKILL.md file{RESET}\n");
-        return;
+        return 1;
     }
 
     // Read and parse frontmatter for skill name
@@ -649,7 +653,7 @@ fn skill_install(source: &str) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("{RED}  error reading SKILL.md: {e}{RESET}\n");
-            return;
+            return 1;
         }
     };
 
@@ -660,7 +664,7 @@ fn skill_install(source: &str) {
                 "{RED}  error: could not extract skill name from SKILL.md frontmatter{RESET}"
             );
             eprintln!("{DIM}  SKILL.md must have YAML frontmatter with a 'name:' field{RESET}\n");
-            return;
+            return 1;
         }
     };
 
@@ -669,7 +673,7 @@ fn skill_install(source: &str) {
         Some(dir) => dir,
         None => {
             eprintln!("{RED}  error: could not determine config directory{RESET}\n");
-            return;
+            return 1;
         }
     };
 
@@ -682,7 +686,7 @@ fn skill_install(source: &str) {
             dest.display()
         );
         eprintln!("{DIM}  remove the existing directory first to reinstall{RESET}\n");
-        return;
+        return 0;
     }
 
     // Create destination and copy
@@ -691,7 +695,7 @@ fn skill_install(source: &str) {
             "{RED}  error creating directory {}: {e}{RESET}\n",
             dest.display()
         );
-        return;
+        return 1;
     }
 
     match copy_dir_recursive(source_path, &dest) {
@@ -702,12 +706,14 @@ fn skill_install(source: &str) {
                 "{DIM}  load with: --skills {}{RESET}\n",
                 install_dir.display()
             );
+            0
         }
         Err(e) => {
             eprintln!("{RED}  error copying skill: {e}{RESET}");
             // Clean up partial install
             let _ = std::fs::remove_dir_all(&dest);
             eprintln!("{DIM}  installation rolled back{RESET}\n");
+            1
         }
     }
 }
@@ -898,12 +904,12 @@ fn find_skill_md_recursive(
 ///
 /// Clones the repo with `--depth 1`, finds SKILL.md, then installs via
 /// the same path as local installs.
-fn skill_install_from_github(source: &str) {
+fn skill_install_from_github(source: &str) -> i32 {
     let gh = match parse_github_source(source) {
         Ok(g) => g,
         Err(e) => {
             eprintln!("{RED}  error: {e}{RESET}\n");
-            return;
+            return 1;
         }
     };
 
@@ -913,7 +919,7 @@ fn skill_install_from_github(source: &str) {
     let tmp_base = std::env::temp_dir().join(format!("yoyo-skill-install-{}", std::process::id()));
     if let Err(e) = std::fs::create_dir_all(&tmp_base) {
         eprintln!("{RED}  error creating temp directory: {e}{RESET}\n");
-        return;
+        return 1;
     }
 
     // Ensure cleanup on all exit paths
@@ -952,7 +958,7 @@ fn skill_install_from_github(source: &str) {
     match output {
         Err(e) => {
             eprintln!("{RED}  error running git clone: {e}{RESET}\n");
-            return;
+            return 1;
         }
         Ok(ref o) if !o.status.success() => {
             let stderr = String::from_utf8_lossy(&o.stderr);
@@ -987,7 +993,7 @@ fn skill_install_from_github(source: &str) {
                 eprintln!("{DIM}  {first_line}{RESET}");
             }
             eprintln!();
-            return;
+            return 1;
         }
         Ok(_) => {} // success
     }
@@ -997,7 +1003,7 @@ fn skill_install_from_github(source: &str) {
         Ok(dir) => dir,
         Err(e) => {
             eprintln!("{RED}  error: {e}{RESET}\n");
-            return;
+            return 1;
         }
     };
 
@@ -1007,7 +1013,7 @@ fn skill_install_from_github(source: &str) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("{RED}  error reading SKILL.md: {e}{RESET}\n");
-            return;
+            return 1;
         }
     };
 
@@ -1018,7 +1024,7 @@ fn skill_install_from_github(source: &str) {
                 "{RED}  error: could not extract skill name from SKILL.md frontmatter{RESET}"
             );
             eprintln!("{DIM}  SKILL.md must have YAML frontmatter with a 'name:' field{RESET}\n");
-            return;
+            return 1;
         }
     };
 
@@ -1027,7 +1033,7 @@ fn skill_install_from_github(source: &str) {
         Some(dir) => dir,
         None => {
             eprintln!("{RED}  error: could not determine config directory{RESET}\n");
-            return;
+            return 1;
         }
     };
 
@@ -1039,7 +1045,7 @@ fn skill_install_from_github(source: &str) {
             dest.display()
         );
         eprintln!("{DIM}  remove the existing directory first to reinstall{RESET}\n");
-        return;
+        return 0;
     }
 
     if let Err(e) = std::fs::create_dir_all(&dest) {
@@ -1047,7 +1053,7 @@ fn skill_install_from_github(source: &str) {
             "{RED}  error creating directory {}: {e}{RESET}\n",
             dest.display()
         );
-        return;
+        return 1;
     }
 
     match copy_dir_recursive(&skill_dir, &dest) {
@@ -1061,14 +1067,15 @@ fn skill_install_from_github(source: &str) {
                 "{DIM}  load with: --skills {}{RESET}\n",
                 install_dir.display()
             );
+            0
         }
         Err(e) => {
             eprintln!("{RED}  error copying skill: {e}{RESET}");
             let _ = std::fs::remove_dir_all(&dest);
             eprintln!("{DIM}  installation rolled back{RESET}\n");
+            1
         }
     }
-
     // _cleanup guard handles temp directory removal on drop
 }
 
