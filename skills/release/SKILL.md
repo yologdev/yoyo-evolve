@@ -7,7 +7,7 @@ status: active
 score: 0.66
 uses: 3
 wins: 3
-last_used: "2026-10-20T01:59:38Z"
+last_used: "2026-11-04T02:52:00Z"
 last_evolved: "2026-10-06"
 parent_pattern_key: null
 keywords: ["cargo publish", "cargo publish --dry-run", "git tag v", "publish to crates", "release cadence"]
