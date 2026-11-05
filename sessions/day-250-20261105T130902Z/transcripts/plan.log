@@ -1,0 +1,35 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; mkdir -p sessio… ✓ (2.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n -E 'dispatch_sub|verb_flag… ✓ (29ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n 'fn policy_refusal\|fn das… ✓ (16ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 160,226p src/verb_flags.rs;… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat > session_… (108 lines) ✓ (20ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 1m 35s (5 ✓)
+
+The plan for this session is written: two task files plus the issue responses in session_plan/. The commit did nothing, because session_plan/ is in .gitignore. The plan's own commit command ends in || true, so I didn't force it with -f. The files are on disk for the next phase.
+
+Task 1 (product, Fixes #1136): one dash-word table for subcommands.
+• The bug: yoyo goal set --bogus and yoyo goal verify --bogus save the typo. The verify one is worse: --bogus is stored as a command that /goal check runs later. yoyo skill search --bogus searches for the typo and exits 0.
+• The fix: add a SUB_DASH_POLICY table in src/verb_flags.rs with one row per (verb, subcommand), built from the existing *_SUBCOMMANDS lists. This is the shared fix @yuanhao asked for on #1132, one level down, rather than one fix per verb. It hooks into policy_refusal, which the shell dispatcher already calls once for every verb. That should keep src/dispatch_sub.rs untouched, which matters because that file is exactly at its size cap.
+• Tests:
+  • A test that fails if any of those lists gains a subcommand with no row.
+  • Real-binary runs that check the goal files were never written, not just the exit code.
+  • Normal cases that must keep working, including -- to pass a literal dash-word.
+  • A positive control: break the check, see these tests fail, put it back, see them pass.
+• Title rule: the commit says "Fixes" only if every subcommand gets a row. Otherwise the leftover goes on its own issue before the push.
+
+Task 2 (evolve): get CLAUDE.md back under 40 KB.
+• The problem: CLAUDE.md is 42,215 bytes. Its own text says passing ~40 KB is the defect, and it is loaded into every prompt.
+• The fix: move the MCP history paragraphs (Days 180–181, unchanged) to ARCHITECTURE.md and leave a short summary of current behaviour. The target is about 36 KB.
+• The gate: a new test fails if the repo's own CLAUDE.md goes over 40,000 bytes. A comment in src/instruction_size.rs stops calling this repo's own over-budget CLAUDE.md the "should not warn" example.
+• Before moving anything: check the tests and scripts that read CLAUDE.md (for example the yoagent-version-claim marker). Those parts stay.
+
+Not released: the release cadence says it isn't due. v0.4.0 was one day ago.
+
+Issues: #1136 is task 1. There are no community issues today. The other open self-filed issues are deferred with nothing new to say.
+  watch: no files changed this turn — skipping

@@ -1,0 +1,29 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls target/debug/yoyo && T=$(mkte… ✓ (71ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p ses… (8 lines) ✓ (9ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 20.3s (2 ✓)
+
+Verdict: PASS. The fix works as #1136 asked: goal set --bogus, goal verify --bogus and skill search --bogus are now refused instead of saving or searching for the typo. The verdict is in session_plan/eval_task_1.md.
+
+The diff. There is one (verb, sub) table, SUB_DASH_POLICY, and it runs inside policy_refusal whatever the verb's own row says. A forcing test checks it against every subcommand list in both directions: a list member with no row fails, and so does a row that matches no list member. goal verify gets a new variant, RefuseLeading, because it takes a shell command: a dash-word is refused only before the command's first word. The build passing shows every match on the enum handles the new variant.
+
+Run on the built binary (temp git repo, temp HOME):
+
+| Command | Exit | Result |
+|---|---|---|
+| goal set --bogus | 2 | "Nothing ran", no .yoyo/ created |
+| goal verify --bogus | 2 | "Nothing ran", no .yoyo/ created |
+| skill search --bogus | 2 | "Nothing ran", no .yoyo/ created |
+| goal set -- --literal | 0 | saved --literal |
+| goal verify cargo test -- --nocapture | 0 | saved the command exactly as typed |
+| config show --no-color | 0 | still works |
+
+• Files outside the task's list: the diff edits src/dispatch_sub.rs at three handler call sites (goal, skill, todo), which the task allowed only if unavoidable. Those handlers re-join argv, so they need -- dropped before they see it. The size cap in tests/module_size.rs went up by one line in the same edit, with a reason.
+• Docs: docs/src/usage/commands.md and ARCHITECTURE.md both describe the new behaviour.
+• Product surface: this is a product task, and the CLI change is the intended fix.
+  watch: no files changed this turn — skipping
