@@ -465,7 +465,11 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // arms take the split instead of a joined command, pasted.
     // Day 250: #1137 — risk_status returns 1 when `snapshot` failed to write
     // (+5); the other +7 was drift already inside the grace band. Pasted.
-    ("src/dispatch_sub.rs", 2662),
+    // Day 250 (#1136): 2662 -> 2663 (+1). The skill arm's call through
+    // verb_flags::sub_args (so `skill search -- --x` reaches the handler without
+    // its `--`) is one character over rustfmt's width and wraps; the goal and todo
+    // arms took the same call without a new line.
+    ("src/dispatch_sub.rs", 2663),
     // Day 209: 3439 -> 3455 (+16, within the drift band, pasted rather than left to absorb).
     // #937 option 1: nine lines of doc above `builtin_model_pricing` naming both ignored
     // audit commands (deliverable 4 — an alarm nobody can find is the #745/#767/#769

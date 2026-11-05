@@ -751,7 +751,8 @@ pub(crate) fn try_dispatch_subcommand_in(
             }
             "skill" => {
                 let skill_dirs = collect_repeatable_flag(args, "--skills");
-                let filtered = strip_flag_with_value(args, "--skills");
+                let filtered =
+                    strip_flag_with_value(&crate::verb_flags::sub_args(args), "--skills");
                 // #1009: plain join; `/skill` strips prefixes, never quotes, so
                 // `skill show "my skill"` / `install "dir sp"` reach it whole.
                 let input = join_args_as_command(&filtered);
@@ -915,7 +916,7 @@ pub(crate) fn try_dispatch_subcommand_in(
                     eprintln!("{YELLOW}{refusal}{RESET}");
                     std::process::exit(1);
                 }
-                let input = join_args_as_command(args);
+                let input = join_args_as_command(&crate::verb_flags::sub_args(args));
                 println!("{}", crate::commands_todo::handle_todo_on(&input, Shell));
                 // Read-only verbs: stderr note, so piped stdout stays clean.
                 if let Some(note) = crate::commands_todo::shell_todo_session_note(verb) {
@@ -927,7 +928,7 @@ pub(crate) fn try_dispatch_subcommand_in(
             "goal" => {
                 // #982: both "requires an interactive session" refusals now
                 // exit nonzero; the parse and #754 ordering live in the helper.
-                exit_if_nonzero(goal_shell_status(args));
+                exit_if_nonzero(goal_shell_status(&crate::verb_flags::sub_args(args)));
                 return Some(None);
             }
             "memories" => {

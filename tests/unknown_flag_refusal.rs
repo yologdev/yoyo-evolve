@@ -1141,3 +1141,114 @@ fn lint_unsafe_outside_a_rust_project_exits_1() {
     assert_eq!(code, Some(0), "stdout: {out}\nstderr: {err}");
     assert!(out.contains("Scanning for unsafe code"), "{out}");
 }
+
+/// The `(verb, sub)` rows of `SUB_DASH_POLICY` whose policy is `Refuse`, read
+/// from its source the way [`refuse_rows`] reads the verb table (#1136).
+fn sub_refuse_rows() -> Vec<(String, String)> {
+    let src = include_str!("../src/verb_flags.rs");
+    let start = src.find("pub(crate) const SUB_DASH_POLICY").expect("table");
+    let table = &src[start..start + src[start..].find("\n];").expect("table end")];
+    let rows: Vec<(String, String)> = table
+        .lines()
+        .filter_map(|l| {
+            let row = l.trim().strip_prefix("(\"")?.strip_suffix("\", Refuse),")?;
+            let (verb, sub) = row.split_once("\", \"")?;
+            Some((verb.to_string(), sub.to_string()))
+        })
+        .collect();
+    // Anti-vacuous: every `Refuse)` in the table was parsed as a row.
+    assert_eq!(rows.len(), table.matches(" Refuse)").count(), "{rows:?}");
+    assert!(rows.len() >= 30, "the parse is broken: {rows:?}");
+    rows
+}
+
+/// #1136: every `(verb, sub)` whose row is `Refuse` refuses `--bogus` with
+/// exit 2 and "Nothing ran" before its handler: nothing on stdout and no
+/// `.yoyo/` or `session_plan/` written (the harm in `goal set --bogus` and
+/// `goal verify --bogus` was the write, so the files are what is asserted).
+#[test]
+fn every_sub_refuse_row_refuses_an_unknown_flag_and_writes_nothing() {
+    for (verb, sub) in sub_refuse_rows() {
+        let (code, out, err, tmp) = run_verb(&[&verb, &sub, "--bogus"]);
+        let at = format!("{verb} {sub}");
+        assert_eq!(code, Some(2), "{at}: stdout: {out}\nstderr: {err}");
+        assert!(
+            err.contains(&format!(
+                "unknown flag '--bogus' for `yoyo {verb} {sub}`. Nothing ran."
+            )),
+            "{at}: {err}"
+        );
+        assert!(out.is_empty(), "{at} ran its handler: {out}");
+        for written in [".yoyo", "session_plan"] {
+            assert!(
+                !tmp.path().join("repo").join(written).exists(),
+                "{at} wrote {written}/ despite the refusal"
+            );
+        }
+    }
+}
+
+/// #1136's two writers, by name: `goal verify --bogus` (a command, so the
+/// dash-word is refused only before the command's first word), and a typo of
+/// skill's one real flag, which names it.
+#[test]
+fn goal_verify_and_skill_typos_refuse_before_any_write() {
+    let (code, _, err, tmp) = run_verb(&["goal", "verify", "--bogus", "cargo", "test"]);
+    assert_eq!(code, Some(2), "{err}");
+    assert!(
+        err.contains("for `yoyo goal verify`. Nothing ran."),
+        "{err}"
+    );
+    assert!(!tmp.path().join("repo/.yoyo/goal_verify.md").exists());
+
+    let (code, out, err, _tmp) = run_verb(&["skill", "search", "--skils", "d", "lint"]);
+    assert_eq!(code, Some(2), "stdout: {out}\nstderr: {err}");
+    assert!(err.contains("did you mean --skills?"), "{err}");
+    assert!(
+        err.contains("for `yoyo skill search`. Nothing ran."),
+        "{err}"
+    );
+}
+
+/// Near-misses that must keep working: plain text and plain commands, `--`
+/// as the escape (dropped once, so the dash-word is the goal), a verify
+/// command's own flags and its own `--` kept verbatim, and the global flag
+/// `config show` / `config get` have always accepted.
+#[test]
+fn sub_operands_and_double_dash_still_reach_the_handler() {
+    let goal = |args: &[&str], file: &str| {
+        let (code, out, err, tmp) = run_verb(args);
+        assert_eq!(code, Some(0), "{args:?}: stdout: {out}\nstderr: {err}");
+        std::fs::read_to_string(tmp.path().join("repo/.yoyo").join(file))
+            .unwrap_or_else(|e| panic!("{args:?}: {file}: {e}"))
+    };
+    assert_eq!(
+        goal(&["goal", "set", "ship", "the", "parser"], "goal.md"),
+        "ship the parser\n"
+    );
+    assert_eq!(
+        goal(&["goal", "set", "--", "--literal"], "goal.md"),
+        "--literal\n"
+    );
+    for (cmd, want) in [
+        (&["cargo", "test", "--release"][..], "cargo test --release"),
+        (
+            &["cargo", "test", "--", "--nocapture"],
+            "cargo test -- --nocapture",
+        ),
+        (&["--", "--weird-cmd", "x"], "--weird-cmd x"),
+    ] {
+        let args = [&["goal", "verify"][..], cmd].concat();
+        let saved = goal(&args, "goal_verify.md");
+        assert_eq!(saved.trim_end(), want, "{args:?}");
+    }
+    for args in [
+        &["goal", "show"][..],
+        &["config", "get", "model"],
+        &["config", "show", "--no-color"],
+        &["skill", "list", "--skills", "."],
+    ] {
+        let (code, out, err, _tmp) = run_verb(args);
+        assert_eq!(code, Some(0), "{args:?}: stdout: {out}\nstderr: {err}");
+    }
+}

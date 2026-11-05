@@ -54,9 +54,15 @@ pub(crate) enum DashPolicy {
     OwnRefusal(&'static str),
     /// Handed on by design; the reason says to whom.
     Passthrough(&'static str),
+    /// [`SUB_DASH_POLICY`] only, for a subcommand that takes a command line
+    /// (#1136): an unknown dash-led word is refused only BEFORE the command's
+    /// first word, and from that word on everything is the command, verbatim,
+    /// its own `--` included (`goal verify cargo test -- --nocapture`). Same
+    /// rule as `env`, `timeout` and `xargs`. A leading `--` is dropped once.
+    RefuseLeading,
 }
 
-use DashPolicy::{OwnRefusal, Passthrough, Refuse};
+use DashPolicy::{OwnRefusal, Passthrough, Refuse, RefuseLeading};
 
 const GLOBAL: DashPolicy = OwnRefusal(
     "positional_after_verb refuses it (same message), but accepts yoyo's global flags (status --model m)",
@@ -181,6 +187,132 @@ pub(crate) fn policy_refusal(args: &[String]) -> Option<String> {
     (dash_policy(verb) == Some(Refuse))
         .then(|| verb_flag_refusal(args))
         .flatten()
+        .or_else(|| sub_flag_refusal(args))
+}
+
+const SESSION_ONLY_SET: DashPolicy = OwnRefusal(
+    "session-only in the shell: exit 2, nothing written; in a session a value may be dash-led (`set temperature -1`)",
+);
+const GASP_ARM: DashPolicy = Passthrough(
+    "harness verb: a default build refuses every arm (exit 2); with --features gasp every word is `--flag <value>`, and a value may start with a dash",
+);
+
+/// One row per subcommand of every shell verb that has subcommands (#1136):
+/// what `yoyo <verb> <sub> …` does with a dash-led word it does not know. The
+/// verb table above decides the word right after the verb; this one decides
+/// the words after the subcommand, and runs whatever the verb's row is (goal's
+/// is `OwnRefusal`). Keyed on each verb's own subcommand list: `GOAL_`,
+/// `CONFIG_`, `SKILL_`, `WATCH_`, `LINT_`, `RISK_SUBCOMMANDS`, `TODO_VERBS`,
+/// `GASP_ARMS`, and `ModelSubcommand`'s two arms; a test in this file fails
+/// when one of those gains a member without a row here.
+/// `tests/unknown_flag_refusal.rs` reads the `Refuse` rows from this source.
+pub(crate) const SUB_DASH_POLICY: &[(&str, &str, DashPolicy)] = &[
+    ("config", "show", Refuse),
+    ("config", "edit", SESSION_ONLY_SET),
+    ("config", "set", SESSION_ONLY_SET),
+    ("config", "get", Refuse),
+    ("goal", "set", Refuse),
+    ("goal", "show", Refuse),
+    ("goal", "clear", Refuse),
+    ("goal", "check", Refuse),
+    ("goal", "verify", RefuseLeading),
+    ("skill", "list", Refuse),
+    ("skill", "show", Refuse),
+    ("skill", "path", Refuse),
+    ("skill", "install", Refuse),
+    ("skill", "search", Refuse),
+    ("skill", "init", Refuse),
+    ("watch", "off", Refuse),
+    ("watch", "status", Refuse),
+    ("watch", "all", Refuse),
+    ("watch", "lint", Refuse),
+    ("lint", "fix", Refuse),
+    ("lint", "pedantic", Refuse),
+    ("lint", "strict", Refuse),
+    ("lint", "unsafe", Refuse),
+    ("risk", "snapshot", Refuse),
+    ("risk", "validate", Refuse),
+    ("risk", "history", Refuse),
+    ("risk", "predict", Refuse),
+    ("risk", "accuracy", Refuse),
+    ("risk", "effectiveness", Refuse),
+    ("risk", "epistemic", Refuse),
+    ("risk", "harvest", Refuse),
+    ("risk", "--all", Refuse),
+    ("todo", "list", Refuse),
+    ("todo", "add", Refuse),
+    ("todo", "done", Refuse),
+    ("todo", "wip", Refuse),
+    ("todo", "remove", Refuse),
+    ("todo", "clear", Refuse),
+    ("todo", "board", Refuse),
+    ("model", "list", Refuse),
+    ("model", "info", Refuse),
+    ("gasp", "session-start", GASP_ARM),
+    ("gasp", "task", GASP_ARM),
+    ("gasp", "task-result", GASP_ARM),
+    ("gasp", "session-end", GASP_ARM),
+];
+
+/// The `(verb, sub)` row in [`SUB_DASH_POLICY`], with the row's own strings.
+fn sub_row(verb: &str, sub: &str) -> Option<&'static (&'static str, &'static str, DashPolicy)> {
+    SUB_DASH_POLICY
+        .iter()
+        .find(|(v, s, _)| *v == verb && *s == sub)
+}
+
+/// The flags `yoyo <verb> <sub>` knows after the subcommand, as (all of them,
+/// the value-taking subset). `skill` reads `--skills <dir>` wherever it is;
+/// `config show` / `get` read no words after the subcommand, so yoyo's global
+/// flags (`config show --no-color`, read from argv by `main`) keep working.
+fn sub_own_flags(verb: &str, sub: &str) -> (&'static [&'static str], &'static [&'static str]) {
+    match (verb, sub) {
+        ("skill", _) => (&["--skills"], &["--skills"]),
+        ("config", "show" | "get") => (crate::cli::KNOWN_FLAGS, crate::cli::FLAGS_NEEDING_VALUES),
+        _ => (&[], &[]),
+    }
+}
+
+/// The refusal for an unknown dash-led word after `yoyo <verb> <sub>`, per
+/// the sub's [`SUB_DASH_POLICY`] row, or None (#1136). `goal set --bogus`
+/// used to save `--bogus` as the goal and `goal verify --bogus` as the
+/// command `/goal check` runs; both exited 0.
+fn sub_flag_refusal(args: &[String]) -> Option<String> {
+    let (verb, sub, policy) = sub_row(args.get(1)?, args.get(2)?)?;
+    let rest = args.get(3..).unwrap_or_default();
+    let end = match policy {
+        Refuse => rest.iter().position(|a| a == "--"),
+        RefuseLeading => rest
+            .iter()
+            .position(|a| a == "--" || a == "-" || !a.starts_with('-')),
+        OwnRefusal(_) | Passthrough(_) => return None,
+    };
+    let (own, valued) = sub_own_flags(verb, sub);
+    let msg =
+        crate::cli_config::unknown_flags_among(&rest[..end.unwrap_or(rest.len())], own, valued)?;
+    Some(format!("{msg} for `yoyo {verb} {sub}`. Nothing ran."))
+}
+
+/// `args` with the end-of-flags `--` after `yoyo <verb> <sub>` dropped per
+/// the sub's row, for handlers that re-join argv (#1136): the first `--` for
+/// `Refuse`, so `goal set -- --literal` saves `--literal`; only a LEADING
+/// `--` for `RefuseLeading`, so a verify command's own `--` stays. Any other
+/// row, or no row, returns `args` unchanged.
+pub(crate) fn sub_args(args: &[String]) -> Vec<String> {
+    let mut out = args.to_vec();
+    let row = args
+        .get(1)
+        .zip(args.get(2))
+        .and_then(|(v, s)| sub_row(v, s));
+    let at = match row.map(|(_, _, p)| p) {
+        Some(Refuse) => args.iter().skip(3).position(|a| a == "--"),
+        Some(RefuseLeading) => (args.get(3).map(String::as_str) == Some("--")).then_some(0),
+        _ => None,
+    };
+    if let Some(i) = at {
+        out.remove(i + 3);
+    }
+    out
 }
 
 /// `yoyo review`'s own flags (#1129). Before this, `review --quik` was read
@@ -528,6 +660,182 @@ mod tests {
             );
         }
         assert_eq!(VERB_DASH_POLICY.len(), verbs.len());
+    }
+
+    /// #1136's forcing function, one level below #1132's: every member of
+    /// every shell verb's subcommand list has exactly one `SUB_DASH_POLICY`
+    /// row, and every row is such a member, so a list gaining a subcommand
+    /// fails here until someone decides what it does with `--bogus`.
+    /// `ModelSubcommand` has no list; the exhaustive `match` makes a new arm
+    /// a compile error here instead.
+    #[test]
+    fn every_verb_subcommand_list_member_has_exactly_one_sub_dash_policy_row() {
+        use crate::dispatch_sub::ModelSubcommand;
+        let model_sub = |m: ModelSubcommand| match m {
+            ModelSubcommand::List(_) => Some("list"),
+            ModelSubcommand::Info(_) => Some("info"),
+            ModelSubcommand::Show | ModelSubcommand::Refuse(_) => None,
+        };
+        let model: Vec<&str> = [
+            ModelSubcommand::List(String::new()),
+            ModelSubcommand::Info(String::new()),
+        ]
+        .into_iter()
+        .filter_map(model_sub)
+        .collect();
+        let lists: &[(&str, &[&str])] = &[
+            ("config", crate::commands::CONFIG_SUBCOMMANDS),
+            ("goal", crate::commands::GOAL_SUBCOMMANDS),
+            ("skill", crate::commands_skill::SKILL_SUBCOMMANDS),
+            ("watch", crate::watch::WATCH_SUBCOMMANDS),
+            ("lint", crate::commands_lint::LINT_SUBCOMMANDS),
+            ("risk", crate::commands_risk::RISK_SUBCOMMANDS),
+            ("todo", crate::commands_todo::TODO_VERBS),
+            ("model", &model),
+            ("gasp", crate::gasp_cli::GASP_ARMS),
+        ];
+        let mut members = 0;
+        for (verb, subs) in lists {
+            assert!(crate::cli::KNOWN_SUBCOMMANDS.contains(verb), "{verb}");
+            for sub in *subs {
+                // The parser agrees the model rows are real subcommands.
+                if *verb == "model" {
+                    let parsed = crate::dispatch_sub::parse_model_subcommand(&argv(&[sub]));
+                    assert_eq!(model_sub(parsed), Some(*sub));
+                }
+                let rows = SUB_DASH_POLICY
+                    .iter()
+                    .filter(|(v, s, _)| v == verb && s == sub)
+                    .count();
+                assert_eq!(rows, 1, "{verb} {sub}: SUB_DASH_POLICY rows: {rows}");
+                members += 1;
+            }
+        }
+        for (verb, sub, _) in SUB_DASH_POLICY {
+            let listed = lists
+                .iter()
+                .any(|(v, subs)| v == verb && subs.contains(sub));
+            assert!(listed, "row ({verb}, {sub}) is in no subcommand list");
+        }
+        assert_eq!(SUB_DASH_POLICY.len(), members);
+    }
+
+    /// The sub-level refusal: `Refuse` reads every word before `--`;
+    /// `RefuseLeading` only the words before the command's first word; skill's
+    /// `--skills` and config's global flags pass; the verb's own row does
+    /// not matter (goal's is `OwnRefusal`).
+    #[test]
+    fn sub_flag_refusal_by_policy() {
+        for (row, want) in [
+            (
+                &["yoyo", "goal", "set", "--bogus"][..],
+                "unknown flag '--bogus' for `yoyo goal set`. Nothing ran.",
+            ),
+            (
+                &["yoyo", "goal", "set", "ship", "it", "--fast"],
+                "unknown flag '--fast' for `yoyo goal set`. Nothing ran.",
+            ),
+            (
+                &["yoyo", "goal", "verify", "--bogus", "cargo", "test"],
+                "unknown flag '--bogus' for `yoyo goal verify`. Nothing ran.",
+            ),
+            (
+                &["yoyo", "skill", "search", "--skils", "d", "q"],
+                "unknown flag '--skils' (did you mean --skills?) for `yoyo skill search`. Nothing ran.",
+            ),
+            (
+                &["yoyo", "config", "get", "model", "--bogus"],
+                "unknown flag '--bogus' for `yoyo config get`. Nothing ran.",
+            ),
+            (
+                &["yoyo", "todo", "board", "init", "--bogus"],
+                "unknown flag '--bogus' for `yoyo todo board`. Nothing ran.",
+            ),
+        ] {
+            assert_eq!(policy_refusal(&argv(row)).as_deref(), Some(want), "{row:?}");
+        }
+        for row in [
+            &["yoyo", "goal", "set", "ship", "the", "parser"][..],
+            &["yoyo", "goal", "set", "--", "--literal"],
+            &["yoyo", "goal", "verify", "cargo", "test", "--release"],
+            &[
+                "yoyo",
+                "goal",
+                "verify",
+                "cargo",
+                "test",
+                "--",
+                "--nocapture",
+            ],
+            &["yoyo", "goal", "verify", "--", "--weird"],
+            &["yoyo", "goal", "set", "-"],
+            &["yoyo", "skill", "list", "--skills", "d"],
+            &["yoyo", "config", "show", "--no-color"],
+            &["yoyo", "config", "get", "model", "--model", "m"],
+            &["yoyo", "config", "set", "temperature", "-1"],
+            &["yoyo", "gasp", "task", "--state-dir", "d"],
+            // Not a subcommand: the verb's own door decides.
+            &["yoyo", "goal", "--bogus"],
+            &["yoyo", "watch", "cargo", "test", "--release"],
+            &["yoyo", "goal"],
+        ] {
+            assert_eq!(policy_refusal(&argv(row)), None, "{row:?}");
+        }
+    }
+
+    /// `sub_args` drops the end-of-flags `--` once, where the row's policy
+    /// ends flags, and leaves every other argv untouched.
+    #[test]
+    fn sub_args_drops_the_end_of_flags_marker_per_policy() {
+        for (row, want) in [
+            (
+                &["yoyo", "goal", "set", "--", "--literal"][..],
+                &["yoyo", "goal", "set", "--literal"][..],
+            ),
+            (
+                &["yoyo", "goal", "set", "a", "--", "--"],
+                &["yoyo", "goal", "set", "a", "--"],
+            ),
+            (
+                &["yoyo", "goal", "verify", "--", "--x"],
+                &["yoyo", "goal", "verify", "--x"],
+            ),
+            (
+                &[
+                    "yoyo",
+                    "goal",
+                    "verify",
+                    "cargo",
+                    "test",
+                    "--",
+                    "--nocapture",
+                ],
+                &[
+                    "yoyo",
+                    "goal",
+                    "verify",
+                    "cargo",
+                    "test",
+                    "--",
+                    "--nocapture",
+                ],
+            ),
+            (
+                &["yoyo", "skill", "search", "--", "-q"],
+                &["yoyo", "skill", "search", "-q"],
+            ),
+            (
+                &["yoyo", "config", "set", "--", "x"],
+                &["yoyo", "config", "set", "--", "x"],
+            ),
+            (
+                &["yoyo", "goal", "--", "set"],
+                &["yoyo", "goal", "--", "set"],
+            ),
+            (&["yoyo", "goal"], &["yoyo", "goal"]),
+        ] {
+            assert_eq!(sub_args(&argv(row)), argv(want), "{row:?}");
+        }
     }
 
     /// The three verbs #1132 routed, plus their near-misses: ast's own
