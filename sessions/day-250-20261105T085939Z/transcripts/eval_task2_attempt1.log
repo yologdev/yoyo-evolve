@@ -1,0 +1,33 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && B=$(pwd)/target/debug/yoyo; ls -… ✓ (136ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p ses… (8 lines) ✓ (8ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 18.8s (2 ✓)
+
+The verdict is PASS, and it's written to session_plan/eval_task_2.md.
+
+I ran the built binary in a temp directory with .yoyo/ set to read-only (555), as a non-root user (uid 1001) so the permission block actually applies:
+
+| Command | Output | Exit |
+|---|---|---|
+| skill init myskill (read-only) | error creating directory .yoyo/skills/myskill: Permission denied | 1 |
+| risk snapshot (read-only) | Error saving risk snapshot: Permission denied | 1 |
+| skill init myskill (writable) | — | 0 |
+| risk bogus | — | 2 |
+
+So the two main failure rows now exit 1 and print the same error text as before. A writable run still exits 0, and an unknown subcommand still exits 2.
+
+• Intent: skill init / install / search now return their exit code from each failure point: 1 when something fails, 2 for an invalid name, 0 for an existing skill or an empty search. risk snapshot sets a new failure flag (RISK_FAILED), and risk_status reads it after the unknown-subcommand check. Both size entries in tests/module_size.rs are updated with dated comments.
+• Extra fixes from the census: risk validate, risk harvest and lint unsafe failures now exit 1 too, each with tests against the real binary.
+• Nothing left dangling: the new flag and every function whose return type changed are used within the diff.
+• Docs: the exit-code paragraph in docs/src/usage/commands.md is updated.
+• Product safety: only failure exit codes changed; success output and usage codes are the same.
+
+One small cleanup note: the new RISK_FAILED line was placed between handle_risk_snapshot's doc comment and the function, so that comment now attaches to the flag instead.
+
+I didn't check the census comment the task asked to post to #1137, since that isn't in the diff.
+  watch: no files changed this turn — skipping

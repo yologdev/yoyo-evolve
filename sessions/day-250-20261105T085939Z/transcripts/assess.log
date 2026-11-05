@@ -1,0 +1,61 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git log --oneli…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "^## " journals/JOURNAL.md… ✓ (20ms)
+ ✓ (406ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1,40p journals/JOURNAL.md  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue list --repo yologdev/yoyo… ✓ (5ms)
+ ✓ (429ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -A1 'name = "yoagent"' Cargo.… ✓ (960ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; Y=~/.cargo/registry/src/index.crat… ✓ (313ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; ls -la target/debug/yoyo 2>&1; ./t… ✓ (4.7s)
+  ▶ $ cd /tmp && rm -rf probe && mkdir probe && cd probe && git init -q . && B=/home/r… ✓ (109ms)
+  ▶ $ cd /tmp/probe; B=/home/runner/work/yoyo-evolve/yoyo-evolve/target/debug/yoyo; ex… ✓ (62ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "KNOWN_SUBCOMMANDS" src/cl… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 847,880p src/cli.rs; sed -n… ✓ (13ms)
+  ▶ $ cd /tmp/probe; B=/home/runner/work/yoyo-evolve/yoyo-evolve/target/debug/yoyo; ex… ✓ (44ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; mkdir -p session_plan; ls session_… ✓ (12ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  13 tools completed in 1m 34s (13 ✓)
+
+Draft first.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/assessment.md (50 lines) ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "env_remove\|api_key_vari… ✓ (377ms)
+  ▶ $ sed -n 40,120p /home/runner/work/yoyo-evolve/yoyo-evolve/skills/yopedia/SKILL.md ✓ (3ms)
+  ▶ $ BASE=https://yopedia.yolog.dev; AGENT_ID="${YOPEDIA_AGENT_TOKEN%%.*}"; for q in … ✓ (9.3s)
+  ▶ $ BASE=https://yopedia.yolog.dev; AGENT_ID="${YOPEDIA_AGENT_TOKEN%%.*}"; curl -sS … ✓ (2.1s)
+  ▶ web search 'Claude Code changelog November 2026' ✓ (2.2s)
+  ▶ web search 'Codex CLI OR Aider OR Cursor CLI new release features 2026' ✓ (481ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "fn is_retriable_error" -A… ✓ (8ms)
+  ▶ $ BASE=https://yopedia.yolog.dev; AGENT_ID="${YOPEDIA_AGENT_TO… (12 lines) ✓ (2.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "fn load_project_context" … ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "AGENTS.md\|nested\|ancest… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (27 lines) ✓ (20ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  12 tools completed in 1m 55s (12 ✓)
+
+I've written the Day 250 assessment to session_plan/assessment.md. The commit step didn't do anything: session_plan/ is gitignored, and the instructed command ends in || true, so the file is on disk for the planner but not in git.
+
+State: The harness confirmed build and tests green. The binary answers -p "Reply with exactly: pong" correctly. The last 4 finished evolve runs all succeeded (a 5th was still running when I checked), and the last 10 sessions completed 2/2 tasks each with no reverts.
+
+Bugs I reproduced on the built binary (read-only folder, no API key):
+• #1137 is still open: skill init myskill and risk snapshot print a failure and exit 0. The ticket also lists skill search and skill install; I didn't re-run those because they need GitHub or network access.
+• #1136 is still open: goal set --bogus, goal verify --bogus and skill search --bogus treat the dash-word as their input. #1136 and #1137 involve the same goal/skill/risk handlers, so one census should cover both, looping over each verb and its subcommands.
+• #1114 is still open: -p --print-system-prompt warns that the value looks like a flag, then carries on anyway.
+• New, low priority, not filed: a mistyped command followed by an argument (yoyo statuss foo) gets no "did you mean" and is sent to the model as a prompt. That may be intended, since words after yoyo count as a prompt.
+
+Two files nearly too big for the size limit: commands_risk_unhittable.rs is 14 lines from failing cargo test (and isn't on the allowed list), and config.rs is 11 lines away. A risk snapshot fix could land in the first one, so tests/module_size.rs needs updating first or the task gets reverted.
+
+Out-of-date ticket: #1122's title and body still say yoagent is pinned at 0.25, but the lock is on 0.26.8. One item remains: deleting the #1123/#1124 stopgaps, and #1124's pricing half still keeps one of them alive. It needs an updated scope line or closing, not a task.
+
+Competitor research (saved to yopedia):
+• Write failures: Claude Code 2.1.318 fixed /logout and mcp remove reporting success when the config write failed, which is the same problem as #1137.
+• Certificate files: Claude Code now uses whatever certificates are readable in a damaged CA file and warns. yoyo's startup check (#1138) lets a file with some good certificates through, and I haven't tested whether the provider client then crashes on it.
+• Per-folder instruction files: reading src/context.rs, yoyo loads instruction files (YOYO.md, CLAUDE.md, AGENTS.md) from the project root only. Claude Code and Cursor also pick up the ones in subfolders. This is the biggest gap that affects users. I found it by reading the code, not by running it.
+• Retries: Codex now stops retrying when a model isn't found. yoyo already does that.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

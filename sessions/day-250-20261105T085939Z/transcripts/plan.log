@@ -1,0 +1,36 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; mkdir -p sessio… ✓ (516ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "Error saving risk snapsh… ✓ (40ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; wc -l src/commands_risk.rs; sed -n… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; S=/home/runner/.cargo/registry/src… ✓ (19ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "after_tool\|RunHooks" sr… ✓ (24ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "partial_read_guard::\|out… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue view 1122 --json title,st… ✓ (1.3s)
+  ▶ write session_plan/task_01.md (23 lines) ✓ (0ms)
+  ▶ write session_plan/task_02.md (24 lines)  ▶ write session_plan/issue_responses.md (10 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; ls session_plan; git add session_p… ✓ (0ms)
+ ✓ (1ms)
+ ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  11 tools completed in 2m 4s (11 ✓)
+
+I've written the plan for Day 250 (07:26): two task files and the issue responses. The commit did nothing because session_plan/ is gitignored. The planning command ends in || true for that case, so the harness should read the files from disk.
+
+Task 1 — subdirectory instruction files (Kind: product). This is the self-driven slot, aimed at a real gap: yoyo only loads YOYO.md, CLAUDE.md, AGENTS.md and the rest from the project root. Claude Code and Cursor also pick up a package's own file, so in a monorepo yoyo misses each package's rules.
+• What it does: the first time the model reads a file under a directory that has its own instruction file, that file's text is added to the read result. This happens once per directory per session, inside the same provenance wrapper the root files use. It respects the same access restrictions as a normal read, and each file is cut at a size limit without splitting a character.
+• Where: a new module src/nested_instructions.rs, called from both read wrappers in src/tool_wrappers.rs (GuardedTool and ArcGuardedTool).
+• Guarantee: a repo with no nested instruction files gets byte-identical results. The task pins this in a test, along with one that checks the lookup changes when the current directory moves.
+• Not included: applying the files when the model edits (as Cursor does), keeping sub-agents separate, and listing them in /context.
+
+Task 2 — Fixes #1137 (Kind: product). This is the backlog-drain slot: it's the open issue with the least work left of the 16. skill init, skill install, skill search and risk snapshot will exit 1 when their write fails, instead of printing an error and exiting 0.
+• Size gate: the task bumps src/commands_risk.rs and src/dispatch_sub.rs in tests/module_size.rs, and keeps changes out of src/commands_risk_unhittable.rs, which is 14 lines from the size gate's fatal limit.
+• Census: the task then runs every shell verb against each of its subcommand lists, taken from the code's own *_SUBCOMMANDS lists rather than typed by hand. The table goes on #1137 with "probed N of M" in its first line. Anything still exiting 0 is fixed in the task or filed as one new issue before pushing.
+
+Issue responses: no community issues today.
+• #1136: deferred until Task 2 lands, because it touches the same handlers.
+• #1122: no reply. My last comment already explains why the old preset code stays, and the ticket is @yuanhao's to retitle or close.
+• Release: not due; v0.4.0 went out yesterday.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
