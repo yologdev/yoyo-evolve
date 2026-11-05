@@ -159,7 +159,8 @@ impl AgentTool for GuardedTool {
             );
         let refused =
             |p: &str| crate::cd_config_note::path_guard_refusal(&self.restrictions, p).is_some();
-        let result = self.inner.execute(params, ctx).await.map_err(|e| {
+        let read_path = path.map(str::to_string);
+        let mut result = self.inner.execute(params, ctx).await.map_err(|e| {
             crate::fence_result_filter::fence_tool_error(
                 self.inner.name(),
                 e,
@@ -168,6 +169,13 @@ impl AgentTool for GuardedTool {
             )
         })?;
         crate::partial_read_guard::record(seen, &result);
+        // A subdirectory's YOYO.md/CLAUDE.md/AGENTS.md, once per dir (src/nested_instructions.rs).
+        crate::nested_instructions::append_for_read(
+            self.inner.name(),
+            read_path.as_deref(),
+            &self.restrictions,
+            &mut result,
+        );
         Ok(crate::fence_result_filter::fence_tool_result(
             self.inner.name(),
             result,
@@ -277,7 +285,8 @@ impl AgentTool for ArcGuardedTool {
             );
         let refused =
             |p: &str| crate::cd_config_note::path_guard_refusal(&self.restrictions, p).is_some();
-        let result = self.inner.execute(params, ctx).await.map_err(|e| {
+        let read_path = path.map(str::to_string);
+        let mut result = self.inner.execute(params, ctx).await.map_err(|e| {
             crate::fence_result_filter::fence_tool_error(
                 self.inner.name(),
                 e,
@@ -286,6 +295,13 @@ impl AgentTool for ArcGuardedTool {
             )
         })?;
         crate::partial_read_guard::record(seen, &result);
+        // A subdirectory's YOYO.md/CLAUDE.md/AGENTS.md, once per dir (src/nested_instructions.rs).
+        crate::nested_instructions::append_for_read(
+            self.inner.name(),
+            read_path.as_deref(),
+            &self.restrictions,
+            &mut result,
+        );
         Ok(crate::fence_result_filter::fence_tool_result(
             self.inner.name(),
             result,

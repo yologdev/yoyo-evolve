@@ -546,6 +546,33 @@ pub(crate) fn check(
     )
 }
 
+/// [`check`] for a `read_file` the MODEL did not ask for: a subdirectory's
+/// instruction file loaded beside a read (src/nested_instructions.rs). Same
+/// decision, same approvals, but it never prompts. Asking the user about a
+/// file nobody requested would be a surprise prompt, so an unapproved outside
+/// target is refused as if stdin were not a terminal.
+pub(crate) fn check_without_asking(
+    path: &str,
+    restrictions: &crate::cli::DirectoryRestrictions,
+) -> Option<String> {
+    if !is_enabled() {
+        return None;
+    }
+    let cwd = std::env::current_dir().ok();
+    let anchor = anchor_from(LAUNCH_DIR.get().map(PathBuf::as_path), cwd.as_deref());
+    decide(
+        true,
+        "read_file",
+        path,
+        !restrictions.allow.is_empty(),
+        cwd.as_deref(),
+        anchor.as_deref(),
+        &APPROVED,
+        false,
+        &mut |_, _, _| false,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

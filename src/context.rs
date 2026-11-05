@@ -261,7 +261,7 @@ pub(crate) fn load_project_context_fenced(
 /// sufficient against an attacker who can read this process's memory or run
 /// concurrently with it — but such an attacker has strictly better options than
 /// forging a prompt marker.
-fn instruction_boundary() -> &'static str {
+pub(crate) fn instruction_boundary() -> &'static str {
     static BOUNDARY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     BOUNDARY.get_or_init(|| {
         let pid = u128::from(std::process::id());

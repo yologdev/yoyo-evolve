@@ -135,6 +135,7 @@ mod image_cap;
 mod instruction_size;
 mod mcp_prefix;
 mod model_limits_note;
+mod nested_instructions;
 mod non_regular_read;
 #[cfg(test)]
 mod openai_preset_tests;

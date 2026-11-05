@@ -78,6 +78,20 @@ If you want to start completely fresh:
 
 This removes all messages and resets the conversation. Unlike `/compact`, nothing is preserved.
 
+## Subdirectory instruction files
+
+At startup yoyo loads instruction files (`YOYO.md`, `CLAUDE.md`, `.yoyo/instructions.md`, `AGENTS.md`, `.cursorrules`, `.github/copilot-instructions.md`) from the project root only. In a monorepo, a package can carry its own, for example `packages/api/AGENTS.md`.
+
+The first time the model successfully reads a file with `read_file` under such a directory, yoyo adds that directory's instruction files to the tool result, after the file content. Each one gets the same provenance markers as the root files. How it works:
+
+- **Only directories below the root.** The root's own files were already loaded at startup, so they aren't added again. Every directory between the root and the file that was read is checked, outermost first.
+- **Once per directory per session.** A directory is marked as seen after the first read under it, whether or not it had an instruction file. The record is shared across the whole process, so a sub-agent's read counts as well.
+- **Fenced like a read.** An instruction file that a `read_file` of its path would refuse (a `--deny-dir` or `/cd` deny, the outside-launch-directory read fence, a FIFO or device) is skipped without a message. yoyo never prompts you to approve one.
+- **Capped.** Each file contributes at most 16,000 bytes. A longer file is cut on a character boundary, and the cut is marked in the text.
+- **Anchored at the current directory when the read happens.** After `/cd`, "below the root" means below the new directory.
+
+Repos without nested instruction files see no change. Only reads trigger this: editing a file doesn't, and `/context` does not list these files.
+
 ## Tips
 
 - For long sessions, use `/tokens` periodically to monitor usage
