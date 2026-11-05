@@ -10,8 +10,10 @@
 
 /// Per-file threshold, in bytes. Chosen from the precedent table, not by feel:
 /// Claude Code warns at 150.0k chars (it used to warn at 40.0k). 40k is ruled
-/// out here because this repo's own CLAUDE.md is ~41.7 KB, so it would fire on
-/// every evolve run and on any medium-sized product file (cry-wolf).
+/// out for strangers' files because it would fire on any medium-sized product
+/// file (cry-wolf). This repo's own CLAUDE.md is NOT the innocent case: its
+/// rules call ~40 KB the defect, so it has its own 40 KB gate in
+/// tests/instruction_size.rs (Day 250).
 ///
 /// Bytes rather than chars keeps this simple, and it errs early, never late:
 /// a UTF-8 string has at least as many bytes as chars, so this fires at or
@@ -56,7 +58,7 @@ mod tests {
         // (bytes, fires)
         let rows = [
             (0, false),
-            (41_713, false), // this repo's own CLAUDE.md on Day 238
+            (41_713, false), // a ~42 KB file: under the 150k stranger threshold; this repo's own CLAUDE.md has its own 40 KB gate in tests/instruction_size.rs
             (149_999, false),
             (150_000, false),
             (150_001, true),

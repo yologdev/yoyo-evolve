@@ -124,3 +124,35 @@ fn ordinary_claude_md_gets_no_size_warning() {
         "41,713 bytes must not warn:\n{stderr}"
     );
 }
+
+/// This repo's own budget for its own `CLAUDE.md`, separate from the 150k
+/// stranger threshold in `src/instruction_size.rs`. CLAUDE.md is appended to
+/// the system prompt of every invocation of every loop, and its own text says
+/// "This file growing back past ~40 KB is itself the defect" (Day 238 lesson:
+/// a detector calibrated to keep my own file quiet needs a gate for my file).
+const OWN_CLAUDE_MD_MAX_BYTES: usize = 40_000;
+
+#[test]
+fn this_repos_claude_md_stays_under_its_40kb_budget() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("CLAUDE.md");
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+    // Anti-vacuous: a wrong path or an emptied file must not pass.
+    assert!(!text.is_empty(), "{} is empty", path.display());
+    assert!(
+        text.contains("## Safety Rules"),
+        "{} does not look like this repo's CLAUDE.md (no '## Safety Rules')",
+        path.display()
+    );
+    let len = text.len();
+    assert!(
+        len <= OWN_CLAUDE_MD_MAX_BYTES,
+        "CLAUDE.md is {len} bytes, over its {OWN_CLAUDE_MD_MAX_BYTES}-byte budget \
+         ({} over). It is loaded into every prompt of every loop. Rule: \"New history \
+         goes in ARCHITECTURE.md, never here.\" Remedy: move per-file history \
+         (measurements, censuses, superseded claims, Day-N narratives) contiguously \
+         and byte-preserving into ARCHITECTURE.md under the file it is about, and \
+         leave a short current-state summary plus a pointer in CLAUDE.md.",
+        len - OWN_CLAUDE_MD_MAX_BYTES
+    );
+}
