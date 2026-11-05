@@ -371,4 +371,27 @@ mod tests {
             other => panic!("expected text block, got {other:?}"),
         }
     }
+
+    #[test]
+    fn fenced_read_reads_real_files_and_honours_a_deny_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(tmp.path()).unwrap();
+        let pkg = root.join("pkg");
+        std::fs::create_dir_all(&pkg).unwrap();
+        std::fs::write(pkg.join("AGENTS.md"), "pkg rule").unwrap();
+        let open = crate::cli::DirectoryRestrictions {
+            allow: vec![],
+            deny: vec![],
+        };
+        assert_eq!(
+            fenced_read(&pkg.join("AGENTS.md"), &open).as_deref(),
+            Some("pkg rule")
+        );
+        assert_eq!(fenced_read(&pkg.join("CLAUDE.md"), &open), None);
+        let denied = crate::cli::DirectoryRestrictions {
+            allow: vec![],
+            deny: vec![pkg.to_string_lossy().into_owned()],
+        };
+        assert_eq!(fenced_read(&pkg.join("AGENTS.md"), &denied), None);
+    }
 }
