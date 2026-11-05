@@ -230,7 +230,7 @@ fn build_outcome(
 // Extracted into `prompt_retry` module (Day 64). Callers import directly
 // from `crate::prompt_retry`.
 use crate::prompt_retry::{
-    build_auto_retry_prompt, build_overflow_retry_prompt, classify_stop_reason, diagnose_api_error,
+    build_auto_retry_prompt, build_overflow_retry_prompt, classify_stop_reason,
     is_benign_stream_end, is_deterministic_tool_error, is_overflow_error, is_retriable_error,
     StopHandling, MAX_AUTO_RETRIES,
 };
@@ -943,7 +943,7 @@ impl PromptEventState {
                             } else {
                                 eprintln!("\n{RED}  error: {err_msg}{RESET}");
                                 // Show diagnostic help for common errors
-                                if let Some(diagnostic) = diagnose_api_error(err_msg, model) {
+                                if let Some(diagnostic) = surface_diagnosis(err_msg, model) {
                                     eprintln!(
                                         "{YELLOW}  💡 {}{RESET}",
                                         diagnostic
@@ -1136,7 +1136,7 @@ async fn handle_prompt_events(
                     AgentEvent::InputRejected { reason } => {
                         if let Some(s) = state.spinner.take() { s.stop(); }
                         eprintln!("{RED}  input rejected: {reason}{RESET}");
-                        if let Some(diagnostic) = diagnose_api_error(&reason, model) {
+                        if let Some(diagnostic) = surface_diagnosis(&reason, model) {
                             eprintln!("{YELLOW}  💡 {}{RESET}", diagnostic.replace('\n', &format!("\n{YELLOW}     {RESET}")));
                         }
                     }
@@ -2094,7 +2094,7 @@ async fn handle_stream_json_events(
                     }
                     AgentEvent::InputRejected { reason } => {
                         last_api_error = Some(reason.clone());
-                        if let Some(diagnostic) = diagnose_api_error(reason, model) {
+                        if let Some(diagnostic) = surface_diagnosis(reason, model) {
                             last_api_error = Some(format!("{reason}: {diagnostic}"));
                         }
                     }

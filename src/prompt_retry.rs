@@ -5,6 +5,7 @@
 //! diagnosis. They have no dependency on the prompt execution machinery itself.
 
 use crate::format::safe_truncate;
+use crate::prompt::network_error_summary as surface;
 use std::time::Duration;
 use yoagent::StopReason;
 
@@ -574,7 +575,7 @@ mod prompt_retry_dns_tests;
 
 /// Diagnose a non-retriable API error and return a user-friendly message
 /// with actionable suggestions. Returns `None` for errors that don't match
-/// known patterns.
+/// known patterns. `oneshot` (`-p`, piped): flags, never slash commands (#1128).
 ///
 /// Recognises five broad classes:
 /// 1. **Auth failures** (401/403/unauthorized) — checks the relevant env var
@@ -582,7 +583,7 @@ mod prompt_retry_dns_tests;
 /// 3. **Rate limits** (429/too many requests) — explains auto-retry behaviour
 /// 4. **Network errors** (connection refused/reset/timeout) — provider-specific hints
 /// 5. **Model not found** (404/invalid model) — suggests known models for the provider
-pub fn diagnose_api_error(error: &str, model: &str) -> Option<String> {
+pub(crate) fn diagnose_api_error_for(error: &str, model: &str, oneshot: bool) -> Option<String> {
     let lower = error.to_lowercase();
     // Prefer the provider the user *configured* this session (recorded by main.rs
     // after setup/flags resolve) over one guessed from the model name. Without this,
@@ -638,12 +639,7 @@ pub fn diagnose_api_error(error: &str, model: &str) -> Option<String> {
         if !dashboard.is_empty() {
             msg.push_str(&format!("\n  Check your balance: {dashboard}"));
         }
-        msg.push_str(&format!(
-            "\n  Options:\n\
-             \x20   • Add credits or raise your spending limit in the {provider} dashboard\n\
-             \x20   • Switch to a different provider: /provider <name>\n\
-             \x20   • Use a local model: /model ollama/llama3"
-        ));
+        msg.push_str(&surface::billing_options(&provider, oneshot));
         return Some(msg);
     }
 
@@ -675,10 +671,7 @@ pub fn diagnose_api_error(error: &str, model: &str) -> Option<String> {
             for m in known {
                 msg.push_str(&format!("\n  • {m}"));
             }
-            msg.push_str(&format!(
-                "\nSwitch with: /model {} or --model {}",
-                known[0], known[0]
-            ));
+            msg.push_str(&surface::switch_model_line(known[0], oneshot));
         }
         return Some(msg);
     }
@@ -703,7 +696,7 @@ pub fn diagnose_api_error(error: &str, model: &str) -> Option<String> {
                 "  Check your internet connection and that {provider}'s API is reachable.\n"
             ));
         }
-        msg.push_str(crate::prompt::network_error_summary::REPL_RETRY_LINE);
+        msg.push_str(surface::REPL_RETRY_LINE);
         return Some(msg);
     }
 
@@ -742,6 +735,12 @@ pub fn diagnose_api_error(error: &str, model: &str) -> Option<String> {
     }
 
     None
+}
+
+/// The REPL wording, as tests' shorthand; every production door picks a surface.
+#[cfg(test)]
+pub fn diagnose_api_error(error: &str, model: &str) -> Option<String> {
+    diagnose_api_error_for(error, model, false)
 }
 
 /// Resolve which provider the diagnostic message should name.
