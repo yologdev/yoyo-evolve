@@ -71,6 +71,20 @@ If the run is interrupted with Ctrl+C (SIGINT), yoyo exits with code **130**, wr
 `(interrupted)` to stderr, and leaves whatever text was already streamed on stdout
 unchanged. A script can tell a cut-off answer from a complete one, which exits 0.
 
+## Exit codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | The answer is complete. Also a reply cut off at a `max_tokens` **you** set (`--max-tokens` or `max_tokens` in `.yoyo.toml`): stderr carries `warning: reply stopped at the output limit (max_tokens = N)`, and you asked for that limit. |
+| 1 | No complete answer: the run failed (an API error, a dead turn, a failed `--output` write), **or** the reply was cut off at an output limit you never set (a model preset or the request default; stderr names "the model's default max_tokens"), **or** the model refused the request (stderr says `refused this request`). Whatever text was streamed stays on stdout. |
+| 2 | A `--context-strategy checkpoint` stop: the run asks to be resumed. A refused slash-command prompt (below) also exits 2. |
+| 130 / 143 | Interrupted by SIGINT / SIGTERM. |
+
+A script that reads only stdout cannot see where a reply ended, which is why a cut at a
+limit nobody chose is a failure: the partial text would otherwise pass for the whole answer.
+The same codes apply to piped mode and to `--output-format json`; `--output-format stream-json`
+exits 0 or 1 by the same rules (it has no checkpoint code).
+
 ## Slash commands are not expanded here
 
 A prompt whose first non-space character is `/` is treated as a REPL command, not as

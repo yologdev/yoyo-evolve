@@ -108,6 +108,7 @@ pub(super) fn finish_interrupted_turn(
         usage: state.usage,
         last_tool_error: state.last_tool_error,
         last_tool_name: state.last_tool_name,
+        incomplete: state.incomplete,
     }
 }
 

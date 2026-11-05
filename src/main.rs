@@ -344,12 +344,18 @@ fn count_assistant_turns(agent: &Agent) -> usize {
 /// Precedence is unchanged and is deliberate: a failed run or a failed
 /// `--output` write (#766) beats a triggered checkpoint, because a checkpoint
 /// is a *request to resume* and a dead turn has nothing to resume from.
+///
+/// `reply_incomplete` (#1026, @yuanhao's decision): the final reply was cut by
+/// an output limit the user never set, or refused — no complete answer, so 1.
+/// A cut under a user-set `max_tokens` is not passed as true here (exit 0 with
+/// the stderr note); `prompt::incomplete_forces_failure` decides that.
 fn exit_code_for_outcome(
     run_failed: bool,
     output_write_failed: bool,
+    reply_incomplete: bool,
     checkpoint_triggered: bool,
 ) -> i32 {
-    if run_failed || output_write_failed {
+    if run_failed || output_write_failed || reply_incomplete {
         1
     } else if checkpoint_triggered {
         2
@@ -512,7 +518,10 @@ async fn run_single_prompt(
             )
             .await
         };
-        let code = i32::from(response.last_api_error.is_some());
+        let code = i32::from(
+            response.last_api_error.is_some()
+                || prompt::incomplete_forces_failure(response.incomplete),
+        );
         let code = save_session_after_turn(agent, save_session, code).await;
         if code != 0 {
             exit_after_shutdown(code).await;
@@ -682,6 +691,7 @@ async fn run_single_prompt(
     let code = exit_code_for_outcome(
         run_failed,
         output_write_failed,
+        prompt::incomplete_forces_failure(response.incomplete),
         CHECKPOINT_TRIGGERED.load(Ordering::SeqCst),
     );
     // #993/#1015: SIGINT mid-turn exits 130 (SIGTERM on a pipe: 143),
@@ -830,7 +840,10 @@ async fn run_piped_mode(
             &session_changes,
         )
         .await;
-        let code = i32::from(response.last_api_error.is_some());
+        let code = i32::from(
+            response.last_api_error.is_some()
+                || prompt::incomplete_forces_failure(response.incomplete),
+        );
         let code = save_session_after_turn(agent, save_session, code).await;
         if code != 0 {
             exit_after_shutdown(code).await;
@@ -968,6 +981,8 @@ async fn run_piped_mode(
             response.last_tool_error = cont_outcome.last_tool_error;
             response.last_tool_name = cont_outcome.last_tool_name;
             response.last_api_error = cont_outcome.last_api_error;
+            // #1026: the last turn decides how the reply ended.
+            response.incomplete = cont_outcome.incomplete;
         }
     }
 
@@ -1011,6 +1026,7 @@ async fn run_piped_mode(
     let code = exit_code_for_outcome(
         run_failed,
         output_write_failed,
+        prompt::incomplete_forces_failure(response.incomplete),
         CHECKPOINT_TRIGGERED.load(Ordering::SeqCst),
     );
     // #993/#1015: a turn cut short by SIGINT exits 130 (SIGTERM on a pipe:

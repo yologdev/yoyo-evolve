@@ -202,7 +202,8 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 248 (#1122, yoagent 0.26): +1, the `gpt-6.1-terra` arm of
     // `openai_preset` routing yoagent 0.26.4's new GPT-6.1 Terra preset.
     // Day 249 (#1122): +4, the openrouter arm's second lookup (yoagent routed presets).
-    ("src/agent_builder.rs", 4981),
+    // Day 250 (#1026): +3, `incomplete: None` in three existing PromptOutcome test literals.
+    ("src/agent_builder.rs", 4984),
     // Day 164 (#728): +98 lines — `/skill install`'s destination becomes a third
     // auto-discovery source, so an explicitly installed skill actually loads.
     // The two near-identical per-directory blocks were collapsed into one loop
@@ -610,7 +611,10 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // +2 (Day 247, #1115): the `mod network_error_summary` and `use` lines;
     // the six error sites changed in place, the logic lives in that module.
     // +1 Day 248 (#1120): `mod reserved_dns;`, both loops call its no_retry_note.
-    ("src/prompt.rs", 3937),
+    // +40 Day 250 (#1026): `PromptOutcome::incomplete` threaded through PromptEventState,
+    // PromptResult::Done, both retry loops, build_outcome and the stream-json loop (~25),
+    // plus `incomplete: None` in 13 existing test literals; the decision lives in output_limit.rs.
+    ("src/prompt.rs", 3977),
     // Day 183: first entry for this file — 2042, i.e. 42 past MAX_MODULE_LINES and
     // so inside OVERSHOOT_GRACE_LINES, which is why it warned instead of failing.
     // Registering it is this gate's OWN stated remedy for a grace-band overshoot

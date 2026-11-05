@@ -3476,6 +3476,7 @@ mod tests {
             last_tool_name: None,
             was_overflow: false,
             last_api_error: None,
+            incomplete: None,
         };
         // The helper's first check: if no API error, return immediately.
         // We verify this contract by checking the config isn't touched.
@@ -3496,6 +3497,7 @@ mod tests {
             last_tool_name: None,
             was_overflow: false,
             last_api_error: Some("503 Service Unavailable".to_string()),
+            incomplete: None,
         };
         // The helper would: check API error (yes) → try_switch_to_fallback (false) → exit error
         assert!(response.last_api_error.is_some());
@@ -3525,6 +3527,7 @@ mod tests {
             last_tool_name: None,
             was_overflow: false,
             last_api_error: Some("529 Overloaded".to_string()),
+            incomplete: None,
         };
         // The helper would: check API error (yes) → try_switch_to_fallback (true) → rebuild → retry
         assert!(response.last_api_error.is_some());

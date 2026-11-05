@@ -23,6 +23,7 @@ mod retry_after_partial;
 mod retry_safe_pipe;
 mod sigterm;
 pub use interrupt::{interrupted_exit_code, mark_single_shot, stream_cut_short, was_interrupted};
+pub use output_limit::{incomplete_forces_failure, Incomplete};
 mod stream_external_servers;
 #[cfg(test)]
 mod stream_json_retry_tests;
@@ -187,6 +188,9 @@ pub struct PromptOutcome {
     /// rather than a tool execution error. Used by the REPL to trigger
     /// fallback provider switching.
     pub last_api_error: Option<String>,
+    /// #1026: the final reply was cut by an output limit or refused; read by
+    /// `-p`'s exit code through `incomplete_forces_failure`.
+    pub incomplete: Option<Incomplete>,
 }
 
 /// Day 192: the ONE statement of what a fatally-failed turn hands back.
@@ -216,6 +220,7 @@ fn build_outcome(
     last_tool_name: Option<String>,
     was_overflow: bool,
     api_error: Option<String>,
+    incomplete: Option<Incomplete>,
 ) -> PromptOutcome {
     PromptOutcome {
         text: collected_text,
@@ -224,6 +229,7 @@ fn build_outcome(
         last_tool_name,
         was_overflow,
         last_api_error: api_error,
+        incomplete,
     }
 }
 
@@ -257,6 +263,7 @@ enum PromptResult {
         usage: Usage,
         last_tool_error: Option<String>,
         last_tool_name: Option<String>,
+        incomplete: Option<Incomplete>,
     },
     /// A retriable API error was detected — caller should retry.
     RetriableError {
@@ -537,6 +544,8 @@ struct PromptEventState {
     /// message started, so a `ProviderRetry` can tell what the dying attempt
     /// streamed. Always a value `collected_text.len()` once had (a boundary).
     attempt_text_start: usize,
+    /// #1026: how the final assistant message ended; set by `output_limit::end_turn`.
+    incomplete: Option<Incomplete>,
 }
 
 impl PromptEventState {
@@ -554,6 +563,7 @@ impl PromptEventState {
             last_tool_error: None,
             last_tool_name: None,
             attempt_text_start: 0,
+            incomplete: None,
             md_renderer: MarkdownRenderer::new(),
             spinner: Some(Spinner::start()),
             think_filter: ThinkBlockFilter::new(),
@@ -1072,6 +1082,7 @@ impl PromptEventState {
                 usage: self.usage,
                 last_tool_error: self.last_tool_error,
                 last_tool_name: self.last_tool_name,
+                incomplete: self.incomplete,
             }
         }
     }
@@ -1282,6 +1293,7 @@ pub async fn run_prompt_with_changes(
     let mut text_since_last_tool = String::new();
     let mut last_tool_error: Option<String> = None;
     let mut last_tool_name: Option<String> = None;
+    let mut incomplete: Option<Incomplete> = None;
     let mut did_overflow_compact = false;
     let mut api_error: Option<String> = None;
     // Day 183: a budget of its own, separate from `attempt`, so a malformed
@@ -1323,12 +1335,14 @@ pub async fn run_prompt_with_changes(
                 usage,
                 last_tool_error: tool_err,
                 last_tool_name: tool_nm,
+                incomplete: inc,
             } => {
                 accumulate_usage(&mut total_usage, &usage);
                 collected_text = text;
                 text_since_last_tool = closing;
                 last_tool_error = tool_err;
                 last_tool_name = tool_nm;
+                incomplete = inc;
                 break;
             }
             PromptResult::RetriableError {
@@ -1432,12 +1446,14 @@ pub async fn run_prompt_with_changes(
                         usage: retry_usage,
                         last_tool_error: tool_err,
                         last_tool_name: tool_nm,
+                        incomplete: inc,
                     } => {
                         accumulate_usage(&mut total_usage, &retry_usage);
                         collected_text = text;
                         text_since_last_tool = closing;
                         last_tool_error = tool_err;
                         last_tool_name = tool_nm;
+                        incomplete = inc;
                     }
                     PromptResult::RetriableError {
                         error_msg: retry_err,
@@ -1531,6 +1547,7 @@ pub async fn run_prompt_with_changes(
         last_tool_name,
         did_overflow_compact,
         api_error,
+        incomplete,
     )
 }
 
@@ -1701,6 +1718,7 @@ pub async fn run_prompt_with_content_and_changes(
     let mut text_since_last_tool = String::new();
     let mut last_tool_error: Option<String> = None;
     let mut last_tool_name: Option<String> = None;
+    let mut incomplete: Option<Incomplete> = None;
     let mut api_error: Option<String> = None;
     // Day 183: a budget of its own, separate from `attempt`, so a malformed
     // tool call still gets its one resample after an unrelated transient retry.
@@ -1745,12 +1763,14 @@ pub async fn run_prompt_with_content_and_changes(
                 usage,
                 last_tool_error: tool_err,
                 last_tool_name: tool_nm,
+                incomplete: inc,
             } => {
                 accumulate_usage(&mut total_usage, &usage);
                 collected_text = text;
                 text_since_last_tool = closing;
                 last_tool_error = tool_err;
                 last_tool_name = tool_nm;
+                incomplete = inc;
                 break;
             }
             PromptResult::RetriableError {
@@ -1875,6 +1895,7 @@ pub async fn run_prompt_with_content_and_changes(
         last_tool_name,
         false,
         api_error,
+        incomplete,
     )
 }
 
@@ -1960,6 +1981,7 @@ async fn handle_stream_json_events(
     let mut attempt_text_start = 0usize;
     let mut last_tool_error: Option<String> = None;
     let mut last_tool_name: Option<String> = None;
+    let mut incomplete: Option<Incomplete> = None;
     let mut last_api_error: Option<String> = None;
     // #751: JSON stream mode is the second of the two display paths, and it is
     // the audit log's writer while it is running. `AuditHook` no longer writes
@@ -2061,6 +2083,7 @@ async fn handle_stream_json_events(
                         text_since_last_tool.push_str(delta);
                     }
                     AgentEvent::AgentEnd { messages, .. } => {
+                        incomplete = output_limit::final_incomplete(messages, agent.max_tokens);
                         // Extract usage from assistant messages
                         for msg in messages {
                             if let AgentMessage::Llm(Message::Assistant {
@@ -2128,6 +2151,7 @@ async fn handle_stream_json_events(
         last_tool_name,
         was_overflow: false,
         last_api_error,
+        incomplete,
     };
     (outcome, usage)
 }
@@ -2649,6 +2673,7 @@ mod tests {
             last_tool_name: None,
             was_overflow: false,
             last_api_error: Some("503 Service Unavailable".to_string()),
+            incomplete: None,
         };
         assert_eq!(
             outcome.last_api_error,
@@ -2662,6 +2687,7 @@ mod tests {
             last_tool_name: None,
             was_overflow: false,
             last_api_error: None,
+            incomplete: None,
         };
         assert!(outcome_no_error.last_api_error.is_none());
     }
@@ -2675,6 +2701,7 @@ mod tests {
             last_tool_name: Some("read_file".to_string()),
             was_overflow: false,
             last_api_error: None,
+            incomplete: None,
         };
         assert_eq!(outcome.last_tool_name.as_deref(), Some("read_file"));
 
@@ -2685,6 +2712,7 @@ mod tests {
             last_tool_name: None,
             was_overflow: false,
             last_api_error: None,
+            incomplete: None,
         };
         assert!(outcome_none.last_tool_name.is_none());
     }
@@ -2756,6 +2784,7 @@ mod tests {
             last_tool_name: Some("bash".to_string()),
             was_overflow: true,
             last_api_error: Some("429 rate limit".to_string()),
+            incomplete: None,
         };
         let cloned = outcome.clone();
         assert_eq!(cloned.text, "hello world");
@@ -2783,6 +2812,7 @@ mod tests {
             last_tool_name: None,
             was_overflow: true,
             last_api_error: None,
+            incomplete: None,
         };
         assert!(outcome.was_overflow);
         assert_eq!(outcome.text, "compacted response");
@@ -2799,6 +2829,7 @@ mod tests {
             last_tool_name: Some("read_file".to_string()),
             was_overflow: false,
             last_api_error: Some("500 internal server error".to_string()),
+            incomplete: None,
         };
         assert!(outcome.last_tool_error.is_some());
         assert!(outcome.last_api_error.is_some());
@@ -3218,6 +3249,7 @@ mod tests {
                 text_since_last_tool,
                 last_tool_error,
                 last_tool_name,
+                incomplete,
                 ..
             } => build_outcome(
                 collected_text,
@@ -3226,6 +3258,7 @@ mod tests {
                 last_tool_name,
                 false,
                 None,
+                incomplete,
             ),
             PromptResult::FatalError {
                 error_msg,
@@ -3233,7 +3266,7 @@ mod tests {
                 ..
             } => {
                 let (text, api_error) = fatal_handoff(collected_text, error_msg);
-                build_outcome(text, String::new(), None, None, false, api_error)
+                build_outcome(text, String::new(), None, None, false, api_error, None)
             }
             PromptResult::RetriableError { error_msg, .. } => build_outcome(
                 String::new(),
@@ -3242,6 +3275,7 @@ mod tests {
                 None,
                 false,
                 Some(error_msg),
+                None,
             ),
             PromptResult::ContextOverflow { error_msg, .. } => build_outcome(
                 String::new(),
@@ -3250,6 +3284,7 @@ mod tests {
                 None,
                 true,
                 Some(error_msg),
+                None,
             ),
         }
     }
@@ -3731,6 +3766,7 @@ mod tests {
             last_tool_name: None,
             was_overflow: false,
             last_api_error: None,
+            incomplete: None,
         };
         assert!(outcome.text.contains('🐙'));
         assert!(outcome.text.contains("日本語"));
@@ -3761,6 +3797,7 @@ mod fatal_text_handoff_tests {
         let mut text_since_last_tool = String::new();
         let mut last_tool_error: Option<String> = None;
         let mut last_tool_name: Option<String> = None;
+        let mut incomplete: Option<Incomplete> = None;
         let mut api_error: Option<String> = None;
 
         match state.into_result() {
@@ -3770,12 +3807,14 @@ mod fatal_text_handoff_tests {
                 text_since_last_tool: closing,
                 last_tool_error: tool_err,
                 last_tool_name: tool_nm,
+                incomplete: inc,
                 ..
             } => {
                 collected_text = text;
                 text_since_last_tool = closing;
                 last_tool_error = tool_err;
                 last_tool_name = tool_nm;
+                incomplete = inc;
             }
             // Mirrors both loops' terminal FatalError arm verbatim.
             PromptResult::FatalError {
@@ -3795,6 +3834,7 @@ mod fatal_text_handoff_tests {
             last_tool_name,
             false,
             api_error,
+            incomplete,
         )
     }
 

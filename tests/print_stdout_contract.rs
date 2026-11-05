@@ -174,6 +174,8 @@ struct Run {
     stdout: Vec<u8>,
     stderr: String,
     success: bool,
+    /// The exit code (`None` for a signal death).
+    code: Option<i32>,
     stub_hit: bool,
     /// POSTs the stub received (retries included).
     requests: usize,
@@ -284,6 +286,7 @@ fn run_yoyo_seeded(
         stdout: out.stdout,
         stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
         success: out.status.success(),
+        code: out.status.code(),
         stub_hit: hit.load(Ordering::SeqCst) > 0,
         requests: hit.load(Ordering::SeqCst),
     }
@@ -2394,12 +2397,19 @@ fn sigterm_during_a_long_tool_call_on_a_pipe_still_terminates() {
 /// A reply cut off at the output-token limit (Anthropic `stop_reason:
 /// "max_tokens"`, yoagent `StopReason::Length`) used to end silently: exit 0,
 /// nothing on stderr. Now stderr carries one warning naming the cause and the
-/// fix; stdout and the exit code (0, by decision) are unchanged. The twin
+/// fix; stdout is unchanged and, under the `--max-tokens 30` the user set
+/// here, so is the exit code (0, #1026: the exit code follows who set the
+/// limit; the default-limit and refusal rows are further down). The twin
 /// below is the same stream with `end_turn`, and the two stdouts must be
 /// byte-identical.
 fn run_with_stop_reason(print: bool, stop_reason: &str) -> Run {
+    run_with_stop_reason_and(print, stop_reason, &["--max-tokens", "30"])
+}
+
+fn run_with_stop_reason_and(print: bool, stop_reason: &str, limit: &[&str]) -> Run {
     let body = sse_turn("msg_len", vec![text_block(&["1 2 3 ", "4 5"])], stop_reason);
-    let mut extra = vec!["--max-tokens", "30", "-p", "numbers 1 to 200"];
+    let mut extra = limit.to_vec();
+    extra.extend(["-p", "numbers 1 to 200"]);
     if print {
         extra.push("--print");
     }
@@ -2453,4 +2463,113 @@ fn assert_cut_off_reply_warns(print: bool) {
         "a normal end_turn must not warn; stderr={}",
         normal.stderr
     );
+}
+
+/// #1026, @yuanhao's decision (2026-11-03): "the exit code follows who set the
+/// limit". This drives the real binary, so it checks the hop the compiler
+/// can't: that the FINAL stop reason reaches `-p`'s exit code. Each row keeps
+/// the partial text on stdout, whatever the code.
+#[test]
+fn exit_code_follows_who_set_the_output_limit_and_a_refusal_fails() {
+    // (stop_reason, limit flags, expected exit code, what the row means)
+    let rows: [(&str, &[&str], i32, &str); 4] = [
+        (
+            "max_tokens",
+            &[],
+            1,
+            "cut by a default limit the user never set",
+        ),
+        (
+            "max_tokens",
+            &["--max-tokens", "30"],
+            0,
+            "cut by the user's own max_tokens",
+        ),
+        ("refusal", &[], 1, "a refusal produced no answer"),
+        ("end_turn", &[], 0, "near-miss: a normal ending"),
+    ];
+    for print in [false, true] {
+        for (stop_reason, limit, want, why) in rows {
+            let run = run_with_stop_reason_and(print, stop_reason, limit);
+            // Not `assert_reached_stub`: it also demands exit 0.
+            assert!(run.stub_hit, "anti-vacuous: no POST; stderr={}", run.stderr);
+            let stdout = String::from_utf8(run.stdout.clone()).expect("utf-8 stdout");
+            assert!(
+                stdout.contains("1 2 3 4 5"),
+                "{why}: the partial text must still reach stdout (print={print}); \
+                 stdout={stdout:?} stderr={}",
+                run.stderr
+            );
+            assert_eq!(
+                run.code,
+                Some(want),
+                "{why}: stop_reason={stop_reason} limit={limit:?} print={print}; stderr={}",
+                run.stderr
+            );
+        }
+    }
+    // The user-set row still carries the existing note, naming their limit.
+    let user_set = run_with_stop_reason_and(true, "max_tokens", &["--max-tokens", "30"]);
+    assert!(
+        user_set.stderr.contains(OUTPUT_LIMIT_NOTE),
+        "stderr={}",
+        user_set.stderr
+    );
+    // The default row's note names the default, not a number the user chose.
+    let default = run_with_stop_reason_and(true, "max_tokens", &[]);
+    assert!(
+        default
+            .stderr
+            .contains("reply stopped at the output limit (the model's default max_tokens)"),
+        "stderr={}",
+        default.stderr
+    );
+}
+
+/// The same decision on the other two exit doors: piped stdin (the door every
+/// `scripts/evolve.sh` agent uses) and `--output-format stream-json`, which has
+/// its own event loop and its own exit line in main.rs.
+#[test]
+fn exit_code_follows_who_set_the_limit_on_the_piped_and_stream_json_doors() {
+    let rows: [(&str, &[&str], i32); 4] = [
+        ("max_tokens", &[], 1),
+        ("max_tokens", &["--max-tokens", "30"], 0),
+        ("refusal", &[], 1),
+        ("end_turn", &[], 0),
+    ];
+    for (stop_reason, limit, want) in rows {
+        let body = || sse_turn("msg_len", vec![text_block(&["1 2 3 ", "4 5"])], stop_reason);
+        let piped = run_yoyo_with(
+            &["--no-tools", "--max-turns", "1"],
+            limit,
+            Some("numbers 1 to 200"),
+            vec![body()],
+        );
+        let mut sj_extra = limit.to_vec();
+        sj_extra.extend(["--output-format", "stream-json", "-p", "numbers 1 to 200"]);
+        let stream_json = run_yoyo_with(
+            &["--no-tools", "--max-turns", "1"],
+            &sj_extra,
+            None,
+            vec![body()],
+        );
+        for (door, run) in [("piped", piped), ("stream-json", stream_json)] {
+            assert!(
+                run.stub_hit,
+                "{door}: anti-vacuous: no POST; stderr={}",
+                run.stderr
+            );
+            let stdout = String::from_utf8_lossy(&run.stdout);
+            assert!(
+                stdout.contains("1 2 3") && stdout.contains("4 5"),
+                "{door}: the partial text must still reach stdout; stdout={stdout:?}"
+            );
+            assert_eq!(
+                run.code,
+                Some(want),
+                "{door}: stop_reason={stop_reason} limit={limit:?}; stderr={}",
+                run.stderr
+            );
+        }
+    }
 }

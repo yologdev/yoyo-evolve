@@ -205,6 +205,7 @@ fn test_build_json_output_valid_json_with_expected_keys() {
         last_tool_name: None,
         was_overflow: false,
         last_api_error: None,
+        incomplete: None,
     };
     let usage = Usage {
         input: 100,
@@ -251,6 +252,7 @@ fn test_build_json_output_error_mode() {
         last_tool_name: None,
         was_overflow: false,
         last_api_error: Some("API error".to_string()),
+        incomplete: None,
     };
     let usage = Usage {
         input: 10,
@@ -345,6 +347,7 @@ fn test_build_json_output_empty_text() {
         last_tool_name: None,
         was_overflow: false,
         last_api_error: None,
+        incomplete: None,
     };
     let usage = Usage {
         input: 0,
@@ -379,6 +382,7 @@ fn test_build_json_output_special_characters() {
         last_tool_name: None,
         was_overflow: false,
         last_api_error: None,
+        incomplete: None,
     };
     let usage = Usage {
         input: 10,
@@ -415,6 +419,7 @@ fn test_build_json_output_structure_completeness() {
         last_tool_name: None,
         was_overflow: false,
         last_api_error: None,
+        incomplete: None,
     };
     let usage = Usage {
         input: 1,
@@ -471,6 +476,7 @@ fn test_build_json_output_cost_is_non_negative() {
         last_tool_name: None,
         was_overflow: false,
         last_api_error: None,
+        incomplete: None,
     };
     let usage = Usage {
         input: 1000,
@@ -504,6 +510,7 @@ fn test_build_json_output_unknown_model_still_valid() {
         last_tool_name: None,
         was_overflow: false,
         last_api_error: None,
+        incomplete: None,
     };
     let usage = Usage {
         input: 50,
@@ -536,6 +543,7 @@ fn test_build_json_output_includes_session_changes() {
         last_tool_name: None,
         was_overflow: false,
         last_api_error: None,
+        incomplete: None,
     };
     let usage = Usage {
         input: 100,
@@ -584,6 +592,7 @@ fn test_build_json_output_empty_session_changes() {
         last_tool_name: None,
         was_overflow: false,
         last_api_error: None,
+        incomplete: None,
     };
     let usage = Usage {
         input: 10,
@@ -1066,6 +1075,7 @@ fn json_fixture() -> (PromptOutcome, Usage) {
             last_tool_name: None,
             was_overflow: false,
             last_api_error: None,
+            incomplete: None,
         },
         Usage {
             input: 1,
@@ -1211,31 +1221,54 @@ fn a_control_byte_in_a_server_command_is_escaped_once_by_serde() {
 fn exit_code_for_outcome_table() {
     // The pass-through. This row is every successful run there has ever been.
     assert_eq!(
-        exit_code_for_outcome(false, false, false),
+        exit_code_for_outcome(false, false, false, false),
         0,
         "a clean run must still exit 0, byte-identically"
     );
 
     // The fix: a failed run is 1, whatever else is true.
-    assert_eq!(exit_code_for_outcome(true, false, false), 1);
-    assert_eq!(exit_code_for_outcome(true, true, false), 1);
+    assert_eq!(exit_code_for_outcome(true, false, false, false), 1);
+    assert_eq!(exit_code_for_outcome(true, true, false, false), 1);
 
     // #766, unchanged: a failed --output write is a failed run on its own.
-    assert_eq!(exit_code_for_outcome(false, true, false), 1);
+    assert_eq!(exit_code_for_outcome(false, true, false, false), 1);
 
     // Checkpoint keeps 2, and keeps LOSING to a failure — a checkpoint is a
     // request to resume and a dead turn has nothing to resume from.
-    assert_eq!(exit_code_for_outcome(false, false, true), 2);
+    assert_eq!(exit_code_for_outcome(false, false, false, true), 2);
     assert_eq!(
-        exit_code_for_outcome(true, false, true),
+        exit_code_for_outcome(true, false, false, true),
         1,
         "a failed run outranks a triggered checkpoint"
     );
     assert_eq!(
-        exit_code_for_outcome(false, true, true),
+        exit_code_for_outcome(false, true, false, true),
         1,
         "a failed --output write outranks a triggered checkpoint"
     );
+
+    // #1026: a reply cut by a default limit, or refused, is no complete
+    // answer: 1 on its own, and it too outranks a checkpoint.
+    assert_eq!(exit_code_for_outcome(false, false, true, false), 1);
+    assert_eq!(
+        exit_code_for_outcome(false, false, true, true),
+        1,
+        "an incomplete reply outranks a triggered checkpoint"
+    );
+    assert_eq!(exit_code_for_outcome(true, true, true, true), 1);
+    // The ladder reads the DECISION, so the three Incomplete kinds route as
+    // the owner decided: user-set limit 0, default limit 1, refusal 1.
+    use crate::prompt::{incomplete_forces_failure, Incomplete};
+    for (incomplete, want) in [
+        (None, 0),
+        (Some(Incomplete::OutputLimitUserSet), 0),
+        (Some(Incomplete::OutputLimitDefault), 1),
+        (Some(Incomplete::Refusal), 1),
+    ] {
+        let code =
+            exit_code_for_outcome(false, false, incomplete_forces_failure(incomplete), false);
+        assert_eq!(code, want, "{incomplete:?}");
+    }
 }
 
 /// 1 and 2 mean different things in this binary and must not collide.
@@ -1246,8 +1279,8 @@ fn exit_code_for_outcome_table() {
 /// else.
 #[test]
 fn a_failed_run_does_not_collide_with_the_checkpoint_code() {
-    let failed = exit_code_for_outcome(true, false, false);
-    let checkpoint = exit_code_for_outcome(false, false, true);
+    let failed = exit_code_for_outcome(true, false, false, false);
+    let checkpoint = exit_code_for_outcome(false, false, false, true);
     assert_ne!(
         failed, checkpoint,
         "a dead turn and a checkpoint must be distinguishable by exit code"

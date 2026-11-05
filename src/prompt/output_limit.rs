@@ -16,8 +16,16 @@
 //! line for all of them: `-p` into a pipe — the reader sees only stdout bytes
 //! and cannot tell a cut-off from an ending; `-p` on a terminal and the REPL —
 //! the human sees the text stop mid-sentence, but not why. Stdout stays
-//! exactly as streamed, and the exit code stays 0 by decision: a user who sets
-//! a low `max_tokens` on purpose would otherwise see every run fail.
+//! exactly as streamed.
+//!
+//! The exit code follows WHO SET THE LIMIT (@yuanhao's decision on #1026,
+//! 2026-11-03): a `max_tokens` the user set (flag or config, which is exactly
+//! when `agent.max_tokens` is `Some`) exits 0 with the note, because a user who
+//! sets a low limit on purpose would otherwise see every run fail; a limit the
+//! user never chose (a preset or the base request default) exits 1, because a
+//! script reading only stdout would take the cut answer as complete. A refusal
+//! exits 1 too: no answer was produced. `final_incomplete` reads the final
+//! stop, `incomplete_forces_failure` is the whole decision.
 //!
 //! Volume is a warning (yellow, `warning:`), never DIM: a truncated answer is
 //! not trivia. Not quiet-gated, like `max_tokens_ceiling_warning`.
@@ -25,20 +33,59 @@
 use super::PromptEventState;
 use crate::format::{is_plain_output, RESET, YELLOW};
 use crate::prompt_retry::{classify_stop_reason, StopHandling};
-use yoagent::{AgentMessage, Message};
+use yoagent::{AgentMessage, Message, StopReason};
+
+/// Why a run's final reply is not a complete answer (#1026). `None` on
+/// `PromptOutcome::incomplete` means the reply ended normally (or failed in a
+/// way another field already records).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Incomplete {
+    /// Cut at an output limit the user never chose (preset / base default).
+    OutputLimitDefault,
+    /// Cut at a `max_tokens` the user set by flag or config.
+    OutputLimitUserSet,
+    /// The model refused: no answer was produced.
+    Refusal,
+}
+
+/// The exit-code half of the owner's decision on #1026: does this ending make
+/// the run a failure? Only a user-set limit is a chosen, complete-as-asked end.
+pub fn incomplete_forces_failure(incomplete: Option<Incomplete>) -> bool {
+    match incomplete {
+        None | Some(Incomplete::OutputLimitUserSet) => false,
+        Some(Incomplete::OutputLimitDefault) | Some(Incomplete::Refusal) => true,
+    }
+}
+
+/// The stop reason of the LAST assistant message of the run, if any.
+fn final_stop_reason(messages: &[AgentMessage]) -> Option<&StopReason> {
+    messages.iter().rev().find_map(|m| match m {
+        AgentMessage::Llm(Message::Assistant { stop_reason, .. }) => Some(stop_reason),
+        _ => None,
+    })
+}
 
 /// True when the LAST assistant message of the run stopped on the output
 /// limit. Reads through `classify_stop_reason` so the routing lives in one
 /// place: `StopHandling::OutputLimit` is the `Length` arm.
 pub(super) fn final_stop_hit_output_limit(messages: &[AgentMessage]) -> bool {
-    messages
-        .iter()
-        .rev()
-        .find_map(|m| match m {
-            AgentMessage::Llm(Message::Assistant { stop_reason, .. }) => Some(stop_reason),
-            _ => None,
-        })
+    final_stop_reason(messages)
         .is_some_and(|r| classify_stop_reason(r) == StopHandling::OutputLimit)
+}
+
+/// How the run's FINAL assistant message ended, for the exit code: earlier
+/// turns that were cut or refused and then continued do not count.
+/// `max_tokens` is `agent.max_tokens`, `Some` only when the user set it.
+pub(super) fn final_incomplete(
+    messages: &[AgentMessage],
+    max_tokens: Option<u32>,
+) -> Option<Incomplete> {
+    match classify_stop_reason(final_stop_reason(messages)?) {
+        StopHandling::OutputLimit if max_tokens.is_some() => Some(Incomplete::OutputLimitUserSet),
+        StopHandling::OutputLimit => Some(Incomplete::OutputLimitDefault),
+        StopHandling::RefusalNotice => Some(Incomplete::Refusal),
+        StopHandling::InspectError | StopHandling::Ignore => None,
+    }
 }
 
 /// The stderr line for a reply cut off at the output limit. Pure; colour is
@@ -65,6 +112,7 @@ pub(super) fn end_turn(
     max_tokens: Option<u32>,
 ) {
     let cut = final_stop_hit_output_limit(&messages);
+    state.incomplete = final_incomplete(&messages, max_tokens);
     state.handle_agent_end(messages, model);
     if cut {
         let note = output_limit_note(max_tokens, is_plain_output());
@@ -171,5 +219,65 @@ mod tests {
             assistant(StopReason::Length),
             user("stop marker"),
         ]));
+    }
+
+    /// #1026, the owner's decision as a table: who set the limit decides.
+    #[test]
+    fn incomplete_forces_failure_table() {
+        let rows = [
+            (None, false),
+            (Some(Incomplete::OutputLimitUserSet), false),
+            (Some(Incomplete::OutputLimitDefault), true),
+            (Some(Incomplete::Refusal), true),
+        ];
+        for (incomplete, fails) in rows {
+            assert_eq!(
+                incomplete_forces_failure(incomplete),
+                fails,
+                "{incomplete:?}"
+            );
+        }
+    }
+
+    /// The provenance split: `max_tokens` is `Some` only when the user set it,
+    /// and only the FINAL assistant message decides.
+    #[test]
+    fn final_incomplete_reads_the_final_stop_and_who_set_the_limit() {
+        let cut = [user("hi"), assistant(StopReason::Length)];
+        assert_eq!(
+            final_incomplete(&cut, None),
+            Some(Incomplete::OutputLimitDefault)
+        );
+        assert_eq!(
+            final_incomplete(&cut, Some(30)),
+            Some(Incomplete::OutputLimitUserSet)
+        );
+        let refused = [user("hi"), assistant(StopReason::Refusal)];
+        assert_eq!(final_incomplete(&refused, None), Some(Incomplete::Refusal));
+        assert_eq!(
+            final_incomplete(&refused, Some(30)),
+            Some(Incomplete::Refusal)
+        );
+        // Near-misses: normal ends, errors, and an earlier cut followed by a
+        // normal final turn are all `None`.
+        for r in [
+            StopReason::Stop,
+            StopReason::ToolUse,
+            StopReason::Aborted,
+            StopReason::Error,
+        ] {
+            assert_eq!(
+                final_incomplete(&[assistant(r.clone())], None),
+                None,
+                "{r:?}"
+            );
+        }
+        let continued = [
+            assistant(StopReason::Length),
+            user("tool result"),
+            assistant(StopReason::Stop),
+        ];
+        assert_eq!(final_incomplete(&continued, None), None);
+        assert_eq!(final_incomplete(&[], None), None);
     }
 }
