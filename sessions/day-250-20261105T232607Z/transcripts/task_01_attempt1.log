@@ -1,0 +1,332 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | head; git l…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,140p src/prompt/output_… ✓ (3ms)
+ ✓ (22ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 20,32p src/prompt/output_… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 155,200p src/prompt.rs; s… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=930 && NR<=990' src/pro… ✓ (4ms)
+  ▶ read src/prompt.rs:890..990 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn into_result\|enum Pr… ✓ (5ms)
+  ▶ read src/prompt.rs:200..260  ▶ read src/prompt.rs:1040..1080 ✓ (1ms)
+ ✓ (1ms)
+  ▶ read src/main.rs:330..380  ▶ read src/main.rs:630..690  ▶ read src/main.rs:960..1010 ✓ (0ms)
+ ✓ (1ms)
+ ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn stream_cut_short\|S… ✓ (19ms)
+  ▶ read src/prompt.rs:1300..1380 ✓ (0ms)
+  ▶ read src/main.rs:545..635 ✓ (0ms)
+  ▶ read src/main.rs:875..965 ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "stream_json\|exit_after… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 480,520p src/main.rs; sed… ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1930,2125p src/prompt.rs … ✓ (5ms)
+  ▶ read src/prompt.rs:2060..2120 ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "max_tokens" src/agent_b… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1620,1660p src/agent_buil… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,30p src/prompt/output_l… ✓ (7ms)
+  ▶ read src/prompt/output_limit.rs (32 lines) ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1200,1265p src/main_tests… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "exit_code_for_outcome(… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && perl -0pi -e 's/exit_code_for_ou… ✓ (14ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  27 tools completed in 1m 35s (27 ✓)
+
+Now the decision in output_limit.rs.
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/prompt/output_limit.rs (3 → 11 lines)
+  - //! exactly as streamed, and the exit code stays 0 by decision: a user who sets
+  - //! a low `max_tokens` on purpose would otherwise see every run fail.
+  + //! exactly as streamed.
+  + //!
+  + //! The exit code follows WHO SET THE LIMIT (@yuanhao's decision on #1026,
+  + //! 2026-11-03): a `max_tokens` the user set (flag or config, which is exactly
+  + //! when `agent.max_tokens` is `Some`) exits 0 with the note, because a user who
+  + //! sets a low limit on purpose would otherwise see every run fail; a limit the
+  + //! user never chose (a preset or the base request default) exits 1, because a
+  + //! script reading only stdout would take the cut answer as complete. A refusal
+  + //! exits 1 too: no answer was produced. `final_incomplete` reads the final
+  + //! stop, `incomplete_forces_failure` is the whole decision.
+    //!
+  ▶ edit src/prompt/output_limit.rs (15 → 53 lines)
+  - use yoagent::{AgentMessage, Message};
+  + use yoagent::{AgentMessage, Message, StopReason};
+  + 
+  + /// Why a run's final reply is not a complete answer (#1026). `None` on
+  + /// `PromptOutcome::incomplete` means the reply ended normally (or failed in a
+  + /// way another field already records).
+  + #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+  + pub enum Incomplete {
+  +     /// Cut at an output limit the user never chose (preset / base default).
+  +     OutputLimitDefault,
+  +     /// Cut at a `max_tokens` the user set by flag or config.
+  +     OutputLimitUserSet,
+  +     /// The model refused: no answer was produced.
+  +     Refusal,
+  + }
+  + 
+  + /// The exit-code half of the owner's decision on #1026: does this ending make
+  + /// the run a failure? Only a user-set limit is a chosen, complete-as-asked end.
+  + pub fn incomplete_forces_failure(incomplete: Option<Incomplete>) -> bool {
+  +     match incomplete {
+  ... (42 more lines)
+  ▶ edit src/prompt/output_limit.rs (2 → 3 lines)
+        let cut = final_stop_hit_output_limit(&messages);
+  +     state.incomplete = final_incomplete(&messages, max_tokens);
+        state.handle_agent_end(messages, model);
+ ✓ (16.3s)
+  - //! exactly as streamed, and the exit code stays 0 by decision: a user who sets
+  - //! a low `max_tokens` on purpose would otherwise see every run fail.
+  + //! exactly as streamed.
+  + //!
+  + //! The exit code follows WHO SET THE LIMIT (@yuanhao's decision on #1026,
+  + //! 2026-11-03): a `max_tokens` the user set (flag or config, which is exactly
+  + //! when `agent.max_tokens` is `Some`) exits 0 with the note, because a user who
+  + //! sets a low limit on purpose would otherwise see every run fail; a limit the
+  ... (5 more lines)
+ ✓ (32.6s)
+  - use yoagent::{AgentMessage, Message};
+  + use yoagent::{AgentMessage, Message, StopReason};
+  + 
+  + /// Why a run's final reply is not a complete answer (#1026). `None` on
+  + /// `PromptOutcome::incomplete` means the reply ended normally (or failed in a
+  + /// way another field already records).
+  + #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+  + pub enum Incomplete {
+  ... (13 more lines)
+ ✓ (48.7s)
+        let cut = final_stop_hit_output_limit(&messages);
+  +     state.incomplete = final_incomplete(&messages, max_tokens);
+        state.handle_agent_end(messages, model);
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 259,262p src/prompt.rs; g… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for l in 1527 1871 2818 3214 348… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/promp… (17 lines) ✓ (15ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 1m 10s (6 ✓)
+
+Now PromptEventState field, build_outcome calls, stream-json.
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && perl -0pi -e… (6 lines) ✓ (5.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -40 ✓ (4.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat; grep -n "Incomp… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 15,30p src/prompt/output_… ✓ (3ms)
+  ▶ edit src/prompt/output_limit.rs (3 → 11 lines)
+  - //! exactly as streamed, and the exit code stays 0 by decision: a user who sets
+  - //! a low `max_tokens` on purpose would otherwise see every run fail.
+  + //! exactly as streamed.
+  + //!
+  + //! The exit code follows WHO SET THE LIMIT (@yuanhao's decision on #1026,
+  + //! 2026-11-03): a `max_tokens` the user set (flag or config, which is exactly
+  + //! when `agent.max_tokens` is `Some`) exits 0 with the note, because a user who
+  + //! sets a low limit on purpose would otherwise see every run fail; a limit the
+  + //! user never chose (a preset or the base request default) exits 1, because a
+  + //! script reading only stdout would take the cut answer as complete. A refusal
+  + //! exits 1 too: no answer was produced. `final_incomplete` reads the final
+  + //! stop, `incomplete_forces_failure` is the whole decision.
+    //!
+ ✓ (16.5s)
+  - //! exactly as streamed, and the exit code stays 0 by decision: a user who sets
+  - //! a low `max_tokens` on purpose would otherwise see every run fail.
+  + //! exactly as streamed.
+  + //!
+  + //! The exit code follows WHO SET THE LIMIT (@yuanhao's decision on #1026,
+  + //! 2026-11-03): a `max_tokens` the user set (flag or config, which is exactly
+  + //! when `agent.max_tokens` is `Some`) exits 0 with the note, because a user who
+  + //! sets a low limit on purpose would otherwise see every run fail; a limit the
+  ... (5 more lines)
+  ▶ edit src/prompt/output_limit.rs (15 → 53 lines)
+  - use yoagent::{AgentMessage, Message};
+  + use yoagent::{AgentMessage, Message, StopReason};
+  + 
+  + /// Why a run's final reply is not a complete answer (#1026). `None` on
+  + /// `PromptOutcome::incomplete` means the reply ended normally (or failed in a
+  + /// way another field already records).
+  + #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+  + pub enum Incomplete {
+  +     /// Cut at an output limit the user never chose (preset / base default).
+  +     OutputLimitDefault,
+  +     /// Cut at a `max_tokens` the user set by flag or config.
+  +     OutputLimitUserSet,
+  +     /// The model refused: no answer was produced.
+  +     Refusal,
+  + }
+  + 
+  + /// The exit-code half of the owner's decision on #1026: does this ending make
+  + /// the run a failure? Only a user-set limit is a chosen, complete-as-asked end.
+  + pub fn incomplete_forces_failure(incomplete: Option<Incomplete>) -> bool {
+  +     match incomplete {
+  ... (42 more lines)
+ ✓ (16.5s)
+  - use yoagent::{AgentMessage, Message};
+  + use yoagent::{AgentMessage, Message, StopReason};
+  + 
+  + /// Why a run's final reply is not a complete answer (#1026). `None` on
+  + /// `PromptOutcome::incomplete` means the reply ended normally (or failed in a
+  + /// way another field already records).
+  + #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+  + pub enum Incomplete {
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 1m 3s (6 ✓)
+
+Now the stream-json path and interrupt.rs.
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 95,115p src/prompt/interr… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && perl -0pi -e… (5 lines) ✓ (10.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/p… (8 lines) ✓ (9.3s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 30.5s (3 ✓)
+
+Now the doc comment on exit_code_for_outcome, then tests.
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ read src/main.rs:318..348 ✓ (0ms)
+  ▶ edit src/main.rs (2 → 7 lines)
+    /// is a *request to resume* and a dead turn has nothing to resume from.
+  + ///
+  + /// `reply_incomplete` (#1026, @yuanhao's decision): the final reply was cut by
+  + /// an output limit the user never set, or refused — no complete answer, so 1.
+  + /// A cut under a user-set `max_tokens` is not passed as true here (exit 0 with
+  + /// the stderr note); `prompt::incomplete_forces_failure` decides that.
+    fn exit_code_for_outcome(
+ ✓ (15.9s)
+    /// is a *request to resume* and a dead turn has nothing to resume from.
+  + ///
+  + /// `reply_incomplete` (#1026, @yuanhao's decision): the final reply was cut by
+  + /// an output limit the user never set, or refused — no complete answer, so 1.
+  + /// A cut under a user-set `max_tokens` is not passed as true here (exit 0 with
+  + /// the stderr note); `prompt::incomplete_forces_failure` decides that.
+    fn exit_code_for_outcome(
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build --tests 2>&1 | grep … ✓ (17.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build … (24 lines) ✓ (31.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/\x… (23 lines) ✓ (16.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build --tests 2>&1 | tail … ✓ (15.6s)
+  ▶ read src/prompt.rs:3243..3293 ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && perl -0pi -e… (6 lines) ✓ (29.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (58 lines) ✓ (16ms)
+  ▶ read src/main_tests.rs:1236..1252 ✓ (0ms)
+  ▶ edit src/main_tests.rs (3 → 25 lines)
+            "a failed --output write outranks a triggered checkpoint"
+  +     );
+  + 
+  +     // #1026: a reply cut by a default limit, or refused, is no complete
+  +     // answer: 1 on its own, and it too outranks a checkpoint.
+  +     assert_eq!(exit_code_for_outcome(false, false, true, false), 1);
+  +     assert_eq!(
+  +         exit_code_for_outcome(false, false, true, true),
+  +         1,
+  +         "an incomplete reply outranks a triggered checkpoint"
+        );
+  +     assert_eq!(exit_code_for_outcome(true, true, true, true), 1);
+  +     // The ladder reads the DECISION, so the three Incomplete kinds route as
+  +     // the owner decided: user-set limit 0, default limit 1, refusal 1.
+  +     use crate::prompt::{incomplete_forces_failure, Incomplete};
+  +     for (incomplete, want) in [
+  +         (None, 0),
+  +         (Some(Incomplete::OutputLimitUserSet), 0),
+  +         (Some(Incomplete::OutputLimitDefault), 1),
+  +         (Some(Incomplete::Refusal), 1),
+  ... (5 more lines)
+ ✓ (4m 8s)
+            "a failed --output write outranks a triggered checkpoint"
+  +     );
+  + 
+  +     // #1026: a reply cut by a default limit, or refused, is no complete
+  +     // answer: 1 on its own, and it too outranks a checkpoint.
+  +     assert_eq!(exit_code_for_outcome(false, false, true, false), 1);
+  +     assert_eq!(
+  +         exit_code_for_outcome(false, false, true, true),
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -ln '"max_tokens"\|max_toke… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "max_tokens\|fn \|stop_r… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rln "output limit\|refused… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "output limit\|refused t… ✓ (5ms)
+  ▶ read tests/print_stdout_contract.rs:2390.. ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "print_stdout_contract\|… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/prompt.rs src/main.rs … ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 173,183p tests/print_stdo… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && perl -0pi -e… (5 lines) ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && perl -0pi -e… (53 lines) ✓ (12.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 300,312p tests/print_stdo… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (12 lines) ✓ (2.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> tests… (43 lines) ✓ (2.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/prompt/output_limit.rs /t… ✓ (20.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/prompt.rs /tmp/pr.bak && … ✓ (10.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -i "exit" docs/src/usage… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -i "exit\|output limit\|… ✓ (5ms)
+  ▶ read docs/src/usage/single-prompt.md ✓ (0ms)
+  ▶ edit docs/src/usage/single-prompt.md (1 → 14 lines)
+    unchanged. A script can tell a cut-off answer from a complete one, which exits 0.
+  + 
+  + ## Exit codes
+  + 
+  + | Code | Meaning |
+  + |------|---------|
+  + | 0 | The answer is complete. Also a reply cut off at a `max_tokens` **you** set (`--max-tokens` or `max_tokens` in `.yoyo.toml`): stderr carries `warning: reply stopped at the output limit (max_tokens = N)`, and you asked for that limit. |
+  + | 1 | No complete answer: the run failed (an API error, a dead turn, a failed `--output` write), **or** the reply was cut off at an output limit you never set (a model preset or the request default; stderr names "the model's default max_tokens"), **or** the model refused the request (stderr says `refused this request`). Whatever text was streamed stays on stdout. |
+  + | 2 | A `--context-strategy checkpoint` stop: the run asks to be resumed. A refused slash-command prompt (below) also exits 2. |
+  + | 130 / 143 | Interrupted by SIGINT / SIGTERM. |
+  + 
+  + A script that reads only stdout cannot see where a reply ended, which is why a cut at a
+  + limit nobody chose is a failure: the partial text would otherwise pass for the whole answer.
+  + The same codes apply to piped mode and to `--output-format json` / `stream-json`.
+ ✓ (0ms)
+    unchanged. A script can tell a cut-off answer from a complete one, which exits 0.
+  + 
+  + ## Exit codes
+  + 
+  + | Code | Meaning |
+  + |------|---------|
+  + | 0 | The answer is complete. Also a reply cut off at a `max_tokens` **you** set (`--max-tokens` or `max_tokens` in `.yoyo.toml`): stderr carries `warning: reply stopped at the output limit (max_tokens = N)`, and you asked for that limit. |
+  + | 1 | No complete answer: the run failed (an API error, a dead turn, a failed `--output` write), **or** the reply was cut off at an output limit you never set (a model preset or the request default; stderr names "the model's default max_tokens"), **or** the model refused the request (stderr says `refused this request`). Whatever text was streamed stays on stdout. |
+  ... (6 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && perl -0pi -e 's/The same codes a… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -i "exit code\|exits 0\|… ✓ (5ms)
+  ▶ read docs/src/usage/piped-mode.md:60..64 ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (9 lines) ✓ (16ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^max_tokens\|^provider\… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^\[" .yoyo.toml | head … ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 730,800p scripts/evolve.s… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pipefail\|^set -" scrip… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^[a-z_]*() {\|^function… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "run_agent_with_fallback… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for v in ASSESS_EXIT PLAN_EXIT R… ✓ (28ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2533,2580p scripts/evolve… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 781,800p scripts/evolve.s… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "exit_code" scripts/drea… ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 548,562p scripts/social.s… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && wc -l src/prompt.rs… ✓ (4m 7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (6m 19s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 605,614p tests/module_siz… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && perl -0pi -e 's/(    \/\/ \+1 Da… ✓ (334ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (9.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test module_size 2>… ✓ (19.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && perl -0pi -e 's/(    \/\/ Day 24… ✓ (9.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "exit.\{0,20\}0.\{0,30\…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "output_limit\|#1026" AR… ✓ (7ms)
+ ✓ (158ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  54 tools completed in 23m 46s (54 ✓)
+
+Mark that claim superseded in place.
+  ╭─ Turn 90 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (17 lines) ✓ (52ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit src/main.rs (1 → 3 lines)
+                response.last_api_error = cont_outcome.last_api_error;
+  +             // #1026: the last turn decides how the reply ended.
+  +             response.incomplete = cont_outcome.incomplete;
+
+  (interrupted)

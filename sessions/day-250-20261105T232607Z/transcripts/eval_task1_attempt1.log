@@ -1,0 +1,21 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "cont_outcome\|response.… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > sessio… (9 lines) ✓ (8ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 16.4s (2 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_1.md, and all four checks passed. I judged this from the diff plus one grep of src/main.rs. I didn't run the binary myself or re-run the tests; the harness reported build and tests green.
+
+• What it does: the exit code now follows who set the limit, as the owner decided on #1026. The final assistant stop reason is mapped to an Incomplete value through the existing classify_stop_reason, so nothing yoagent already provides was rebuilt. agent.max_tokens being set (by flag or config) counts as "the user chose the limit".
+• Exit codes: a cut under a limit the user set exits 0. A cut under a default limit exits 1, and so does a refusal. Failure still outranks the checkpoint code 2. Both the decision function and exit_code_for_outcome have table tests.
+• Last turn decides: in piped mode a continuation overwrites the earlier result (response.incomplete = cont_outcome.incomplete, main.rs:985).
+• Nothing left dangling: the new field is set in every place a PromptOutcome is built. Both retry loops, the interrupt path, the stream-json loop and all test literals were updated. Every enum variant is matched, and both new functions are called in the same diff.
+• Real-binary tests: stub-server tests cover -p, --print, piped stdin and stream-json. Each case checks the exit code and that the partial text stays on stdout.
+• Docs: single-prompt.md has a new exit-code table, piped-mode.md is updated to match, and ARCHITECTURE.md records that the old "exit 0 by decision" claim is superseded.
+
+The json/stream-json note (item 1) is still open on #1026, as the task intended. I didn't check the commit-body caller census or the required comment on #1026.
+  watch: no files changed this turn — skipping

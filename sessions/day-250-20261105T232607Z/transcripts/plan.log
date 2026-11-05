@@ -1,0 +1,44 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md; gh issue view 1026 --comm… ✓ (1.2s)
+  ▶ $ gh issue view 1114 --comments | tail -25; echo ----; gh issue view 1117 --commen… ✓ (1.9s)
+  ▶ $ grep -n 'agent_builder\|anthropic_preset\|providers.rs\|output_limit\|"src/main.… ✓ (9ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.26.8/src; grep -rn 'pub fn claude_' . | awk… ✓ (24ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null || cd /home/runner/work/yoyo-evolv… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n 'fn default_model_for_prov… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -ln 'max_tokens"\|"stop_reaso… ✓ (9ms)
+  ▶ $ curl -s https://openrouter.ai/api/v1/models | python3 -c " (8 lines) ✓ (101ms)
+  ▶ $ curl -s https://openrouter.ai/api/v1/models | python3 -c " (7 lines) ✓ (352ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat > /tmp/up.… (20 lines) ✓ (1.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue comme… (3 lines) ✓ (1.2s)
+  ▶ write session_plan/task_01.md (33 lines) ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n 'grok-4\b\|mistral-large-l… ✓ (16ms)
+  ▶ write session_plan/task_02.md (23 lines)  ▶ write session_plan/issue_responses.md (10 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; ls session_plan; git add session_p… ✓ (1ms)
+ ✓ (1ms)
+ ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  16 tools completed in 2m 38s (16 ✓)
+
+I've written two task files for this session and nothing is implemented yet. The commit step didn't go through: session_plan/ is gitignored, so git add refused it and nothing was committed. The files exist on disk (task_01.md, task_02.md, issue_responses.md), and the harness command ends in || true, so I left it there.
+
+Task 1 — Part of #1026 (product). This carries out @yuanhao's 2026-11-03 decision on exit codes for yoyo -p:
+• Cut off by a limit the user never set (a preset or the base default): exit 1.
+• Cut off by `max_tokens` the user set (flag or .yoyo.toml): exit 0 with the existing stderr note.
+• Refused by the model: exit 1.
+
+The task description points to where the work goes:
+• Who set the limit: the existing AgentConfig.max_tokens: Option<u32> already holds the answer, so nothing new has to be built.
+• The rule: a pure function in output_limit.rs.
+• Getting it out: one new field on PromptOutcome, read by exit_code_for_outcome.
+
+The task's first test is the real binary against a stub server for all three cases, plus a deliberate break that has to make the tests fail and is then undone. It also has to check which of the repo's scripts and workflows call yoyo -p. This repo sets max_tokens, so its own runs stay at exit 0 on a cut. A refusal in its own runs will now exit 1, and the commit has to say what each call site does with that. The json/stream-json note, the other half of the decision, stays open on #1026.
+
+Task 2 — Fixes #1119 (product). This closes one issue from the backlog, which has 14 open. The xai, mistral and zai defaults (grok-4, mistral-large-latest, glm-4-plus) either move to the models yoagent has presets for (grok-4.7, mistral-large-4, glm-5.3) or keep their current id with a reason written beside it. Either way the reason covers price and capability, and says that existing users without a configured model would silently move. One new test then checks every provider's default: it must either have a preset or be listed with a stated reason. The same task rewrites the OpenRouter default's outdated reason. The real reason now is price: $2/$10 per million tokens against $3/$15 for the older Sonnet 4.6.
+
+Done during planning:
+• Filed #1141, which asks yoagent for the five Claude models #1117 still needs (opus-4.7, opus-4.6, opus-4.5, sonnet-4.5, opus-4.1). The request includes the context window, output limit and prices OpenRouter publishes for each. yoyo builds every Anthropic preset from a yoagent constructor, so adding these by hand would start a second table that drifts.
+• Commented on #1117 to update its scope and point to #1141.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
