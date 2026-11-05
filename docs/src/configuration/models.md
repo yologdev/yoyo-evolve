@@ -37,12 +37,12 @@ Use `--provider <name>` to select a provider. Each provider has a default model 
 | `google` | `gemini-3.8-flash` | `GEMINI_API_KEY` or `GOOGLE_API_KEY` |
 | `openrouter` | `anthropic/claude-sonnet-5.5` | `OPENROUTER_API_KEY` |
 | `ollama` | `llama3.2` | *(none — local)* |
-| `xai` | `grok-3` | `XAI_API_KEY` |
+| `xai` | `grok-4.7` | `XAI_API_KEY` |
 | `groq` | `llama-3.3-70b-versatile` | `GROQ_API_KEY` |
-| `deepseek` | `deepseek-chat` | `DEEPSEEK_API_KEY` |
-| `mistral` | `mistral-large-latest` | `MISTRAL_API_KEY` |
+| `deepseek` | `deepseek-v4-pro` | `DEEPSEEK_API_KEY` |
+| `mistral` | `mistral-large-4` | `MISTRAL_API_KEY` |
 | `cerebras` | `llama-3.3-70b` | `CEREBRAS_API_KEY` |
-| `zai` | `glm-4-plus` | `ZAI_API_KEY` |
+| `zai` | `glm-5.3` | `ZAI_API_KEY` |
 | `minimax` | `MiniMax-M2.7` | `MINIMAX_API_KEY` |
 | `custom` | `claude-opus-5-5` | *(none — bring your own)* |
 

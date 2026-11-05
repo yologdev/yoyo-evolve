@@ -303,12 +303,28 @@ pub fn default_model_for_provider(provider: &str) -> String {
         // and its request default fits the declared ceiling (65,536). The old
         // `gemini-2.5-flash` has no yoagent preset, so it ran on guessed limits.
         "google" => "gemini-3.8-flash".into(),
-        // #1037 (Day 247): OpenRouter lists Anthropic ids with dots only, and
-        // sonnet-5.5 is listed there AND has an anthropic preset, so it runs on
-        // real limits. (`claude-sonnet-4.6` had no preset then; #1116 added one.)
+        // #1037 (Day 247): OpenRouter lists Anthropic ids with dots only.
+        // Both sonnet-5.5 and sonnet-4.6 now map onto an anthropic preset
+        // (#1116), so limits no longer separate them; the reason sonnet-5.5
+        // stays is price: OpenRouter lists it at $2/$10 per M in/out against
+        // sonnet-4.6's $3/$15 (its /api/v1/models, read 2026-11-05).
         "openrouter" => "anthropic/claude-sonnet-5.5".into(),
+        // No preset by nature: a user-run server, limits come from it (#1119,
+        // `DEFAULT_WITHOUT_PRESET` in this file's tests holds the reason).
         "ollama" => "llama3.2".into(),
-        "xai" => "grok-4".into(),
+        // #1119 (Day 250): `grok-4.7` over the old `grok-4`, by the three
+        // checks: `vendor_preset` matches it exactly (500K window, 64K
+        // output; xAI publishes no output cap, so there is no ceiling to
+        // exceed), and the bundled table prices it at $2/$6 per M (yoagent's
+        // preset; $4/$12 for a prompt of 200K or more, +10% on us.api.x.ai).
+        // `grok-4` had no preset: it ran on a guessed 128K / 4096-output
+        // config, which cuts a long file write short, and /cost billed it
+        // at an estimated $3/$15. So the move is cheaper AND gives real
+        // limits. A user with `provider = "xai"` and no `model` silently
+        // moves to grok-4.7; `--model grok-4` still reaches the old one.
+        "xai" => "grok-4.7".into(),
+        // No preset by necessity: yoagent ships none for any groq id, so the
+        // default runs on guessed limits and says so (#1119, `DEFAULT_WITHOUT_PRESET`).
         "groq" => "llama-3.3-70b-versatile".into(),
         // The default stays `deepseek-v4-pro` on purpose. `deepseek-flash`
         // (V4.1-Flash) is where requests are routed from 2026-09-14, so promoting
@@ -319,11 +335,38 @@ pub fn default_model_for_provider(provider: &str) -> String {
         // decision and is not bundled into a lookup-table fix (the module-size
         // task's own lesson about widening a verified narrow change).
         "deepseek" => "deepseek-v4-pro".into(),
-        "mistral" => "mistral-large-latest".into(),
+        // #1119 (Day 250): `mistral-large-4` over `mistral-large-latest`.
+        // It has a `vendor_preset` (1M window, 32K output; Mistral publishes
+        // no output cap) and a bundled price of $0.70/$2.10 per M, against
+        // the $0.50/$1.50 yoyo's table bills any `mistral-large*` id. So this
+        // costs a no-config user more, and it is a Public Preview model. Why
+        // move anyway: the alias ran on a guessed 4096-token output limit,
+        // too small for a coding agent's file writes, and Mistral's models
+        // page (read 2026-11-05) lists Mistral Large 3 (`mistral-large-2512`)
+        // as deprecated since 2026-10-31, retiring 2027-04-30, with Large 4
+        // named as its replacement. Users with `provider = "mistral"` and no
+        // `model` silently move; `--model mistral-large-latest` still works.
+        "mistral" => "mistral-large-4".into(),
+        // No preset by necessity: yoagent ships none for any cerebras id, so the
+        // default runs on guessed limits and says so (#1119, `DEFAULT_WITHOUT_PRESET`).
         "cerebras" => "llama-3.3-70b".into(),
-        "zai" => "glm-4-plus".into(),
+        // #1119 (Day 250): `glm-5.3`, Z.ai's current flagship, over the
+        // 2024 flagship `glm-4-plus`. It has a `vendor_preset` (1M window,
+        // 128K output, Z.ai's published cap) and a bundled price of
+        // $1.40/$4.40 per M against glm-4-plus's $0.70/$0.70 in yoyo's table,
+        // so output costs a no-config user ~6x more, and GLM-5.3 always
+        // reasons. Why move anyway: glm-4-plus ran on a guessed 4096-token
+        // output limit, and it is absent from Z.ai's pricing page (read
+        // 2026-11-05), so it may not be served at all. A cheaper preset
+        // exists (`glm-5.3-flash`, $0.15/$0.50) for users who pick it.
+        // Users with `provider = "zai"` and no `model` silently move.
+        "zai" => "glm-5.3".into(),
+        // No preset by necessity: yoagent ships none for any minimax id, so the
+        // default runs on guessed limits and says so (#1119, `DEFAULT_WITHOUT_PRESET`).
         "minimax" => "MiniMax-M2.7".into(),
         "bedrock" => "anthropic.claude-sonnet-4-6".into(),
+        // No preset by necessity: yoagent ships none for any github id, so the
+        // default runs on guessed limits and says so (#1119, `DEFAULT_WITHOUT_PRESET`).
         "github" => "openai/gpt-4o".into(),
         // The anthropic (and unknown-provider) default is `claude-opus-5-5` by
         // decision, checked Day 230 (#1037) rather than picked as "newest": it has
@@ -370,6 +413,69 @@ pub fn unknown_provider_refusal(provider: &str, base_url_given: bool) -> Option<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #1119: providers whose built-in default runs WITHOUT a preset, each
+    /// with the reason in user terms. Every other provider's default must
+    /// resolve through one (checked by the guessed-limits warning's own
+    /// predicate, so this test and that warning agree on what "has a preset"
+    /// means). A row whose provider gains a preset fails too, so a reason
+    /// cannot outlive its premise (the openrouter "(had no preset then)" shape).
+    const DEFAULT_WITHOUT_PRESET: &[(&str, &str)] = &[
+        ("ollama", "user-run server: the model is whatever the user pulled, and limits come from that server"),
+        ("custom", "user-run server: the user names the model their endpoint serves; no vendor preset can describe it"),
+        ("groq", "yoagent ships no preset for any groq id, so no default could resolve through one"),
+        ("cerebras", "yoagent ships no preset for any cerebras id, so no default could resolve through one"),
+        ("minimax", "yoagent ships no preset for any minimax id, so no default could resolve through one"),
+        ("github", "yoagent ships no preset for any github-models id, so no default could resolve through one"),
+    ];
+
+    #[test]
+    fn every_provider_default_has_a_preset_or_a_stated_reason() {
+        use crate::model_limits_note::{runs_on_guessed_limits, USER_RUN_SERVER_PROVIDERS};
+        let mut failures = Vec::new();
+        for p in KNOWN_PROVIDERS {
+            let model = default_model_for_provider(p);
+            // The warning's predicate is silent for user-run servers by
+            // construction, so they cannot count as "has a preset".
+            let has_preset =
+                !USER_RUN_SERVER_PROVIDERS.contains(p) && !runs_on_guessed_limits(p, &model);
+            let reason = DEFAULT_WITHOUT_PRESET
+                .iter()
+                .find(|(q, _)| q == p)
+                .map(|(_, r)| *r);
+            match (has_preset, reason) {
+                (true, None) => {}
+                (false, Some(r)) if !r.trim().is_empty() => {}
+                (false, _) => failures.push(format!(
+                    "{p}: default '{model}' has no preset and no stated reason"
+                )),
+                (true, Some(_)) => failures.push(format!(
+                    "{p}: default '{model}' now has a preset; drop its DEFAULT_WITHOUT_PRESET row"
+                )),
+            }
+        }
+        // Every table row names a provider the code knows (no dead rows).
+        for (q, _) in DEFAULT_WITHOUT_PRESET {
+            if !KNOWN_PROVIDERS.contains(q) {
+                failures.push(format!("{q}: not in KNOWN_PROVIDERS"));
+            }
+        }
+        assert!(failures.is_empty(), "{failures:#?}");
+    }
+
+    /// #1119: each moved default is a model the provider's own known list
+    /// names, so the Unknown-model warning never fires on a no-config run.
+    #[test]
+    fn every_provider_default_is_a_known_model() {
+        // `custom` has no known list: any id is the user's own.
+        for p in KNOWN_PROVIDERS.iter().filter(|p| **p != "custom") {
+            let model = default_model_for_provider(p);
+            assert!(
+                model_is_known_for_provider(p, &model),
+                "{p}: default '{model}' is not a known model"
+            );
+        }
+    }
 
     #[test]
     fn unknown_provider_refusal_table() {

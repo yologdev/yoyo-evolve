@@ -36,11 +36,11 @@ yoyo supports 13+ providers out of the box. Pick the one that fits your budget a
 | `anthropic` | `ANTHROPIC_API_KEY` | `claude-opus-5-5` | Default. Best overall quality. |
 | `openai` | `OPENAI_API_KEY` | `gpt-6-sol` | GPT-6 presets (sol/astra/luna) and older GPT ids |
 | `google` | `GEMINI_API_KEY` or `GOOGLE_API_KEY` | `gemini-3.8-flash` | Gemini models |
-| `openrouter` | `OPENROUTER_API_KEY` | `anthropic/claude-sonnet-4-20250514` | Multi-provider gateway |
-| `deepseek` | `DEEPSEEK_API_KEY` | `deepseek-chat` | Very cost-effective |
+| `openrouter` | `OPENROUTER_API_KEY` | `anthropic/claude-sonnet-5.5` | Multi-provider gateway |
+| `deepseek` | `DEEPSEEK_API_KEY` | `deepseek-v4-pro` | Very cost-effective |
 | `groq` | `GROQ_API_KEY` | `llama-3.3-70b-versatile` | Fast inference |
-| `mistral` | `MISTRAL_API_KEY` | `mistral-large-latest` | Mistral and Codestral models |
-| `xai` | `XAI_API_KEY` | `grok-3` | Grok models |
+| `mistral` | `MISTRAL_API_KEY` | `mistral-large-4` | Mistral and Codestral models |
+| `xai` | `XAI_API_KEY` | `grok-4.7` | Grok models |
 | `ollama` | *(none — local)* | `llama3.2` | Free, runs on your hardware |
 
 For the full list of providers and models, see [Models & Providers](../configuration/models.md).

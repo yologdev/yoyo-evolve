@@ -42,10 +42,10 @@ yoyo supports multiple AI providers out of the box. Use the `--provider` flag to
 | OpenAI | `--provider openai` | `gpt-6-sol` | `OPENAI_API_KEY` |
 | Google/Gemini | `--provider google` | `gemini-3.8-flash` | `GEMINI_API_KEY` or `GOOGLE_API_KEY` |
 | OpenRouter | `--provider openrouter` | `anthropic/claude-sonnet-5.5` | `OPENROUTER_API_KEY` |
-| xAI | `--provider xai` | `grok-3` | `XAI_API_KEY` |
+| xAI | `--provider xai` | `grok-4.7` | `XAI_API_KEY` |
 | Groq | `--provider groq` | `llama-3.3-70b-versatile` | `GROQ_API_KEY` |
-| DeepSeek | `--provider deepseek` | `deepseek-chat` | `DEEPSEEK_API_KEY` |
-| Mistral | `--provider mistral` | `mistral-large-latest` | `MISTRAL_API_KEY` |
+| DeepSeek | `--provider deepseek` | `deepseek-v4-pro` | `DEEPSEEK_API_KEY` |
+| Mistral | `--provider mistral` | `mistral-large-4` | `MISTRAL_API_KEY` |
 | Cerebras | `--provider cerebras` | `llama-3.3-70b` | `CEREBRAS_API_KEY` |
 | Ollama | `--provider ollama` | `llama3.2` | *(none needed)* |
 | Custom | `--provider custom` | *(none)* | *(none needed)* |

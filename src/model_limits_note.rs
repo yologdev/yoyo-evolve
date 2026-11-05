@@ -376,9 +376,11 @@ context_window in .yoyo.toml (or pass --max-tokens / --context-window).",
         // bedrock's on 200K / 16000 for every id.
         // Day 247 (#1037): `openrouter` left: its default is now the dotted
         // `anthropic/claude-sonnet-5.5`, mapped onto the anthropic preset.
-        let mut expected = vec![
-            "xai", "groq", "mistral", "github", "zai", "cerebras", "minimax",
-        ];
+        // Day 250 (#1119): xai, mistral and zai moved to preset ids and left
+        // (shrank by exactly those three). The four left carry their reason
+        // in `providers.rs`'s `DEFAULT_WITHOUT_PRESET`: yoagent ships no
+        // preset for any of their ids.
+        let mut expected = vec!["groq", "github", "cerebras", "minimax"];
         expected.sort_unstable();
         assert_eq!(
             tripping, expected,
@@ -395,6 +397,9 @@ means its default trips the guessed-limits warning (#1037)"
             "deepseek",
             "openrouter",
             "bedrock",
+            "xai",
+            "mistral",
+            "zai",
         ] {
             assert!(!tripping.contains(&silent), "{silent}");
         }
