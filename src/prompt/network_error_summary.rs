@@ -88,11 +88,15 @@ pub(crate) fn hint_for_surface(diagnostic: String, single_shot: bool) -> String 
 
 /// The billing hint's options (#1128). The REPL keeps its slash commands; a
 /// single-shot run (`-p`, piped) cannot type them, so it is told the flags.
+/// The REPL's local option is `/provider ollama`, not `/model ollama/...`
+/// (#1139): `/model` keeps the exhausted provider and only swaps the id,
+/// while `handle_provider_switch` sets the provider AND resets the model to
+/// `default_model_for_provider("ollama")`, the same llama3.2 the flags name.
 pub(crate) fn billing_options(provider: &str, single_shot: bool) -> String {
     let (switch, local) = if single_shot {
         ("--provider <name>", "--provider ollama --model llama3.2")
     } else {
-        ("/provider <name>", "/model ollama/llama3")
+        ("/provider <name>", "/provider ollama")
     };
     format!(
         "\n  Options:\n    \
@@ -240,7 +244,7 @@ mod tests {
     const REPL_BILLING_OPTIONS: &str = "\n  Options:\n    \
         • Add credits or raise your spending limit in the anthropic dashboard\n    \
         • Switch to a different provider: /provider <name>\n    \
-        • Use a local model: /model ollama/llama3";
+        • Use a local model: /provider ollama";
 
     fn for_surface(raw: &str, single_shot: bool) -> String {
         let d = crate::prompt_retry::diagnose_api_error_for(raw, MODEL, single_shot).unwrap();
@@ -258,13 +262,31 @@ mod tests {
     }
 
     #[test]
-    fn repl_billing_hint_is_byte_identical() {
+    fn repl_billing_hint_names_a_command_that_switches_provider() {
         let d = for_surface(BILLING, false);
         assert!(d.ends_with(REPL_BILLING_OPTIONS), "{d}");
+        assert_eq!(billing_options("anthropic", false), REPL_BILLING_OPTIONS);
         assert_eq!(
             crate::prompt_retry::diagnose_api_error(BILLING, MODEL).unwrap(),
             d
         );
+        // #1139: `/model ollama/llama3` stayed on the exhausted provider.
+        assert!(
+            !d.contains("ollama/llama3") && !d.contains("/model ollama"),
+            "{d}"
+        );
+    }
+
+    /// #1139: the REPL hint's command really lands on a local model. The
+    /// switch handler refuses providers outside KNOWN_PROVIDERS and otherwise
+    /// resets the model to the provider default, which must be the model the
+    /// single-shot hint names, so both surfaces send the user to one place.
+    #[test]
+    fn repl_local_option_resolves_to_the_single_shot_model() {
+        assert!(crate::providers::KNOWN_PROVIDERS.contains(&"ollama"));
+        let model = crate::providers::default_model_for_provider("ollama");
+        assert_eq!(model, "llama3.2");
+        assert!(billing_options("x", true).ends_with(&format!("--provider ollama --model {model}")));
     }
 
     #[test]
