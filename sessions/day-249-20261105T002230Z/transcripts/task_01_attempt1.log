@@ -1,0 +1,165 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh… ✓ (167ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; ls tests/common; head -60 tests/co… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rln "fn .*scrub\|fn hermetic…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; ls /etc/ssl/ce… (14 lines) ✓ (7ms)
+ ✓ (42.0s)
+  ▶ $ cd ~/.cargo/registry/src/index.crates.io-*/; ls -d rustls-native-certs* rustls-p… ✓ (10ms)
+  ▶ $ cd ~/.cargo/registry/src/index.crates.io-*/rustls-native-certs-0.8.4/src; grep -… ✓ (5ms)
+  ▶ $ cd ~/.cargo/registry/src/index.crates.io-*/rustls-native-certs-0.8.4/src; sed -n… ✓ (9ms)
+  ▶ $ cd ~/.cargo/registry/src/index.crates.io-*/; grep -rn "No CA certificates were l… ✓ (24ms)
+  ▶ $ cd ~/.cargo/registry/src/index.crates.io-*/; sed -n 60,130p rustls-platform-veri… ✓ (8ms)
+  ▶ $ cd /tmp/tmp.5WyGHecZUH; mkdir -p garbdir; cp garbage garbdir… (11 lines) ✓ (21.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; wc -l src/main.rs; grep -n "^mod \… ✓ (22ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "fn main\|try_dispatch_sub… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1255,1450p src/main.rs; gre… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "try_dispatch_subcommand(… ✓ (18ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "main" tests/module_size.r… ✓ (8ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/Cargo.toml (1 → 8 lines)
+  + # #1138: the TLS pre-flight asks the SAME loader reqwest's platform verifier
+  + # uses on these targets whether SSL_CERT_FILE / SSL_CERT_DIR load any CA cert,
+  + # so yoyo refuses exactly the env that would panic and nothing else. Already
+  + # in Cargo.lock transitively (rustls-platform-verifier -> rustls-native-certs).
+  + [target.'cfg(all(unix, not(target_vendor = "apple"), not(target_os = "android")))'.dependencies]
+  + rustls-native-certs = "0.8"
+  + 
+    [dev-dependencies]
+ ✓ (5m 7s)
+  + # #1138: the TLS pre-flight asks the SAME loader reqwest's platform verifier
+  + # uses on these targets whether SSL_CERT_FILE / SSL_CERT_DIR load any CA cert,
+  + # so yoyo refuses exactly the env that would panic and nothing else. Already
+  + # in Cargo.lock transitively (rustls-platform-verifier -> rustls-native-certs).
+  + [target.'cfg(all(unix, not(target_vendor = "apple"), not(target_os = "android")))'.dependencies]
+  + rustls-native-certs = "0.8"
+  + 
+    [dev-dependencies]
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/src/tls_preflight.rs (418 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "^mod tool_truncate;\|^mod… ✓ (2m 26s)
+ ✗ (2m 25s)
+    │ Command timed out after 120s. Output so far:
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/main.rs (1 → 2 lines)
+  + mod tls_preflight;
+    mod tool_truncate;
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/main.rs (3 → 12 lines)
+        if !apply_config_flags(&config) {
+            return;
+  +     }
+  + 
+  +     // #1138: an SSL_CERT_FILE / SSL_CERT_DIR that loads zero CA certificates
+  +     // makes the provider's `reqwest::Client::new()` panic mid-turn. Shell
+  +     // subcommands were dispatched inside `parse_args`, so only agent paths
+  +     // (REPL, -p, piped) reach here; refuse before the wizard or any agent.
+  +     if let Some(msg) = tls_preflight::preflight_ca_env() {
+  +         eprintln!("{msg}");
+  +         std::process::exit(1);
+        }
+ ✓ (21.9s)
+  + mod tls_preflight;
+    mod tool_truncate;
+ ✓ (43.7s)
+        if !apply_config_flags(&config) {
+            return;
+  +     }
+  + 
+  +     // #1138: an SSL_CERT_FILE / SSL_CERT_DIR that loads zero CA certificates
+  +     // makes the provider's `reqwest::Client::new()` panic mid-turn. Shell
+  +     // subcommands were dispatched inside `parse_args`, so only agent paths
+  +     // (REPL, -p, piped) reach here; refuse before the wizard or any agent.
+  ... (4 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "mod tls_preflight\|mod to… ✓ (20ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -i '204s/^mod tool_truncate;$/… ✓ (9ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  22 tools completed in 12m 26s (21 ✓, 1 ✗)
+
+Now the real-binary test.
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/tests/tls_ca_env.rs (81 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt && cargo build 2>&1 | ta… ✓ (24.4s)
+ ✓ (1m 26s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -i 's/load… (9 lines) ✓ (48.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/tls_pre… (6 lines) ✓ (39.4s)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 3m 11s (4 ✓)
+
+Positive control reddened with the real reqwest panic in stderr; restored and green. Now the docs entry.
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "^#" docs/src/troubleshoot… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 36,60p docs/src/troubleshoo… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /tmp/tmp.5WyGHecZUH; rm -rf rp; mkdir rp; cd rp; git init -q; echo a>f; git a… ✓ (35ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "build_agent()\|build_sid… ✓ (26ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "build_agent()\|build_sid… ✓ (27ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "AgentConfig\|agent_config… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1110,1147p src/dispatch_sub… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 160,185p src/commands_git_r… ✓ (5ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands_git_review.rs (3 → 11 lines)
+        let prompt = build_review_prompt(&label, &content, effort);
+  + 
+  +     // #1138: `yoyo review` is the one shell verb that builds a model agent
+  +     // (it skips main's pre-flight), so it refuses a CA env that would make the
+  +     // provider client panic, here where it is about to build one.
+  +     if let Some(msg) = crate::tls_preflight::preflight_ca_env() {
+  +         eprintln!("{msg}");
+  +         return Err("no CA certificates could be loaded".to_string());
+  +     }
+    
+        // Build a side agent — one-shot, no tools, concise
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo build 2>&1 | grep -E "^error… ✓ (5m 17s)
+        let prompt = build_review_prompt(&label, &content, effort);
+  + 
+  +     // #1138: `yoyo review` is the one shell verb that builds a model agent
+  +     // (it skips main's pre-flight), so it refuses a CA env that would make the
+  +     // provider client panic, here where it is about to build one.
+  +     if let Some(msg) = crate::tls_preflight::preflight_ca_env() {
+  +         eprintln!("{msg}");
+  +         return Err("no CA certificates could be loaded".to_string());
+  ... (3 more lines)
+ ✗ (5m 17s)
+    │ Command timed out after 300s. Output so far:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (65 lines) ✓ (8.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/commands_git_review.rs /tmp… ✓ (34.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/commands_git_review.rs /tmp… ✓ (13.0s)
+
+────────────────────────────────────────────────────────────────────────────────
+  13 tools completed in 7m 14s (12 ✓, 1 ✗)
+
+Both controls redden with the real reqwest panic; restored (0 NEUTERED markers). Now the docs entry.
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/troubleshooting/common-issues.md (1 → 15 lines)
+  + ## "error: no CA certificates could be loaded"
+  + 
+  + ```
+  + error: no CA certificates could be loaded, so yoyo cannot open any HTTPS connection (including to the model provider).
+  +   SSL_CERT_FILE is "/etc/corp/ca.pem", which is empty.
+  + Point SSL_CERT_FILE at a PEM CA bundle, or unset it.
+  + ```
+  + 
+  + **Cause:** on Linux, when `SSL_CERT_FILE` or `SSL_CERT_DIR` is set, yoyo's HTTPS client trusts *only* the certificates in those paths, not the system store. If they load none (the file is missing, empty, a directory, or holds no PEM `-----BEGIN CERTIFICATE-----` block; the directory is missing, empty, or holds no PEM files), every connection would fail, even to an `http://` local model. Corporate-proxy setups often set these variables. Before this check, yoyo crashed mid-turn with a `panicked at… [yoyo: 68 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + yoyo now refuses with this message and **exit code 1** before any agent is built (REPL, `yoyo -p`, piped input, `yoyo review`). It asks the same certificate loader the HTTPS client uses, so it only refuses when *nothing* loads: a bad `SSL_CERT_FILE` next to a working `SSL_CERT_DIR` (or the reverse) is left alone, because it works. Other commands (`yoyo doctor`, `yoyo grep`, ...) are not affected.
+  + 
+  + **Fix:** point the named variable at a real PEM CA bundle (often `/etc/ssl/certs/ca-certificates.crt`, or the bundle your IT team gave you) or a directory of PEM certificates, or `unset SSL_CERT_FILE SSL_CERT_DIR` to use the system store. On macOS and Windows yoyo's HTTPS client does not read these variables, so the check does not run there.
+  + 
+    ## "No API key found"
+ ✓ (2ms)
+  + ## "error: no CA certificates could be loaded"
+  + 
+  + ```
+  + error: no CA certificates could be loaded, so yoyo cannot open any HTTPS connection (including to the model provider).
+  +   SSL_CERT_FILE is "/etc/corp/ca.pem", which is empty.
+  + Point SSL_CERT_FILE at a PEM CA bundle, or unset it.
+  + ```
+  + 
+  ... (7 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt -- --check && cargo clip… ✓ (25.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 590 cargo test 2>&1 | grep… ✓ (4m 52s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 590 cargo test 2>&1 | grep…
+  (interrupted)
+

@@ -1,0 +1,30 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls target/debug/yoyo && t=$(mkte… ✓ (9.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p ses… (9 lines) ✓ (13ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 28.8s (2 ✓)
+
+Verdict: PASS. I've written it to session_plan/eval_task_1.md.
+
+I ran the built binary on three cases:
+
+• Empty `SSL_CERT_FILE`: exits 1 before any agent is built. The message names SSL_CERT_FILE, gives the path, says "which is empty", and tells the user to point it at a PEM CA bundle or unset it. There's no panic line and no "reply cut off".
+• Missing `SSL_CERT_FILE` with a valid `SSL_CERT_DIR=/etc/ssl/certs`: not refused. It carries on into prompt mode, which matches the task's rule that a setup that works must not be refused.
+• `yoyo grep` with a bad CA env: runs normally with no CA message, so shell subcommands are unaffected.
+
+All four checklist lines are PASS:
+
+• Intent: the decision to refuse comes from asking rustls-native-certs (the same certificate loader reqwest uses) how many certificates load. It refuses only when that count is zero, which is exactly when the panic happens. The pure function's tests include one full-string assert_eq! row, and the "must not refuse" rows return None.
+• Touchpoints: every new function and enum variant is used somewhere in the diff. There's a mod line in main.rs and two call sites.
+• Docs: common-issues.md has a new entry with the message, the cause and the fix.
+• Product surface: the refusal fires only when one of these variables is set and loads nothing, a case that already crashed. With the variables unset, or set to a valid bundle, nothing changes.
+
+Two things went beyond the task's file list, and I think both are fine:
+
+• `src/commands_git_review.rs`: yoyo review builds its own model agent and never reaches the check in main.rs, so it needed its own call. A real-binary test in tests/tls_ca_env.rs covers it.
+• `rustls-native-certs` added to `Cargo.toml`: it was already in Cargo.lock as an indirect dependency, so the build pulls in nothing new.
+  watch: no files changed this turn — skipping

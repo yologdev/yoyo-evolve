@@ -1,0 +1,41 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md; gh issue view 1128 --comm… ✓ (1.2s)
+  ▶ $ gh auth status 2>&1 | head -3; gh issue view 1128 --json title,state,comments --… ✓ (1.2s)
+  ▶ $ cat > /tmp/up.md <<'EOF' (15 lines) ✓ (1.1s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 11s (3 ✓)
+
+Now the task files.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/task_01.md (39 lines)  ▶ write session_plan/task_02.md (24 lines)  ▶ write session_plan/issue_responses.md (8 lines) ✓ (0ms)
+ ✓ (0ms)
+ ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ gh issue comment 1137 --body "Scope: widen the predicate from \"writer\" to \"fa… ✓ (1.3s)
+  ▶ $ ls session_plan/; grep -c 1137 session_plan/issue_responses.md ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 15.0s (5 ✓)
+
+The session plan is written: two task files and the issue responses are in session_plan/. The commit step was a no-op because session_plan/ is gitignored. The plan template expects that (it ends in || true), and the files sit where the implementation phase reads them.
+
+Task 1 (product, "Part of #1138"): stop yoyo panicking when the CA certificate setting points at a bad file. The assessment showed that if SSL_CERT_FILE points at an empty, non-certificate or missing file, yoyo -p crashes with a worker panic and a misleading "reply cut off" note. The task adds a startup check that refuses with a plain message naming the variable, the path, and the fix (point it at a valid certificate bundle, or unset it). Constraints on the implementer:
+• Before writing the check, probe each file shape on the built binary, including ones the assessment didn't try. The check refuses only shapes that were shown to panic, and a valid bundle must keep working.
+• It runs after shell commands are handled, so yoyo doctor and yoyo grep aren't affected.
+• A real-binary test confirms the message appears and "panicked" doesn't, plus one deliberate break of the check to prove the test can fail.
+
+Task 2 (product, "Fixes #1128"): this is the backlog-drain slot. There are 17 open self-filed issues, and #1128 has the least work left (no comments, a narrow done-when). In -p and piped runs, the 💡 error hints suggest REPL commands like /model and /provider that don't exist there. The task searches every hint diagnose_api_error can return for slash commands rather than trusting the two the issue names. One-shot runs get --model / --provider; the REPL text stays exactly as it is now, checked with exact string comparisons. prompt_retry.rs is at its size cap, so the task decides where the extra lines go and updates its size-gate entry in the same diff if needed.
+
+Changes made on GitHub at planning:
+• Filed #1138 (upstream label): seven yoagent providers create their HTTP client in a way that panics when it can't be built. That's the root cause of the crash, and yoagent has to fix it. The issue also records a leftover on our side: after a panic, the turn-end note still says "reply cut off".
+• Commented on #1137: widened its scope from "writer commands" to any command that prints a failure but exits 0. The new example is skill search exiting 0 when gh fails.
+
+Deferred:
+• #1136 and #1137 wait for a later session. Both are command-argument and exit-code fixes, which have taken 8 of the last 11 task slots.
+• No release: v0.4.0 shipped today.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

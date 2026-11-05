@@ -1,0 +1,26 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || true; awk '/fn diagn… ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; awk '/fn auth_failure_message/,/^}… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; mkdir -p sessi… (9 lines) ✓ (13ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 16.5s (3 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_2.md, and all four checks pass. I judged the diff and the commit message and did not run the binary myself. I relied on the harness's passing build and tests and on the real-binary run recorded in the commit.
+
+• What the task asked: I read the diff. Every 💡 hint that named a REPL command now has a separate single-shot wording:
+  • Billing / quota: tells -p and piped users to use --provider <name> and --provider ollama --model llama3.2.
+  • Model not found: single-shot reads Switch with: --model X.
+
+  The REPL wording is unchanged, and the tests pin it to the old full text. Everything goes through one function that takes the surface as a parameter, using the existing is_single_shot() check, so there is no second way of deciding the surface.
+• Fix beyond the two named hints: three of the five places in src/prompt.rs that print these hints called diagnose_api_error directly. On -p they skipped even the earlier /retry removal (#1115). All five now go through surface_diagnosis.
+• Census: I grepped the bodies of diagnose_api_error_for and auth_failure_message and found no other slash commands. The commit's count is "3 of 8 hint branches carried a REPL command"; the third is the network hint's /retry, which #1115 already handled.
+• Nothing left unused: every new function is called in production code in this diff. The old diagnose_api_error is now test-only, all of its production callers were switched over, and its import was removed. prompt_retry.rs shrank by one line and its size-gate entry was lowered to 2792 to match.
+• Docs: no page in docs/src or README.md quotes these hints, so none needed updating.
+• Product surface: only the hint text changes, and only on single-shot runs. No defaults, flags or startup behaviour changed.
+
+The commit also files #1139 for something outside this task's scope: the unchanged REPL advice /model ollama/llama3 sets that literal model id on the provider that just ran out of credit, so the REPL hint is wrong too.
+  watch: no files changed this turn — skipping
