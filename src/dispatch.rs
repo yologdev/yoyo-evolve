@@ -1178,7 +1178,8 @@ pub(crate) async fn dispatch_command(ctx: &mut DispatchContext<'_>) -> CommandRe
             CommandResult::Continue
         }
         CommandRoute::Init => {
-            commands::handle_init();
+            // The exit status is the shell's business, never the REPL's (#1137).
+            let _ = commands::handle_init();
             CommandResult::Continue
         }
         CommandRoute::Retry => {

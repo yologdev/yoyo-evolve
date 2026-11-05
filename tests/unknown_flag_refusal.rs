@@ -719,3 +719,175 @@ fn dash_led_operands_after_double_dash_are_searched_outside_git() {
     assert_eq!(code, Some(2), "{out}");
     assert!(out.contains("Usage: yoyo outline"), "{out}");
 }
+
+/// #1137: run `yoyo <args>` in a project dir that `setup` prepared (and may
+/// have made read-only). Permissions are restored before the tempdir drops.
+#[cfg(unix)]
+fn run_verb_in(
+    setup: impl FnOnce(&std::path::Path),
+    args: &[&str],
+) -> (Option<i32>, String, String, tempfile::TempDir) {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let home = tmp.path().join("home");
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&repo).unwrap();
+    setup(&repo);
+    let out = scrubbed(&home)
+        .args(args)
+        .current_dir(&repo)
+        .output()
+        .expect("spawn yoyo");
+    (
+        out.status.code(),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+        tmp,
+    )
+}
+
+#[cfg(unix)]
+fn chmod(path: &std::path::Path, mode: u32) {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+}
+
+/// True when permission bits are not enforced on us (root ignores chmod), so
+/// a read-only fixture would not fail and the test has nothing to measure.
+#[cfg(unix)]
+fn chmod_is_ignored() -> bool {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = tmp.path().join("ro");
+    std::fs::create_dir(&dir).unwrap();
+    chmod(&dir, 0o555);
+    let ignored = std::fs::write(dir.join("probe"), "x").is_ok();
+    chmod(&dir, 0o755);
+    if ignored {
+        eprintln!("skipping: chmod is not enforced for this user (root?)");
+    }
+    ignored
+}
+
+/// #1137: `yoyo goal set x` with a read-only `.yoyo/goal.md` printed "Failed
+/// to write goal file" and exited 0, so `yoyo goal set x && next` carried on.
+/// It now exits 1 (a runtime failure, not the usage 2), file unchanged.
+#[cfg(unix)]
+#[test]
+fn goal_set_into_a_read_only_goal_file_exits_1_and_leaves_it() {
+    if chmod_is_ignored() {
+        return;
+    }
+    let (code, out, err, tmp) = run_verb_in(
+        |repo| {
+            std::fs::create_dir(repo.join(".yoyo")).unwrap();
+            std::fs::write(repo.join(".yoyo/goal.md"), "keep\n").unwrap();
+            chmod(&repo.join(".yoyo/goal.md"), 0o444);
+        },
+        &["goal", "set", "new goal"],
+    );
+    let goal = tmp.path().join("repo/.yoyo/goal.md");
+    assert_eq!(code, Some(1), "stdout: {out}\nstderr: {err}");
+    assert!(err.contains("Failed to write goal file"), "{err}");
+    assert_eq!(std::fs::read_to_string(&goal).unwrap(), "keep\n");
+    chmod(&goal, 0o644);
+}
+
+/// #1137: the other write half: `.yoyo/` cannot be created (read-only project
+/// dir), and `goal verify <cmd>` into a read-only `.yoyo/`. Both exit 1.
+#[cfg(unix)]
+#[test]
+fn goal_writes_into_an_unwritable_dir_exit_1() {
+    if chmod_is_ignored() {
+        return;
+    }
+    let (code, out, err, tmp) = run_verb_in(|repo| chmod(repo, 0o555), &["goal", "set", "x"]);
+    assert_eq!(code, Some(1), "stdout: {out}\nstderr: {err}");
+    assert!(err.contains("Failed to create .yoyo/ directory"), "{err}");
+    assert!(!tmp.path().join("repo/.yoyo").exists());
+    chmod(&tmp.path().join("repo"), 0o755);
+
+    let (code, out, err, tmp) = run_verb_in(
+        |repo| {
+            std::fs::create_dir(repo.join(".yoyo")).unwrap();
+            chmod(&repo.join(".yoyo"), 0o555);
+        },
+        &["goal", "verify", "true"],
+    );
+    assert_eq!(code, Some(1), "stdout: {out}\nstderr: {err}");
+    assert!(err.contains("Failed to write verify file"), "{err}");
+    chmod(&tmp.path().join("repo/.yoyo"), 0o755);
+}
+
+/// #1137: `goal clear` that cannot remove the files exits 1, and the goal stays.
+#[cfg(unix)]
+#[test]
+fn goal_clear_that_cannot_remove_exits_1() {
+    if chmod_is_ignored() {
+        return;
+    }
+    let (code, out, err, tmp) = run_verb_in(
+        |repo| {
+            std::fs::create_dir(repo.join(".yoyo")).unwrap();
+            std::fs::write(repo.join(".yoyo/goal.md"), "keep\n").unwrap();
+            chmod(&repo.join(".yoyo"), 0o555);
+        },
+        &["goal", "clear"],
+    );
+    assert_eq!(code, Some(1), "stdout: {out}\nstderr: {err}");
+    assert!(err.contains("Failed to remove goal file"), "{err}");
+    assert!(!out.contains("Goal cleared"), "{out}");
+    chmod(&tmp.path().join("repo/.yoyo"), 0o755);
+    assert!(tmp.path().join("repo/.yoyo/goal.md").exists());
+}
+
+/// #1137: `yoyo init` in a read-only dir printed "error creating YOYO.md" and
+/// exited 0. It now exits 1, and no YOYO.md exists.
+#[cfg(unix)]
+#[test]
+fn init_in_a_read_only_dir_exits_1() {
+    if chmod_is_ignored() {
+        return;
+    }
+    let (code, out, err, tmp) = run_verb_in(|repo| chmod(repo, 0o555), &["init"]);
+    assert_eq!(code, Some(1), "stdout: {out}\nstderr: {err}");
+    assert!(err.contains("error creating YOYO.md"), "{err}");
+    assert!(!tmp.path().join("repo/YOYO.md").exists());
+    chmod(&tmp.path().join("repo"), 0o755);
+}
+
+/// #1137 near-misses: the success paths stay exit 0 and really write.
+#[cfg(unix)]
+#[test]
+fn goal_set_and_init_in_a_writable_dir_still_exit_0() {
+    let (code, out, err, tmp) = run_verb_in(|_| {}, &["goal", "set", "ok"]);
+    assert_eq!(code, Some(0), "stdout: {out}\nstderr: {err}");
+    let goal = std::fs::read_to_string(tmp.path().join("repo/.yoyo/goal.md")).unwrap();
+    assert_eq!(goal, "ok\n");
+
+    let (code, out, err, _tmp) = run_verb_in(
+        |repo| {
+            std::fs::write(repo.join(".yoyo.toml"), "")
+                .map(drop)
+                .unwrap()
+        },
+        &["goal", "clear"],
+    );
+    assert_eq!(
+        code,
+        Some(0),
+        "no goal to clear is not a failure: {out}{err}"
+    );
+
+    let (code, out, err, tmp) = run_verb_in(|_| {}, &["init"]);
+    assert_eq!(code, Some(0), "stdout: {out}\nstderr: {err}");
+    assert!(tmp.path().join("repo/YOYO.md").exists());
+
+    // An existing YOYO.md is left alone, and that is not a failure either.
+    let (code, out, err, tmp) = run_verb_in(
+        |repo| std::fs::write(repo.join("YOYO.md"), "mine\n").unwrap(),
+        &["init"],
+    );
+    assert_eq!(code, Some(0), "stdout: {out}\nstderr: {err}");
+    let kept = std::fs::read_to_string(tmp.path().join("repo/YOYO.md")).unwrap();
+    assert_eq!(kept, "mine\n");
+}

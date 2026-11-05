@@ -662,12 +662,14 @@ pub fn generate_init_content(dir: &std::path::Path) -> String {
     content
 }
 
-pub fn handle_init() {
-    handle_init_in(&std::env::current_dir().unwrap_or_default());
+pub fn handle_init() -> i32 {
+    handle_init_in(&std::env::current_dir().unwrap_or_default())
 }
 
 /// Directory-taking seam for `handle_init` (#962): tests route `yoyo init` into a tempdir.
-pub(crate) fn handle_init_in(dir: &std::path::Path) {
+/// Returns the shell exit status: 1 when YOYO.md could not be written (#1137),
+/// 0 otherwise (written, or an existing YOYO.md/CLAUDE.md left alone).
+pub(crate) fn handle_init_in(dir: &std::path::Path) -> i32 {
     let path = "YOYO.md";
     if dir.join(path).exists() {
         println!("{DIM}  {path} already exists — not overwriting.{RESET}\n");
@@ -697,9 +699,13 @@ pub(crate) fn handle_init_in(dir: &std::path::Path) {
                 println!("{GREEN}  ✓ Created {path} ({line_count} {word}) — edit it to add project context.{RESET}");
                 println!("{DIM}  Tip: Use /remember to save project-specific notes that persist across sessions.{RESET}\n");
             }
-            Err(e) => eprintln!("{RED}  error creating {path}: {e}{RESET}\n"),
+            Err(e) => {
+                eprintln!("{RED}  error creating {path}: {e}{RESET}\n");
+                return 1;
+            }
         }
     }
+    0
 }
 
 // ── /docs ────────────────────────────────────────────────────────────────

@@ -322,7 +322,8 @@ fn goal_shell_status(args: &[String]) -> i32 {
     }
     let input = join_args_as_command(args);
     let fence = crate::config::DirectoryRestrictions::default();
-    let result = crate::commands_goal::handle_goal_on(&input, &fence, Shell);
+    let mut write_failed = false;
+    let result = crate::commands_goal::handle_goal_on(&input, &fence, Shell, &mut write_failed);
     // Belt and braces: if a future handler change starts returning
     // SendToAgent for some other verb, report it rather than swallow it.
     if let crate::dispatch::CommandResult::SendToAgent(_) = result {
@@ -336,6 +337,11 @@ fn goal_shell_status(args: &[String]) -> i32 {
     let arg = input.strip_prefix("/goal").unwrap_or("");
     let usage = crate::commands_goal::goal_subcommand_is_unknown(arg)
         || crate::commands_goal::goal_set_lacks_description(arg);
+    // #1137: a goal file that was not written printed "Failed to ..." and
+    // exited 0. A runtime failure is 1, not the usage 2.
+    if write_failed {
+        return 1;
+    }
     2 * i32::from(usage)
 }
 
@@ -502,10 +508,11 @@ pub(crate) fn try_dispatch_subcommand_in(
             "init" => {
                 // Refused BEFORE any write: `init zzz` used to create YOYO.md (#982).
                 refuse_stray_arg("init", positional_after_verb(args).first().copied());
-                match project {
+                // #1137: exits 1 when YOYO.md could not be written.
+                exit_if_nonzero(match project {
                     None => crate::commands_project::handle_init(),
                     Some(p) => crate::commands_project::handle_init_in(p.dir),
-                }
+                });
                 return Some(None);
             }
             "lint" => {

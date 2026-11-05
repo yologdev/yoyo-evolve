@@ -542,15 +542,25 @@ pub fn handle_goal_fenced(
     input: &str,
     restrictions: &crate::config::DirectoryRestrictions,
 ) -> CommandResult {
-    handle_goal_on(input, restrictions, DoctorSurface::Repl)
+    handle_goal_on(input, restrictions, DoctorSurface::Repl, &mut false)
+}
+
+/// Print a goal-file write failure and record it in `failed` (#1137): the
+/// shell door turns it into exit 1, so `yoyo goal set x && next` stops when
+/// `.yoyo/goal.md` was not written. The REPL prints and carries on.
+fn goal_write_failed(e: &str, failed: &mut bool) {
+    eprintln!("{RED}{e}{RESET}\n");
+    *failed = true;
 }
 
 /// [`handle_goal_fenced`] naming the command as `surface` types it (#1086):
-/// `/goal` in the REPL, `yoyo goal` on the shell.
+/// `/goal` in the REPL, `yoyo goal` on the shell. Sets `failed` when a
+/// write or remove of a goal file failed (set, clear, verify, #1137).
 pub(crate) fn handle_goal_on(
     input: &str,
     restrictions: &crate::config::DirectoryRestrictions,
     surface: DoctorSurface,
+    failed: &mut bool,
 ) -> CommandResult {
     let arg = input.strip_prefix("/goal").unwrap_or("").trim();
     let goal_cmd = command_form(surface, "goal");
@@ -593,7 +603,7 @@ pub(crate) fn handle_goal_on(
                     CommandResult::Continue
                 }
                 Err(e) => {
-                    eprintln!("{RED}{e}{RESET}\n");
+                    goal_write_failed(&e, failed);
                     CommandResult::Continue
                 }
             }
@@ -603,11 +613,11 @@ pub(crate) fn handle_goal_on(
             Some(_) => {
                 let mut ok = true;
                 if let Err(e) = clear_goal() {
-                    eprintln!("{RED}{e}{RESET}\n");
+                    goal_write_failed(&e, failed);
                     ok = false;
                 }
                 if let Err(e) = clear_verify_command() {
-                    eprintln!("{RED}{e}{RESET}\n");
+                    goal_write_failed(&e, failed);
                     ok = false;
                 }
                 if ok {
@@ -646,7 +656,7 @@ pub(crate) fn handle_goal_on(
                         println!("{GREEN}Verify command cleared.{RESET}\n");
                     }
                     Err(e) => {
-                        eprintln!("{RED}{e}{RESET}\n");
+                        goal_write_failed(&e, failed);
                     }
                 },
                 None => {
@@ -674,7 +684,7 @@ pub(crate) fn handle_goal_on(
                     );
                 }
                 Err(e) => {
-                    eprintln!("{RED}{e}{RESET}\n");
+                    goal_write_failed(&e, failed);
                 }
             }
             CommandResult::Continue
