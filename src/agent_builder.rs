@@ -1326,27 +1326,24 @@ ceiling {ceiling}. The provider may reject the request with a 400. Lower max_tok
 }
 
 /// The real maximum `max_tokens` an Anthropic model accepts, or `None` when
-/// yoyo does not know it (#964) — in which case the ceiling warning is skipped
-/// rather than compared against the wrong number.
+/// yoyo does not know it (#964) — then the ceiling warning is skipped rather
+/// than compared against the wrong number. A preset's `max_tokens` is the
+/// request *default*, not this ceiling, so it cannot serve here.
 ///
-/// yoagent 0.18.1's `ModelConfig` has no max-output field: its Anthropic
-/// presets' `max_tokens` is the request *default* (its own doc comments say
-/// "defaults to 64K of the model's 128K max output"), so it cannot serve as the
-/// ceiling. This is deliberately a short list, not a table; its first
-/// number is cited from the provider's own rejection text quoted in #964:
-/// `max_tokens: 131072 > 128000, which is the maximum allowed` for
-/// `claude-opus-5-5`. **Nothing re-derives it** — if Anthropic raises the cap,
-/// this goes stale silently (it would warn on a value the API now accepts).
-/// Every other Anthropic id returns `None`: an unknown maximum stays unknown.
+/// Read from yoagent 0.27.2's price table (`max_output`, #1144) for every id
+/// that table states it for (Opus 4.7 / 4.6 / 4.5): yoyo keeps no copy.
+/// The two hand rows are ids whose named presets state their 128K maximum only
+/// in yoagent's doc prose ("defaults to 64K of the model's 128K max output"),
+/// not as data: `claude-opus-5*` from Anthropic's own rejection quoted in #964
+/// (`max_tokens: 131072 > 128000`), `claude-haiku-5-5` from Anthropic's models
+/// overview (Day 222). Without them a user who sets max_tokens above 128K on
+/// those models gets a 400 and no warning first. Nothing re-derives them.
 pub(crate) fn anthropic_output_maximum(model: &str) -> Option<u32> {
-    // Second entry (Day 222): `claude-haiku-5-5`, cited from Anthropic's models
-    // overview ("Max output 128K tokens"; models.dev lists 128000), not from a
-    // rejection. Same staleness caveat as the first.
-    if model.starts_with("claude-opus-5") || model.starts_with("claude-haiku-5-5") {
-        Some(128_000)
-    } else {
-        None
+    let table = yoagent::provider::prices::PriceTable::builtin();
+    if let Some(max) = table.entry("anthropic", model).and_then(|e| e.max_output) {
+        return Some(max);
     }
+    (model.starts_with("claude-opus-5") || model.starts_with("claude-haiku-5-5")).then_some(128_000)
 }
 
 /// Execution limits for the main (top-level) agent, applied per run — one

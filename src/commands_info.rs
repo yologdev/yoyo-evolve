@@ -746,12 +746,12 @@ pub fn handle_model_list(current_model: &str, current_provider: &str, filter: &s
 /// Return the context window size (in tokens) for well-known models.
 /// Returns `None` when the model isn't in our registry.
 ///
-/// Claude ids with a fleet preset report `anthropic_preset(model).context_window`
-/// — the same value the agent is actually built with — so this display cannot
-/// drift from the authority. Until Day 222 this was a substring table only,
-/// and it printed `200k` for 1M-window models (opus-5, sonnet-5, haiku-5-5,
-/// opus-4-8, fable-5). The table remains as the fallback for ids with no
-/// preset (other providers, older Claude ids, local models).
+/// Every Claude id reads yoagent, never a yoyo copy (#1144): a named preset,
+/// else a Bedrock or OpenRouter preset, else `ModelConfig::anthropic`, which
+/// takes 0.27.2's table limits (Opus 4.7 / 4.6 / 4.5) and otherwise its 200K
+/// default, the window the agent is built with. Until Day 251 a substring
+/// table printed `1M` for any `sonnet-4*` id, sonnet-4-5 included, while the
+/// agent ran at 200K. The table remains for other providers and local models.
 pub fn model_context_window(model: &str) -> Option<u64> {
     if let Some(preset) = crate::agent_builder::anthropic_preset(model)
         .or_else(|| crate::agent_builder::openai_preset(model))
@@ -759,32 +759,18 @@ pub fn model_context_window(model: &str) -> Option<u64> {
     {
         return Some(u64::from(preset.context_window));
     }
+    if model.contains("claude") {
+        let config = ["bedrock", "openrouter"]
+            .iter()
+            .find_map(|p| yoagent::provider::ModelConfig::preset(p, model))
+            .unwrap_or_else(|| crate::agent_builder::anthropic_model_config(model));
+        return Some(u64::from(config.context_window));
+    }
     model_context_window_table(model)
 }
 
-/// Hand-kept substring table: the fallback for ids `anthropic_preset` does
-/// not know. Do not add Claude ids here that have a preset — the preset wins.
+/// Hand-kept substring table: the fallback for non-Claude ids with no preset.
 fn model_context_window_table(model: &str) -> Option<u64> {
-    // Anthropic Claude family (non-preset ids only)
-    if model.contains("claude") {
-        // Sonnet 4+ all have 1M context
-        if model.contains("sonnet-4") || model.contains("sonnet-4.") {
-            return Some(1_000_000);
-        }
-        if model.contains("opus") {
-            // Opus 4.6+ have 1M; older Opus (4.0, 4.1, 4.5) have 200k
-            if model.contains("4-6")
-                || model.contains("4.6")
-                || model.contains("4-7")
-                || model.contains("4.7")
-            {
-                return Some(1_000_000);
-            }
-            return Some(200_000);
-        }
-        // Haiku and older Claude models: 200k
-        return Some(200_000);
-    }
     // OpenAI codex-mini — 192k
     if model.contains("codex-mini") {
         return Some(192_000);
@@ -2672,13 +2658,14 @@ More text.
 
     #[test]
     fn test_model_context_window_known_models() {
-        // Anthropic — Sonnet 4+ has 1M context
+        // Anthropic — values are yoagent's (#1144). Sonnet 4 / 4.5 have no
+        // yoagent row and run at its 200K default; the old table said 1M.
         assert_eq!(
             model_context_window("claude-sonnet-4-20250514"),
-            Some(1_000_000)
+            Some(200_000)
         );
         assert_eq!(model_context_window("claude-sonnet-4-6"), Some(1_000_000));
-        assert_eq!(model_context_window("claude-sonnet-4-5"), Some(1_000_000));
+        assert_eq!(model_context_window("claude-sonnet-4-5"), Some(200_000));
         // Opus 4.6+ has 1M, older Opus has 200k
         assert_eq!(model_context_window("claude-opus-4-7"), Some(1_000_000));
         assert_eq!(model_context_window("claude-opus-4-6"), Some(1_000_000));
@@ -2725,8 +2712,8 @@ More text.
         assert_eq!(model_context_window("llama-4-maverick-17b"), Some(128_000));
         assert_eq!(model_context_window("llama-4-scout-17b"), Some(128_000));
 
-        // claude-sonnet-4-7 — already covered by sonnet-4 branch
-        assert_eq!(model_context_window("claude-sonnet-4-7"), Some(1_000_000));
+        // claude-sonnet-4-7 never existed (#1144): yoagent's generic default.
+        assert_eq!(model_context_window("claude-sonnet-4-7"), Some(200_000));
 
         // codex-mini — already covered
         assert_eq!(model_context_window("codex-mini"), Some(192_000));
@@ -2783,24 +2770,18 @@ More text.
         }
     }
 
-    /// Anti-vacuous: the fixture must include ids where the old substring
-    /// table disagrees with the preset, or the test above could pass against
-    /// the bug it exists to catch.
+    /// #1144: the hand table holds no Claude window any more, so no Claude
+    /// id — preset or not — can be answered from a yoyo copy. (Until Day 251
+    /// this test pinned the rows where that copy disagreed with the preset.)
     #[test]
-    fn preset_test_fixture_covers_ids_the_old_table_got_wrong() {
-        let disagreeing: Vec<&str> = PRESET_IDS
+    fn hand_table_holds_no_claude_window() {
+        let offered = crate::providers::known_models_for_provider("anthropic");
+        for id in PRESET_IDS
             .iter()
-            .copied()
-            .filter(|id| {
-                let preset = crate::agent_builder::anthropic_preset(id).unwrap();
-                model_context_window_table(id) != Some(u64::from(preset.context_window))
-            })
-            .collect();
-        for must in ["claude-opus-5", "claude-haiku-5-5", "claude-sonnet-5"] {
-            assert!(
-                disagreeing.contains(&must),
-                "{must} should be a row where the table (200k) and preset disagree; got {disagreeing:?}"
-            );
+            .chain(offered)
+            .chain(&["claude-sonnet-4-5"])
+        {
+            assert_eq!(model_context_window_table(id), None, "{id}");
         }
     }
 
@@ -2810,9 +2791,9 @@ More text.
     #[test]
     fn non_preset_ids_keep_their_pre_change_table_values() {
         let rows: &[(&str, Option<u64>)] = &[
-            ("claude-sonnet-4-20250514", Some(1_000_000)),
-            // claude-sonnet-4-6 left this table on Day 247 (#1116): it has a
-            // preset now, still 1M (test_model_context_window_known_models).
+            // Day 251 (#1144): Claude ids read yoagent, not this table, so
+            // Sonnet 4 is yoagent's 200K default (was the table's 1M guess).
+            ("claude-sonnet-4-20250514", Some(200_000)),
             ("claude-opus-4-7", Some(1_000_000)),
             ("claude-opus-4-20250514", Some(200_000)),
             ("claude-3-5-haiku-20241022", Some(200_000)),

@@ -535,3 +535,84 @@ fn anthropic_default_leads_the_list_the_404_hint_suggests_from() {
         crate::providers::default_model_for_provider("bedrock")
     );
 }
+
+/// #1144 item 2: every Claude id yoyo offers reports the context window the
+/// agent is really built with, and every output maximum yoagent's table
+/// states is the one the ceiling warning uses. Expected values come from
+/// `create_model_config` and yoagent's own table, never typed.
+#[test]
+fn offered_claude_ids_report_yoagents_limits_not_a_yoyo_copy() {
+    use crate::agent_builder::{anthropic_output_maximum, create_model_config};
+    use crate::commands_info::model_context_window;
+    let table = yoagent::provider::prices::PriceTable::builtin();
+    for provider in ["anthropic", "bedrock"] {
+        for id in crate::providers::known_models_for_provider(provider) {
+            if !id.contains("claude") {
+                continue;
+            }
+            let built = create_model_config(provider, id, None).context_window;
+            assert_eq!(
+                model_context_window(id),
+                Some(u64::from(built)),
+                "{provider}/{id}"
+            );
+        }
+    }
+    let mut stated = 0;
+    for (provider, id, entry) in table.iter() {
+        if provider == "anthropic" && entry.max_output.is_some() {
+            stated += 1;
+            assert_eq!(
+                anthropic_output_maximum(id),
+                entry.max_output,
+                "{id}: output max"
+            );
+            assert_eq!(
+                model_context_window(id),
+                entry.context_window.map(u64::from),
+                "{id}: window"
+            );
+        }
+    }
+    // Anti-vacuous: the table path is exercised by an id with no named preset.
+    assert!(
+        stated >= 3,
+        "yoagent states limits for {stated} anthropic rows"
+    );
+    assert!(anthropic_preset("claude-opus-4-7").is_none());
+    assert!(table
+        .entry("anthropic", "claude-opus-4-7")
+        .and_then(|e| e.max_output)
+        .is_some());
+}
+
+/// Near-misses for #1144: ids yoagent supplies nothing for get yoagent's
+/// generic default (what the agent runs at), not the old table's confident 1M.
+#[test]
+fn claude_ids_yoagent_does_not_know_get_the_default_window_not_1m() {
+    use crate::agent_builder::{anthropic_output_maximum, create_model_config};
+    use crate::commands_info::model_context_window;
+    for id in [
+        "claude-zzz-9",
+        "claude-sonnet-4-5",
+        "claude-sonnet-4-20250514",
+    ] {
+        let built = u64::from(create_model_config("anthropic", id, None).context_window);
+        assert_eq!(model_context_window(id), Some(built), "{id}");
+        assert_ne!(
+            model_context_window(id),
+            Some(1_000_000),
+            "{id}: the old sonnet-4* guess"
+        );
+        assert_eq!(
+            anthropic_output_maximum(id),
+            None,
+            "{id}: unknown stays unknown"
+        );
+    }
+    // Bedrock opus-4-7 has no yoagent Bedrock mapping in 0.27.2 (#1121): it
+    // runs at the arm's 200K, and /model info now says so instead of 1M.
+    let bedrock = "anthropic.claude-opus-4-7";
+    let built = u64::from(create_model_config("bedrock", bedrock, None).context_window);
+    assert_eq!(model_context_window(bedrock), Some(built));
+}
