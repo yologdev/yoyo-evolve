@@ -755,7 +755,7 @@ pub(crate) fn insert_client_headers(config: &mut ModelConfig) {
 /// single install per process; `enable_bundled` is itself idempotent, so the
 /// `Once` is only there to skip the table resolve on every preset lookup.
 /// Bundled only, never `enable_live`: no network at config time (#1007).
-fn ensure_bundled_prices() {
+pub(crate) fn ensure_bundled_prices() {
     static BUNDLED: std::sync::Once = std::sync::Once::new();
     BUNDLED.call_once(|| {
         let _ = yoagent::provider::prices::enable_bundled();

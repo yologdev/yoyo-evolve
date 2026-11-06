@@ -144,18 +144,9 @@ fn cost_table_reads_the_preset_price() {
     let none = ModelPricingOverrides::default();
     for (_, id, ctor) in presets() {
         let c = ctor.cost.unwrap();
-        let want = Some((
-            c.input_per_million,
-            c.cache_write_per_million,
-            c.cache_read_per_million,
-            c.output_per_million,
-        ));
-        // After Google's introductory windows end (#1012, Day 242): before then the
-        // two google ids bill the promo rate, pinned in `format/cost/promo_tests.rs`.
-        let got =
-            crate::format::promo::with_now(crate::format::promo::AFTER_ALL_PROMOS_UNIX, || {
-                model_pricing_with(&none, id)
-            });
+        // yoagent's zero cache rate means "bill at input" (Day 251, #1012).
+        let want = Some(crate::format::cost_row(&c));
+        let got = model_pricing_with(&none, id);
         assert_eq!(got, want, "{id}");
     }
     // Near-miss keeps the hand-kept estimate it had before.

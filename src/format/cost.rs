@@ -2,11 +2,17 @@
 
 use crate::config::ModelPricingOverrides;
 
-// #1012: Google's promos (by the date) and xAI's US-endpoint premium (by the endpoint).
+// #1012: xAI's US-endpoint premium (by the endpoint). Google's dated promos were
+// deleted on Day 251: yoagent prices those ids, at the regular (upper-bound) rate.
 // #1116: Bedrock Claude ids price as the anthropic preset, +10% off `global.`.
 mod bedrock_region;
 pub(crate) use bedrock_region::bedrock_preset_cost;
-pub(crate) mod promo;
+// #1012 (Day 251): yoagent's PriceTable is consulted before yoyo's own rows.
+mod yoagent_price;
+pub(crate) use yoagent_price::cost_row;
+#[cfg(test)]
+pub(crate) use yoagent_price::yoagent_builtin_row;
+use yoagent_price::yoagent_price_row;
 mod xai_region;
 pub use xai_region::{is_xai_us_endpoint, set_xai_us_region};
 
@@ -40,10 +46,17 @@ pub fn model_pricing_overrides() -> &'static ModelPricingOverrides {
 /// Resolve a model's price, in USD per million tokens, as
 /// `(input, cache_write, cache_read, output)`.
 ///
-/// **Precedence: explicit user override > yoagent preset > local table.**
-/// A user's own number always wins — it is the whole point of the override:
-/// anyone on a negotiated contract, behind a re-pricing proxy, or running a
-/// self-hosted model has a real rate my table cannot know.
+/// **Precedence: explicit user override > yoagent's price table > yoyo's own
+/// table (presets, then the local arms).** A user's own number always
+/// wins — it is the whole point of the override: anyone on a negotiated
+/// contract, behind a re-pricing proxy, or running a self-hosted model has a
+/// real rate my table cannot know.
+///
+/// yoagent's table comes second because @yuanhao decided (#1012, 2026-11-03)
+/// that yoyo reuses yoagent's vendor-checked prices instead of keeping its own.
+/// yoyo's table is still consulted for the ids yoagent does not price, only
+/// until the live models.dev layer lands (#1012 slice 2); deleting it now would
+/// leave ~70 models unpriced. That is a sequencing reason, not a preference.
 ///
 /// Stated limit: an override supplies **input and output only**, so an
 /// overridden model is priced with cache-write and cache-read rates of `0.0`.
@@ -60,13 +73,14 @@ pub fn model_pricing_with(
     if let Some(price) = overrides.lookup(model) {
         return Some((price.input_per_million, 0.0, 0.0, price.output_per_million));
     }
-    promo::promo_pricing_at(strip_router_prefix(model), promo::now_unix_secs())
+    let id = strip_router_prefix(model);
+    yoagent_price_row(id)
         .or_else(|| builtin_model_pricing(model))
         .map(|row| xai_region::region_row(model, row))
 }
 
-/// The local price table, consulted only when neither a user override nor a
-/// yoagent preset applies.
+/// The local price table, consulted only when neither a user override nor
+/// yoagent's price table applies.
 ///
 /// **This table is audited by an `#[ignore]`d network test that MUST be run
 /// before a release, and it is deliberately not in CI** (it needs the network):
@@ -94,8 +108,7 @@ fn builtin_model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
     // For providers without caching, cache_write and cache_read are set to 0.0.
 
     if let Some(c) = bedrock_region::bedrock_preset_cost(model) {
-        let (i, o) = (c.input_per_million, c.output_per_million);
-        return Some((i, c.cache_write_per_million, c.cache_read_per_million, o));
+        return Some(cost_row(&c));
     }
     // #1037: OpenRouter's dotted `anthropic/claude-opus-4.8` prices as `claude-opus-4-8`.
     let mapped = crate::providers::openrouter_anthropic_preset_id(model);
@@ -119,12 +132,7 @@ fn builtin_model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
         .or_else(|| crate::agent_builder::vendor_preset_by_id(model))
         .and_then(|preset| preset.cost)
     {
-        return Some((
-            cost.input_per_million,
-            cost.cache_write_per_million,
-            cost.cache_read_per_million,
-            cost.output_per_million,
-        ));
+        return Some(cost_row(&cost));
     }
 
     // ── Anthropic ─────────────────────────────────────────────────────
@@ -204,7 +212,7 @@ fn builtin_model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
 
     // ── Google Gemini ─────────────────────────────────────────────────
     // Gemini 3.x: exact ids from https://ai.google.dev/pricing = models.dev (2026-10-25, #1012).
-    // Image/tts/live: models.dev's output rate. 3.6/3.7/3.8 flash: regular; `promo` goes first.
+    // Image/tts/live: models.dev's output rate. 3.6/3.8 flash and 3.1 pro: yoagent's rows.
     // Retired ids bill their successor per Google's deprecations page (2026-10-28), except
     // 3.5 (routes to 3.6, at a price Google never names, so it keeps its higher 9.00 output).
     if model.contains("gemini-3") {
@@ -222,13 +230,10 @@ fn builtin_model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
             "gemini-3.1-flash-tts-preview" => return Some((1.00, 0.0, 0.0, 20.00)),
             "gemini-3.5-live-translate-preview" => return Some((3.50, 0.0, 0.0, 21.00)),
             "gemini-3.5-flash" => return Some((1.50, 0.0, 0.15, 9.00)),
-            "gemini-3.6-flash" | "gemini-3.7-flash" => {
-                return Some((1.50, 0.0, 0.15, 7.50));
-            }
+            // Retired: routes to 3.8 Flash, so it bills yoagent's 3.8 row (Day 251, #1012).
+            "gemini-3.7-flash" => return yoagent_price_row("gemini-3.8-flash"),
             // #1012: base tier; >200K prompts bill 4/0.40/18 via `yoyo_side_tier_cost`.
-            "gemini-3.1-pro-preview" | "gemini-3.1-pro-preview-customtools" => {
-                return Some((2.00, 0.0, 0.20, 12.00));
-            }
+            "gemini-3.1-pro-preview-customtools" => return Some((2.00, 0.0, 0.20, 12.00)),
             // image output; text 12
             "gemini-3-pro-image" | "gemini-3-pro-image-preview" => {
                 return Some((2.00, 0.0, 0.0, 120.00));
@@ -265,6 +270,11 @@ fn builtin_model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
 
     // ── DeepSeek ──────────────────────────────────────────────────────
     // https://platform.deepseek.com/api-docs/pricing/
+    // Day 251 (#1012): the exact ids `deepseek-flash`, `deepseek-v4-flash`,
+    // `deepseek-v4-flash-vision-exp` and `deepseek-v4-pro` bill yoagent's rows
+    // (DeepSeek's peak rate, the upper bound) before this table is read, so the
+    // two `contains` arms below now serve only other ids that contain those
+    // names, and the off-peak / residue notes below describe yoyo's old rows.
     if model.contains("deepseek-v4-pro") || model.contains("deepseek-v3") {
         return Some((0.27, 0.0, 0.0, 1.10));
     }
@@ -302,13 +312,9 @@ fn builtin_model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
     // here. Stated in the entry because a reader assuming peak (or assuming
     // this is an average) would be reading a different number than it is.
     //
-    // RESIDUE, not an oversight: the `deepseek-v4-pro`/`deepseek-v3` arm above
-    // shares one row between two ids the same way, and models.dev prices
-    // `deepseek-v4-pro` at {0.435, 0.87} against this table's (0.27, 1.10) — a
-    // *larger* divergence. It is not fixed here: only one aggregator source was
-    // read for it, `deepseek-v3`'s own row is a different model's price and
-    // equally unverified, and it is the default arm for `provider = "deepseek"`,
-    // so changing it moves every user with no explicit model. Its own issue.
+    // Superseded Day 251 (#1012): a RESIDUE note here said `deepseek-v4-pro`'s
+    // 0.27 / 1.10 diverged from models.dev and was "its own issue"; yoagent's
+    // verified row now bills that id, so the divergence is no longer yoyo's.
     if model.contains("deepseek-flash") || model.contains("deepseek-v4-flash") {
         // (input, cache_write, cache_read, output) per MTok — cache read is the
         // $0.003/1M cache-HIT price; cache_write is 0.0 because DeepSeek bills
@@ -375,9 +381,6 @@ fn builtin_model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
     }
     if model == "glm-5.1" || model == "glm-5.2" {
         return Some((1.40, 0.0, 0.26, 4.40));
-    }
-    if model == "glm-5.3-flashx" {
-        return Some((0.37, 0.0, 0.075, 1.25));
     }
     if model.contains("glm-4-plus") || model.contains("glm-4.7") {
         return Some((0.70, 0.0, 0.0, 0.70));
@@ -1975,9 +1978,14 @@ mod tests {
             cache_write: 0,
             total_tokens: 0,
         };
-        // deepseek-v4-pro: $0.27/MTok input, $1.10/MTok output
+        // deepseek-v4-pro bills yoagent's row since Day 251 (#1012): DeepSeek's peak
+        // rate, verified on its pricing page. yoyo's old 0.27 / 1.10 was V3's price.
+        let (i, _, _, o) = yoagent_builtin_row("deepseek-v4-pro").expect("yoagent prices it");
         let cost = estimate_cost(&usage, "deepseek-v4-pro").unwrap();
-        assert!((cost - 1.37).abs() < 0.001, "deepseek-v4-pro cost: {cost}");
+        assert!(
+            (cost - (i + o)).abs() < 0.001,
+            "deepseek-v4-pro cost: {cost}"
+        );
     }
 
     #[test]
@@ -2016,16 +2024,17 @@ mod tests {
         // user reads these rows, so the unchanged ones must be byte-identical,
         // asserted with whole-value equality rather than a `contains` (a
         // discriminator tested only on the side that fires is vacuous green).
+        // Day 251 (#1012): the three ids yoagent prices bill yoagent's rows.
         assert_eq!(
             model_pricing("deepseek-v4-pro"),
-            Some((0.27, 0.0, 0.0, 1.10))
+            yoagent_builtin_row("deepseek-v4-pro")
         );
         // `deepseek-v4-flash` moved to the `deepseek-flash` row on Day 204 because
         // the model id is an ALIAS of the row below it (same served model,
         // V4.1-Flash) — NOT because the vendor repriced anything.
         assert_eq!(
             model_pricing("deepseek-v4-flash"),
-            Some((0.15, 0.0, 0.003, 0.60))
+            yoagent_builtin_row("deepseek-v4-flash")
         );
         assert_eq!(model_pricing("deepseek-v3"), Some((0.27, 0.0, 0.0, 1.10)));
         // Untouched by the Day-204 split: r1 keeps its own (unverifiable) number.
@@ -2062,8 +2071,8 @@ mod tests {
         let (inp, cache_write, cache_read, out) = model_pricing("deepseek-flash")
             .expect("deepseek-flash must be priced — this is the whole issue");
         assert_eq!(
-            (inp, cache_write, cache_read, out),
-            (0.15, 0.0, 0.003, 0.60)
+            Some((inp, cache_write, cache_read, out)),
+            yoagent_builtin_row("deepseek-flash")
         );
     }
 
@@ -2078,12 +2087,17 @@ mod tests {
         };
         // ANTI-VACUOUS first: the pre-existing control resolves, so the table is
         // genuinely reachable from here and the assertions below mean something.
-        assert_eq!(estimate_cost(&usage, "deepseek-v4-pro"), Some(1.37));
+        assert_eq!(estimate_cost(&usage, "deepseek-v3"), Some(1.37));
 
         // The #923 fix: cost_usd is a number in the #848 usage record, not null.
         let cost = estimate_cost(&usage, "deepseek-flash")
             .expect("deepseek-flash must yield a price, not None");
-        assert!((cost - 0.75).abs() < 0.001, "deepseek-flash cost: {cost}");
+        // yoagent's peak-rate row since Day 251 (#1012), not the old off-peak 0.15 / 0.60.
+        let (i, _, _, o) = yoagent_builtin_row("deepseek-flash").expect("yoagent prices it");
+        assert!(
+            (cost - (i + o)).abs() < 0.001,
+            "deepseek-flash cost: {cost}"
+        );
 
         // The guard must NOT have become "any id gets a price".
         assert_eq!(estimate_cost(&usage, "deepseek-not-a-real-model"), None);
@@ -2835,10 +2849,15 @@ mod tests {
         // Day 204: this id is a legacy alias of `deepseek-flash` (V4.1-Flash), so
         // its row now mirrors that one exactly — including the cache_read cell,
         // which is the part the old 0.55/2.19 arm got wrong twice over.
-        let (inp, _, cache_read, out) = model_pricing("deepseek-v4-flash").unwrap();
-        assert!((inp - 0.15).abs() < 0.001);
-        assert!((cache_read - 0.003).abs() < 0.001);
-        assert!((out - 0.60).abs() < 0.001);
+        // Day 251 (#1012): both bill yoagent's row, which keeps them equal.
+        assert_eq!(
+            model_pricing("deepseek-v4-flash"),
+            model_pricing("deepseek-flash")
+        );
+        assert_eq!(
+            model_pricing("deepseek-v4-flash"),
+            yoagent_builtin_row("deepseek-v4-flash")
+        );
     }
 
     #[test]
@@ -3201,10 +3220,19 @@ mod tests {
     /// guard exists because a gate satisfied by a registered exception is silent
     /// in exactly the way a missing gate is; the remedy for a register is a
     /// shrink-only ratchet, not a parser.
-    const KNOWN_DIVERGENCES: &[(&str, &str)] = &[(
-        "deepseek-v4-pro",
-        "models.dev prices V4-Pro at {input 0.435, output 0.87, cache_read 0.003625} (fetched 2026-09-20) against this table's (0.27, 1.10). Deliberately not fixed in the Day-204 alarm task: one aggregator source was read, the arm is shared with `deepseek-v3` (a different model's price, equally unverified), and the row is `providers.rs`'s DEFAULT for `provider = \"deepseek\"`, so changing it moves every user with no explicit model. Its own issue.",
-    )];
+    ///
+    /// Day 251 (#1012): every vendored row is now priced by yoagent, not by
+    /// yoyo's table, so all four are registered with that reason; the offline
+    /// test below pins that hand-off. (Superseded: until Day 251 only
+    /// `deepseek-v4-pro` was here, against yoyo's old 0.27 / 1.10 row.)
+    const KNOWN_DIVERGENCES: &[(&str, &str)] = &[
+        ("deepseek-flash", YOAGENT_PEAK_RATE),
+        ("deepseek-v4-flash", YOAGENT_PEAK_RATE),
+        ("deepseek-v4-flash-vision-exp", YOAGENT_PEAK_RATE),
+        ("deepseek-v4-pro", "yoagent prices this id since Day 251 (@yuanhao's #1012 decision: reuse yoagent's prices, not yoyo's), at 1.32 / 3.96, DeepSeek's peak rate verified 2026-10-16 against api-docs.deepseek.com; this 2026-09-20 models.dev reading (0.435 / 0.87) is older than that check and is not its off-peak half either. yoagent's own tests/price_audit.rs audits the row."),
+    ];
+    /// The admitted reason for the three V4.1-Flash ids (Day 251, #1012).
+    const YOAGENT_PEAK_RATE: &str = "yoagent prices this id since Day 251 (@yuanhao's #1012 decision: reuse yoagent's prices, not yoyo's), at DeepSeek's PEAK rate on purpose: yoagent's prices.json note calls it the upper bound (verified 2026-10-16 against api-docs.deepseek.com), while this 2026-09-20 models.dev reading is the off-peak half. yoagent's own tests/price_audit.rs audits the row.";
 
     /// Two floats count as the same price when they are equal to a tolerance far
     /// below any real repricing (a millionth of a dollar per million tokens).
@@ -3391,11 +3419,13 @@ mod tests {
              cache READS only) — skipped, not silently ignored"
         );
 
+        // Day 251 (#1012): the registered rows are yoagent's, so they count as
+        // reached (named in `skipped`) rather than compared.
         assert!(
-            compared.len() >= 3,
-            "only {} row(s) were compared — a vendor listing that has shrunk (or ids the table \
-             no longer resolves) must fail loudly, not pass with nothing checked",
-            compared.len()
+            compared.len() + skipped.len() >= 3,
+            "only {} row(s) were compared or named — a vendor listing that has shrunk (or ids \
+             the table no longer resolves) must fail loudly, not pass with nothing checked",
+            compared.len() + skipped.len()
         );
 
         if !mismatches.is_empty() {
@@ -3425,17 +3455,24 @@ mod tests {
             .collect();
         let (mismatches, compared, skipped) = audit_vendor_rows(&vendored);
 
-        // ANTI-VACUOUS: the comparison really ran over a non-empty set, and the
-        // one registered row really was skipped rather than silently dropped.
+        // Day 251 (#1012): no vendored DeepSeek row is yoyo's own any more; each is
+        // yoagent's, registered by name and REPORTED as skipped, never dropped.
+        // (Superseded: this asserted `compared.len() >= 3` while yoyo priced them.)
         assert!(
-            compared.len() >= 3,
-            "the vendored fixture must exercise at least 3 rows, got {compared:?}"
+            compared.is_empty(),
+            "a vendored id yoyo prices itself again must be audited, not exempted: {compared:?}"
         );
         assert_eq!(
-            skipped,
-            vec!["deepseek-v4-pro".to_string()],
-            "the registered divergence must be REPORTED as skipped, not vanish from the run"
+            skipped.len(),
+            MODELS_DEV_DEEPSEEK_2026_09_20.len(),
+            "every vendored row must be REPORTED as skipped, not vanish from the run: {skipped:?}"
         );
+        for id in &skipped {
+            assert!(
+                yoagent_builtin_row(id).is_some(),
+                "{id} is exempted as yoagent's row, so yoagent must price it"
+            );
+        }
         assert!(
             mismatches.is_empty(),
             "the table disagrees with the vendored 2026-09-20 models.dev reading — re-fetch the \
@@ -3527,26 +3564,26 @@ mod tests {
     /// one side cannot be acted on without opening three files.
     #[test]
     fn audit_vendor_rows_names_a_mismatch_with_both_readings() {
-        let matching = vec![("deepseek-flash".to_string(), 0.15, 0.60, 0.003)];
+        let matching = vec![("deepseek-r1".to_string(), 0.55, 2.19, 0.0)];
         let (mismatches, compared, _) = audit_vendor_rows(&matching);
         assert!(
             mismatches.is_empty(),
-            "the table's flash row must match the vendor's real number: {mismatches:?}"
+            "yoyo's own r1 row must match its own reading (Day 251: the flash rows are yoagent's): {mismatches:?}"
         );
-        assert_eq!(compared, vec!["deepseek-flash".to_string()]);
+        assert_eq!(compared, vec!["deepseek-r1".to_string()]);
 
         // Near-miss sibling: one cent per MTok on the input cell is a mismatch,
         // and the receipt carries the id and both readings.
-        let drifted = vec![("deepseek-flash".to_string(), 0.16, 0.60, 0.003)];
+        let drifted = vec![("deepseek-r1".to_string(), 0.56, 2.19, 0.0)];
         let (mismatches, compared, _) = audit_vendor_rows(&drifted);
-        assert_eq!(compared, vec!["deepseek-flash".to_string()]);
+        assert_eq!(compared, vec!["deepseek-r1".to_string()]);
         assert_eq!(
             mismatches.len(),
             1,
             "one drifted cell, one row: {mismatches:?}"
         );
         assert!(
-            mismatches[0].starts_with("deepseek-flash: table ("),
+            mismatches[0].starts_with("deepseek-r1: table ("),
             "the row must name the id first: {}",
             mismatches[0]
         );
@@ -3562,8 +3599,8 @@ mod tests {
     #[test]
     fn audit_vendor_rows_compares_all_three_shared_cells() {
         for row in [
-            ("deepseek-flash".to_string(), 0.15, 0.60, 0.004),
-            ("deepseek-flash".to_string(), 0.15, 0.61, 0.003),
+            ("deepseek-r1".to_string(), 0.55, 2.19, 0.001),
+            ("deepseek-r1".to_string(), 0.55, 2.20, 0.0),
         ] {
             let (mismatches, _, _) = audit_vendor_rows(std::slice::from_ref(&row));
             assert_eq!(

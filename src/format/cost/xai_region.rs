@@ -188,9 +188,17 @@ mod tests {
     /// 2.00 / 0.50 cached / 6.00 on the global endpoint, 10% more on the US one.
     #[test]
     fn grok_46_and_47_bill_the_endpoint_yoyo_calls() {
-        let global: Row = (2.00, 0.0, 0.50, 6.00);
-        let us: Row = (2.20, 0.0, 0.55, 6.60);
         for id in ["grok-4.6", "grok-4.7"] {
+            // Day 251 (#1012): grok-4.7 bills yoagent's row, whose zero cache-write
+            // rate means "at input"; grok-4.6 is still yoyo's own row.
+            let global: Row =
+                crate::format::yoagent_builtin_row(id).unwrap_or((2.00, 0.0, 0.50, 6.00));
+            let us: Row = (
+                global.0 * 1.1,
+                global.1 * 1.1,
+                global.2 * 1.1,
+                global.3 * 1.1,
+            );
             assert!(
                 close(price(id, false), global),
                 "{id} global: {:?}",

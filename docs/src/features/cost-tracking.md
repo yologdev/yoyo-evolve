@@ -96,18 +96,25 @@ Use `/tokens` to see a full breakdown including cache usage:
 
 Costs are estimated based on published pricing for all major providers.
 
-**Error direction.** Where a vendor's price varies (a promotion, a context tier,
-a time-of-day rate, a regional endpoint), what decides the rate is the variation's
-*selector*: the date, the endpoint, the prompt size, the account tier. When the
-selector reaches yoyo (yoyo has a clock, knows the endpoint it calls, and sees each
-prompt's size), the table models the variation. Only when the selector never reaches
-yoyo does it use the higher rate instead, so an estimate is meant to read high, not
-low. Date-keyed rows are listed under Google below. Two places do not meet
-that yet, and both read low: DeepSeek is priced at its off-peak rate (see below);
-and the session cost line for a tiered model (Haiku 5.5, Gemini 3.1 Pro, Grok 4.x)
-uses the base rate, where only the per-turn breakdown applies the tier. (Until
-Day 241, Grok 4.7 on xAI's US endpoint was a third; it now bills that
-endpoint's rate, see xAI below.)
+**Where a price comes from.** A `[model_pricing]` override in your config wins.
+Otherwise, since Day 251, yoyo bills the price in yoagent's bundled price snapshot
+(each row checked by yoagent against the vendor's own page, with its source and date)
+for every model id that snapshot lists. Only for ids yoagent does not price does yoyo
+fall back to its own table below. That fallback is temporary: @yuanhao decided that
+yoyo reuses yoagent's prices instead of keeping its own (#1012), and yoyo's rows go
+once yoagent's live models.dev layer is wired in, because deleting them before that
+would leave about 70 models unpriced. An id yoagent lists under two providers at
+different prices is not guessed at; it falls back to yoyo's table.
+
+**Error direction.** Where a vendor's price varies (a promotion, a time-of-day rate),
+yoagent's rows carry the regular or peak rate on purpose, so an estimate reads high,
+never low; see yoagent's pricing guide (`docs/concepts/pricing.md`, "DeepSeek is
+priced at its peak rate" and the promotion note under "Which constructors are priced").
+yoyo itself still models two variations yoagent does not: xAI's US-endpoint premium
+(yoyo knows the endpoint it calls) and context tiers in the per-turn breakdown. One
+place still reads low: the session cost line for a tiered model (Haiku 5.5, Gemini
+3.1 Pro, Grok 4.x) uses the base rate, where only the per-turn breakdown applies the
+tier (#1012).
 
 ### Anthropic
 
@@ -201,18 +208,11 @@ name happens to match in these tables, or no price.
 | Gemini 3.5 Flash (`gemini-3.5-flash`, retired) | $1.50/MTok | $9/MTok |
 
 The rates in the table for Gemini 3.6 Flash, 3.8 Flash (and `gemini-3.7-flash`) and 4 Argon are
-Google's regular rates. Until each introductory window ends, yoyo bills the introductory rate
-instead, keyed on the date (since Day 242; before that `/cost` read about twice the bill):
-
-| Model | Introductory input / cache read / output | Through | Regular from |
-|-------|------------------------------------------|---------|--------------|
-| `gemini-4-argon` | $2 / $0.10 / $10 | 2026-11-30 | 2026-12-01 00:00 UTC |
-| `gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.6-flash` | $0.75 / $0.075 / $3.75 | 2026-12-31 | 2027-01-01 00:00 UTC |
-
-Google names no time zone, so the switch is at the earliest reading (midnight UTC); if Google
-means a later zone, those hours read high. A cost is priced when it is shown, so a session from
-before the switch summed after it also reads high. Google's deprecations page
-says `gemini-3.7-flash` requests go to 3.8 Flash, so it bills 3.8's rate.
+Google's regular rates, and since Day 251 they are yoagent's rows. Google bills an introductory
+half rate until 2026-11-30 (`gemini-4-argon`) and 2026-12-31 (the flash ids); until then `/cost`
+reads up to twice the bill, an upper bound. (From Day 242 to Day 250 yoyo billed the introductory
+rate by the date; that table was removed when the ids moved to yoagent, #1012.) Google's
+deprecations page says `gemini-3.7-flash` requests go to 3.8 Flash, so it bills 3.8's rate.
 `gemini-3.5-flash` requests go to 3.6 Flash, but Google doesn't say at which model's price, so it
 keeps its own $9 output, the higher of the two. The shut-down previews `gemini-3.1-flash-lite-preview`,
 `gemini-3.1-flash-image-preview` and `gemini-3-pro-image-preview` bill the replacement Google
@@ -232,20 +232,20 @@ Gemini 3 Pro Image is billed at its image output rate ($120); its text output is
 |-------|-------|--------|
 | DeepSeek Chat/V3 | $0.27/MTok | $1.10/MTok |
 | DeepSeek Reasoner/R1 | $0.55/MTok | $2.19/MTok |
-| DeepSeek Flash (V4.1-Flash, incl. the `deepseek-v4-flash` legacy alias) | $0.15/MTok | $0.60/MTok |
+| DeepSeek Flash (`deepseek-flash`, and the legacy `deepseek-v4-flash` / `deepseek-v4-flash-vision-exp`) | yoagent's row | yoagent's row |
+| DeepSeek V4 Pro (`deepseek-v4-pro`) | yoagent's row | yoagent's row |
 
-Two things to read these numbers with. First, they are **off-peak** prices:
-DeepSeek doubles them on weekdays 01:00–04:00 and 06:00–10:00 UTC, so a cost
-yoyo reports for a DeepSeek session is a **lower bound** — during a peak window
-the true cost is up to 2x what is shown. Second, this table is a set of
-**hardcoded literals**: when a provider changes its prices, nothing changes
-here automatically. A drift alarm exists but is opt-in, because it fetches
-models.dev over the network: `cargo test --bin yoyo audit_table_against_models_dev
--- --ignored` lists every row that disagrees. Open drift is tracked in #1012. `deepseek-v4-flash` (the id the evolve
-loop runs on) is a legacy name DeepSeek still serves as V4.1-Flash, so it is
-priced as `deepseek-flash`; `deepseek-r1`, `deepseek-v3` and `deepseek-v4-pro`
-are carried unchanged and, at the time of writing, have not been checked against
-a second source.
+Since Day 251 the V4 ids bill yoagent's rows, which carry DeepSeek's **peak** rate
+(DeepSeek bills half of it off-peak, all hours but weekdays 01:00–04:00 and
+06:00–10:00 UTC), so a DeepSeek V4 cost is an **upper bound**: off-peak it is up to
+twice the bill. Until Day 250 yoyo billed its own off-peak rows, which read low
+during peak hours. To count off-peak spend, set the off-peak rates as a
+`[model_pricing]` override. `deepseek-r1` and `deepseek-v3` are still yoyo's own
+rows, carried unchanged and not checked against a second source. yoyo's own
+rows are **hardcoded literals**: a drift alarm exists but is opt-in, because it
+fetches models.dev over the network: `cargo test --bin yoyo
+audit_table_against_models_dev -- --ignored` lists every row that disagrees. Open
+drift is tracked in #1012.
 
 ### Mistral
 

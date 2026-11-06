@@ -936,11 +936,14 @@ fn the_mapping_covers_shipped_ids_and_refuses_unshipped_ones() {
 /// against a fixture, so it cannot pass by producing nothing.
 #[test]
 fn ours_from_catalogue_keeps_only_rows_this_repo_can_price() {
+    // Day 251 (#1012): `/cost` bills yoagent's row for this id, so the fixture's
+    // catalogue reading is yoagent's too (the join is under test, not the price).
+    let yoagent = super::yoagent_builtin_row("deepseek-flash").expect("yoagent prices it");
     let catalogue = vec![
         CatalogueRow {
             provider: "deepseek".to_string(),
             id: "deepseek-flash".to_string(),
-            price: (0.15, 0.0, 0.003, 0.60),
+            price: yoagent,
         },
         // Was `deepseek-v4-flash-vision-exp` until #1003 — an id `/cost` DOES
         // price, so it no longer specimens "cannot price".
@@ -953,7 +956,7 @@ fn ours_from_catalogue_keeps_only_rows_this_repo_can_price() {
     let ours = ours_from_catalogue(&catalogue);
     assert_eq!(ours.len(), 1, "only the priceable id is on the yoyo side");
     assert_eq!(ours[0].0, "deepseek/deepseek-flash");
-    assert_eq!(ours[0].1, (0.15, 0.0, 0.003, 0.60));
+    assert_eq!(ours[0].1, yoagent);
 
     // Anti-vacuous, and the coverage side: the unpriced row is reported as such.
     let report = compare_catalogue(&ours, &catalogue, REL_TOL);
@@ -1452,6 +1455,7 @@ fn reconciled_openai_live_rows_bill_the_models_dev_price() {
     ];
     let known = crate::providers::known_models_for_provider("openai");
     for (id, expected) in rows {
+        let expected = after_yoagent(id, expected);
         assert!(
             known.contains(&id),
             "{id} is no longer in known_models_for_provider(\"openai\") — it was reconciled \
@@ -1513,6 +1517,7 @@ fn reconciled_mistral_small_and_flash_variants_bill_the_models_dev_price() {
         ("gemini-2.5-flash-preview-tts", (0.5, 0.0, 0.0, 10.0)),
     ];
     for (id, expected) in rows {
+        let expected = after_yoagent(id, expected);
         let got = price_of(id).unwrap_or_else(|| panic!("{id} must be priced by /cost"));
         assert!(
             cells_within(got, expected, 1e-9),
@@ -1542,6 +1547,7 @@ fn reconciled_mistral_glm_rows_bill_the_models_dev_price() {
         ("zai-glm-5-3-flash", (0.15, 0.0, 0.03, 0.5)),
     ];
     for (id, expected) in rows {
+        let expected = after_yoagent(id, expected);
         let got = price_of(id).unwrap_or_else(|| panic!("{id} must be priced by /cost"));
         assert!(
             cells_within(got, expected, 1e-9),
@@ -1569,6 +1575,7 @@ fn reconciled_zai_glm_rows_bill_the_vendor_price() {
         ("glm-4.7-flashx", (0.07, 0.0, 0.01, 0.4)),
     ];
     for (id, expected) in rows {
+        let expected = after_yoagent(id, expected);
         let got = price_of(id).unwrap_or_else(|| panic!("{id} must be priced by /cost"));
         assert!(
             cells_within(got, expected, 1e-9),
@@ -1677,12 +1684,13 @@ fn test_estimate_cost_glm5() {
 /// (ai.google.dev/gemini-api/docs/pricing, read 2026-10-25) and agrees with models.dev,
 /// except `gemini-3.6-flash`, whose row is Google's regular $1.50 / $7.50 / $0.15: until
 /// 2026-12-31 Google bills an introductory $0.75 / $3.75 / $0.075 (models.dev lists that),
-/// which `promo.rs` applies by date (Day 242), so this test prices after the promo. All are
+/// which `promo.rs` applied by date (Day 242) until Day 251, when yoagent's regular-rate
+/// row (an upper bound, its note says) took over, the promo rows deleted (#1012). All are
 /// typed-only ids (none is in yoyo's google picker), read through `price_of`, the `/cost` resolver.
 #[test]
 fn reconciled_gemini_3x_flash_rows_bill_googles_price() {
-    // Regular rates: priced after every Google promo has ended (`promo.rs`).
-    super::promo::with_now(super::promo::AFTER_ALL_PROMOS_UNIX, || {
+    // Day 251 (#1012): no dated promo is left in yoyo; yoagent bills the regular rate.
+    {
         let rows: [(&str, Rates); 9] = [
             ("gemini-3-flash-preview", (0.5, 0.0, 0.05, 3.0)),
             ("gemini-3.1-flash-lite", (0.25, 0.0, 0.025, 1.5)),
@@ -1695,6 +1703,7 @@ fn reconciled_gemini_3x_flash_rows_bill_googles_price() {
             ("gemini-3.6-flash", (1.5, 0.0, 0.15, 7.5)),
         ];
         for (id, expected) in rows {
+            let expected = after_yoagent(id, expected);
             let got = price_of(id).unwrap_or_else(|| panic!("{id} must be priced by /cost"));
             assert!(
             cells_within(got, expected, 1e-9),
@@ -1718,7 +1727,7 @@ fn reconciled_gemini_3x_flash_rows_bill_googles_price() {
             price_of("gemini-3-pro-preview"),
             Some((1.25, 0.0, 0.0, 10.00))
         );
-    });
+    }
 }
 
 /// #1012, Day 239: the gemini pro rows Google's pricing page lists
@@ -1736,6 +1745,7 @@ fn reconciled_gemini_3x_pro_rows_bill_googles_price() {
         ("gemini-2.5-pro-preview-tts", (1.0, 0.0, 0.0, 20.0)),
     ];
     for (id, expected) in rows {
+        let expected = after_yoagent(id, expected);
         let got = price_of(id).unwrap_or_else(|| panic!("{id} must be priced by /cost"));
         assert!(
             cells_within(got, expected, 1e-9),
@@ -1761,28 +1771,33 @@ fn reconciled_gemini_3x_pro_rows_bill_googles_price() {
 /// Google's deprecations page (ai.google.dev/gemini-api/docs/deprecations, read
 /// 2026-10-28) says what happens to each, and that is what selects the price:
 /// - `gemini-3.7-flash`: "the endpoint is not shutting down and automatically routes
-///   API requests to `gemini-3.8-flash`", so it bills whatever 3.8 bills (introductory
-///   until 2026-12-31, then regular).
+///   API requests to `gemini-3.8-flash`", so it bills whatever 3.8 bills (since Day 251,
+///   yoagent's regular-rate row, read through `yoagent_price_row`).
 /// - `gemini-3.5-flash`: routes to `gemini-3.6-flash` the same way, but neither page
 ///   says whether a routed call bills at 3.6's price or 3.5's own ($1.50 / $9.00, which
-///   models.dev keeps). Nothing yoyo sends selects between them, so cost-tracking.md's
-///   error direction picks the higher: 9.00 output, high under either reading.
+///   models.dev keeps). Nothing yoyo sends selects between them, so it reads high, as
+///   yoagent's upper-bound rows do (cost-tracking.md): 9.00 output under either reading.
 /// - `gemini-3.1-flash-lite-preview`, `gemini-3.1-flash-image-preview`,
 ///   `gemini-3-pro-image-preview`: shut down (2026-05-25, 2026-06-25, 2026-06-25), so
 ///   no call bills; each takes the price of the replacement the page names, which is
 ///   also models.dev's figure.
 ///
 /// Also pinned: the two picker ids `gemini-3.8-flash` and `gemini-4-argon` bill
-/// Google's REGULAR rate (yoagent's preset) once their promos end. Until then
-/// (2026-12-31 and 2026-11-30) `promo.rs` bills the introductory rate models.dev lists
-/// (Day 242: the selector is the date, and yoyo has a clock), so this test prices after.
+/// Google's REGULAR rate (yoagent's row). Google bills an introductory half rate until
+/// 2026-12-31 / 2026-11-30; `promo.rs` modelled it by date from Day 242 until Day 251,
+/// when @yuanhao's #1012 decision handed these ids to yoagent, whose rows are the
+/// regular rate on purpose (an upper bound: /cost reads 2x the bill until those dates).
 #[test]
 fn retired_gemini_ids_bill_what_googles_deprecations_page_names() {
-    // Regular rates: priced after every Google promo has ended (`promo.rs`).
-    super::promo::with_now(super::promo::AFTER_ALL_PROMOS_UNIX, || {
+    // Day 251 (#1012): no dated promo is left in yoyo; yoagent bills the regular rate.
+    {
         let rows: [(&str, Rates); 7] = [
             ("gemini-3.5-flash", (1.5, 0.0, 0.15, 9.0)),
-            ("gemini-3.7-flash", (1.5, 0.0, 0.15, 7.5)),
+            // Routed to 3.8, so it bills yoagent's 3.8 row (Day 251, #1012).
+            (
+                "gemini-3.7-flash",
+                after_yoagent("gemini-3.8-flash", (1.5, 0.0, 0.15, 7.5)),
+            ),
             ("gemini-3.1-flash-lite-preview", (0.25, 0.0, 0.025, 1.5)),
             ("gemini-3.1-flash-image-preview", (0.5, 0.0, 0.0, 60.0)),
             ("gemini-3-pro-image-preview", (2.0, 0.0, 0.0, 120.0)),
@@ -1790,6 +1805,7 @@ fn retired_gemini_ids_bill_what_googles_deprecations_page_names() {
             ("gemini-4-argon", (4.0, 0.0, 0.2, 20.0)),
         ];
         for (id, expected) in rows {
+            let expected = after_yoagent(id, expected);
             let got = price_of(id).unwrap_or_else(|| panic!("{id} must be priced by /cost"));
             assert!(
             cells_within(got, expected, 1e-9),
@@ -1817,7 +1833,7 @@ fn retired_gemini_ids_bill_what_googles_deprecations_page_names() {
                 "{retired} vs {successor}"
             );
         }
-    });
+    }
 }
 
 /// #1012, Day 241: the xai rows docs.x.ai/docs/models lists (fetched 2026-10-27; the
@@ -1838,6 +1854,7 @@ fn reconciled_xai_rows_bill_xais_price() {
         ("grok-4.6", (2.0, 0.0, 0.5, 6.0)),
     ];
     for (id, expected) in rows {
+        let expected = after_yoagent(id, expected);
         let got = price_of(id).unwrap_or_else(|| panic!("{id} must be priced by /cost"));
         assert!(
             cells_within(got, expected, 1e-9),
@@ -1904,4 +1921,13 @@ fn reconciled_xai_rows_bill_the_long_context_tier_above_200k() {
         estimate_request_cost_with(&none, &over, "grok-4"),
         estimate_cost_with(&none, &over, "grok-4").map(|c| (c, false))
     );
+}
+
+/// Day 251 (#1012 slice 1): `/cost` bills yoagent's row for every id yoagent
+/// prices, so for such an id the typed vendor reading in a `reconciled_*` table
+/// is yoyo's pre-yoagent history, and the expectation is yoagent's figure (each
+/// checked against its own `source` on its `verified` date in yoagent's
+/// prices.json). Ids yoagent does not price keep the typed reading.
+fn after_yoagent(id: &str, typed: Rates) -> Rates {
+    super::yoagent_builtin_row(id).unwrap_or(typed)
 }
