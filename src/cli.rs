@@ -3207,13 +3207,14 @@ mod tests {
             );
         }
 
-        // The wording for genuinely unknown ids stays byte-identical.
+        // The wording for genuinely unknown ids: the first five of the list,
+        // which leads with the default since #1144 (Day 251).
         assert_eq!(
             unknown_model_warning("anthropic", "claude-fable-9"),
             Some(format!(
                 "{YELLOW}warning:{RESET} Unknown model 'claude-fable-9' for provider \
-                 'anthropic'. Known models: claude-opus-5, claude-fable-5, claude-opus-4-8, \
-                 claude-sonnet-5, claude-opus-4-7. Proceeding anyway (custom models are valid)."
+                 'anthropic'. Known models: claude-opus-5-5, claude-sonnet-5-5, \
+                 claude-haiku-5-5, claude-opus-5, claude-fable-5. Proceeding anyway (custom models are valid)."
             ))
         );
         assert_eq!(

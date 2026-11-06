@@ -105,7 +105,7 @@ yoyo supports a TOML-style config file so you don't have to pass flags every tim
 
 ```toml
 # Model and provider
-model = "claude-sonnet-4-20250514"
+model = "claude-sonnet-5-5"
 provider = "anthropic"
 thinking = "medium"
 
@@ -142,6 +142,6 @@ allow = ["./src", "./tests"]
 deny = ["~/.ssh", "/etc"]
 ```
 
-CLI flags always override config file values. For example, `--model gpt-4o` overrides `model = "claude-sonnet-4-20250514"` from the config file.
+CLI flags always override config file values. For example, `--model gpt-4o` overrides `model = "claude-sonnet-5-5"` from the config file.
 
 For more details on model configuration, see [Models](../configuration/models.md). For thinking levels, see [Thinking](../configuration/thinking.md).

@@ -423,3 +423,115 @@ fn bedrock_inference_profile_ids_are_known_models() {
     // Provider-scoped: a Bedrock id under another provider stays unknown.
     assert!(!known("anthropic", "us.anthropic.claude-sonnet-4-6"));
 }
+
+/// #1144 item 3, #1121: Claude ids yoyo must not offer. `claude-sonnet-4-5`
+/// retires 2026-11-30 and yoagent ships no row for it; `claude-sonnet-4-7`
+/// never existed (`--model claude-sonnet-4-7` is a 404); the 2025-05-14
+/// Sonnet 4 snapshot retired 2026-06-15. Pricing rows are a different
+/// question (a user still on 4.5 is billed until it retires) and stay.
+const DEAD_CLAUDE_STEMS: [&str; 3] = [
+    "claude-sonnet-4-5",
+    "claude-sonnet-4-7",
+    "claude-sonnet-4-20250514",
+];
+
+/// Every list yoyo offers Claude ids from: the anthropic and bedrock known
+/// lists (the 404 hint's "Available models", the setup wizard, the unknown-model
+/// warning) and the `/model <Tab>` completions.
+fn offered_claude_ids() -> Vec<(&'static str, &'static str)> {
+    let mut out = Vec::new();
+    for provider in ["anthropic", "bedrock"] {
+        for id in crate::providers::known_models_for_provider(provider) {
+            // Bedrock's list also carries Amazon Nova; only Claude ids are
+            // yoagent's to vouch for here.
+            if id.contains("claude") {
+                out.push((provider, *id));
+            }
+        }
+    }
+    for id in crate::commands::KNOWN_MODELS {
+        if id.contains("claude") {
+            out.push(("/model completion", *id));
+        }
+    }
+    out
+}
+
+#[test]
+fn no_offered_list_carries_a_retired_or_nonexistent_claude_id() {
+    let offered = offered_claude_ids();
+    assert!(
+        offered.len() > 10,
+        "anti-vacuous: the walk must reach the real lists"
+    );
+    for (source, id) in &offered {
+        for dead in DEAD_CLAUDE_STEMS {
+            assert!(!id.contains(dead), "{source} still offers dead id {id}");
+        }
+    }
+    // Near miss: claude-sonnet-4-6 shares the dead ids' stem and is current.
+    assert!(offered
+        .iter()
+        .any(|(_, id)| id.contains("claude-sonnet-4-6")));
+}
+
+/// The Anthropic id behind an offered id: drop Bedrock's `anthropic.` and its
+/// `-v1:0` revision, then an 8-digit snapshot date (`-20251001`).
+fn anthropic_stem(id: &str) -> &str {
+    let id = id.strip_prefix("anthropic.").unwrap_or(id);
+    let id = id.strip_suffix("-v1:0").unwrap_or(id);
+    match id.rsplit_once('-') {
+        Some((stem, date)) if date.len() == 8 && date.bytes().all(|b| b.is_ascii_digit()) => stem,
+        _ => id,
+    }
+}
+
+/// yoagent is the authority for which Claude ids are real: an offered id must
+/// be a yoagent preset (`ModelConfig::preset`) or a row of yoagent's bundled
+/// price table under `anthropic`. A made-up id like `claude-sonnet-4-7` is
+/// neither, so the next one fails here instead of being offered.
+fn yoagent_knows(provider: &str, id: &str) -> bool {
+    let stem = anthropic_stem(id);
+    let priced = yoagent::provider::PriceTable::builtin()
+        .iter()
+        .any(|(p, model, _)| p == "anthropic" && model == stem);
+    ModelConfig::preset(provider, id).is_some()
+        || ModelConfig::preset("anthropic", stem).is_some()
+        || priced
+}
+
+#[test]
+fn every_offered_claude_id_is_known_to_yoagent() {
+    for (source, id) in offered_claude_ids() {
+        let provider = if source == "bedrock" {
+            "bedrock"
+        } else {
+            "anthropic"
+        };
+        assert!(
+            yoagent_knows(provider, id),
+            "{source} offers {id}, which has no yoagent preset or price row"
+        );
+    }
+    // Recall control: the three dead ids really fail the authority, so this
+    // test would have caught them.
+    for dead in DEAD_CLAUDE_STEMS {
+        assert!(!yoagent_knows("anthropic", dead), "{dead} must fail");
+    }
+    assert!(!yoagent_knows("bedrock", "anthropic.claude-sonnet-4-7"));
+}
+
+#[test]
+fn anthropic_default_leads_the_list_the_404_hint_suggests_from() {
+    let known = crate::providers::known_models_for_provider("anthropic");
+    let default = crate::providers::default_model_for_provider("anthropic");
+    assert_eq!(known[0], default, "the hint's switch line names known[0]");
+    for current in ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"] {
+        assert!(known.contains(&current), "anthropic list lacks {current}");
+    }
+    let bedrock = crate::providers::known_models_for_provider("bedrock");
+    assert_eq!(
+        bedrock[0],
+        crate::providers::default_model_for_provider("bedrock")
+    );
+}

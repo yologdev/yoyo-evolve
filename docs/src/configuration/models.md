@@ -10,14 +10,14 @@ The default model is `claude-opus-5-5` (Anthropic). You can change it at startup
 
 **At startup:**
 ```bash
-yoyo --model claude-sonnet-4-20250514
+yoyo --model claude-sonnet-5-5
 yoyo --model gpt-4o --provider openai
 yoyo --model llama3.2 --provider ollama
 ```
 
 **During a session:**
 ```
-/model claude-sonnet-4-20250514
+/model claude-sonnet-5-5
 /model list
 /model list openai
 ```

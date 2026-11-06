@@ -216,7 +216,7 @@ pub fn get_welcome_text() -> String {
   {BOLD}Persistent config:{RESET}
   Create a {CYAN}.yoyo.toml{RESET} file in your project or home directory:
      {DIM}api_key = "sk-ant-..."{RESET}
-     {DIM}model = "claude-sonnet-4-20250514"{RESET}
+     {DIM}model = "claude-sonnet-5-5"{RESET}
      {DIM}provider = "anthropic"{RESET}
   Or use {CYAN}~/.config/yoyo/config.toml{RESET} for XDG-style config.
 

@@ -83,17 +83,24 @@ pub fn find_provider_key(
 /// Returns a slice of commonly-used model identifiers.
 pub fn known_models_for_provider(provider: &str) -> &'static [&'static str] {
     match provider {
+        // The default leads: the 404 hint's switch line names `[0]`, and the
+        // `Unknown model` warning shows the first five. Every id here must be a
+        // yoagent preset or a yoagent price row
+        // (`every_offered_claude_id_is_known_to_yoagent`), so a retired or
+        // made-up id (#1144: sonnet-4-5, sonnet-4-7, sonnet-4-20250514) fails a
+        // test instead of being offered. `claude-fable-5-1` is left off on
+        // purpose: the preset path resolves it (cli.rs #941 test).
         "anthropic" => &[
+            "claude-opus-5-5",
+            "claude-sonnet-5-5",
+            "claude-haiku-5-5",
             "claude-opus-5",
             "claude-fable-5",
             "claude-opus-4-8",
             "claude-sonnet-5",
             "claude-opus-4-7",
             "claude-opus-4-6",
-            "claude-sonnet-4-7",
             "claude-sonnet-4-6",
-            "claude-sonnet-4-5",
-            "claude-sonnet-4-20250514",
             "claude-haiku-4-5",
             "claude-haiku-4-5-20251001",
         ],
@@ -159,11 +166,8 @@ pub fn known_models_for_provider(provider: &str) -> &'static [&'static str] {
             "MiniMax-M1-40k",
         ],
         "bedrock" => &[
-            "anthropic.claude-opus-4-7",
-            "anthropic.claude-sonnet-4-7",
             "anthropic.claude-sonnet-4-6",
-            "anthropic.claude-sonnet-4-5-20250929-v1:0",
-            "anthropic.claude-sonnet-4-20250514-v1:0",
+            "anthropic.claude-opus-4-7",
             "anthropic.claude-haiku-4-5-20251001-v1:0",
             "amazon.nova-pro-v1:0",
             "amazon.nova-lite-v1:0",
@@ -740,7 +744,9 @@ mod tests {
     fn test_bedrock_known_models() {
         let models = known_models_for_provider("bedrock");
         assert!(!models.is_empty(), "bedrock should have known models");
-        assert!(models.contains(&"anthropic.claude-sonnet-4-20250514-v1:0"));
+        // The default is listed; the retired 2025-05-14 Sonnet 4 is not (#1121).
+        assert!(models.contains(&"anthropic.claude-sonnet-4-6"));
+        assert!(!models.contains(&"anthropic.claude-sonnet-4-20250514-v1:0"));
         assert!(models.contains(&"amazon.nova-pro-v1:0"));
     }
 
@@ -805,9 +811,10 @@ mod tests {
             models.contains(&"claude-sonnet-4-6"),
             "anthropic should include claude-sonnet-4-6"
         );
+        // Sonnet 4.5 retires 2026-11-30 and yoagent has no row for it (#1144).
         assert!(
-            models.contains(&"claude-sonnet-4-5"),
-            "anthropic should include claude-sonnet-4-5"
+            !models.contains(&"claude-sonnet-4-5"),
+            "anthropic must no longer offer claude-sonnet-4-5"
         );
         assert!(
             models.contains(&"claude-haiku-4-5"),
@@ -818,9 +825,10 @@ mod tests {
             models.contains(&"claude-opus-4-6"),
             "anthropic should still include claude-opus-4-6"
         );
+        // The 2025-05-14 Sonnet 4 snapshot retired 2026-06-15 (#1144).
         assert!(
-            models.contains(&"claude-sonnet-4-20250514"),
-            "anthropic should still include claude-sonnet-4-20250514"
+            !models.contains(&"claude-sonnet-4-20250514"),
+            "anthropic must no longer offer claude-sonnet-4-20250514"
         );
     }
 
@@ -846,15 +854,15 @@ mod tests {
     }
 
     #[test]
-    fn test_anthropic_known_models_contains_sonnet_4_20250514() {
+    fn test_anthropic_known_models_no_longer_offers_retired_sonnet_4_20250514() {
         let models = known_models_for_provider("anthropic");
         assert!(
             !models.is_empty(),
             "anthropic should have a non-empty known models list"
         );
         assert!(
-            models.contains(&"claude-sonnet-4-20250514"),
-            "anthropic known models should contain claude-sonnet-4-20250514"
+            !models.contains(&"claude-sonnet-4-20250514"),
+            "anthropic known models must not offer the retired claude-sonnet-4-20250514"
         );
     }
 

@@ -120,7 +120,7 @@ ordinary prompt.
 You can combine prompts with other flags:
 
 ```bash
-yoyo "review this diff" --model claude-sonnet-4-20250514
+yoyo "review this diff" --model claude-sonnet-5-5
 yoyo "explain the architecture" --thinking high
 yoyo -p "analyze the code" --system "You are a security auditor."
 ```

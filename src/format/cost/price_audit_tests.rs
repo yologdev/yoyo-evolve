@@ -1219,7 +1219,9 @@ fn estimated_arms_are_audited_by_the_same_path_with_no_skip_set() {
 /// id under a provider this audit does not read stays a coverage gap.
 #[test]
 fn the_audit_asks_the_pricing_resolver_not_the_shipped_list() {
-    let priceable = ["claude-opus-5-5", "claude-fable-5-1", "claude-haiku-5-5"];
+    // Day 251 (#1144): claude-opus-5-5 and claude-haiku-5-5 joined the shipped
+    // list (the default leads it now), so the off-list priced rows are these.
+    let priceable = ["claude-opus-4-5", "claude-fable-5-1"];
     for id in priceable {
         // Anti-vacuous: the premise of #1003 is that these are NOT on the list.
         assert!(
@@ -1256,8 +1258,8 @@ fn the_audit_asks_the_pricing_resolver_not_the_shipped_list() {
         )))
         .collect();
     let report = compare_catalogue(&ours_from_catalogue(&catalogue), &catalogue, REL_TOL);
-    assert_eq!(report.compared, 3, "{report:?}");
-    assert_eq!(report.drifted.len(), 3, "{report:?}");
+    assert_eq!(report.compared, priceable.len(), "{report:?}");
+    assert_eq!(report.drifted.len(), priceable.len(), "{report:?}");
 
     // Near miss: a truly unknown id is still "cannot price", never a match.
     assert_eq!(price_of("acme-imaginary-9"), None);

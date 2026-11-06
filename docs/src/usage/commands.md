@@ -133,7 +133,7 @@ Bookmarks are stored in memory for the current session. Overwriting a bookmark w
 
 Examples:
 ```
-/model claude-sonnet-4-20250514
+/model claude-sonnet-5-5
 /model list
 /model list anthropic
 /provider openai

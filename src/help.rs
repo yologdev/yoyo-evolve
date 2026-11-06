@@ -817,7 +817,7 @@ pub fn cli_help_text() -> String {
     let _ = writeln!(s, "  ~/.config/yoyo/config.toml  User-level config (XDG)");
     let _ = writeln!(s);
     let _ = writeln!(s, "Config file format (key = value):");
-    let _ = writeln!(s, "  model = \"claude-sonnet-4-20250514\"");
+    let _ = writeln!(s, "  model = \"claude-sonnet-5-5\"");
     let _ = writeln!(s, "  provider = \"openai\"");
     let _ = writeln!(s, "  base_url = \"http://localhost:11434/v1\"");
     let _ = writeln!(s, "  thinking = \"medium\"");

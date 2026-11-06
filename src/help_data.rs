@@ -652,7 +652,7 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              Changes the active model while preserving the conversation.\n\
              Tab-completion is available for known model names.\n\n\
              Examples:\n\
-             \x20 /model claude-sonnet-4-20250514\n\
+             \x20 /model claude-sonnet-5-5\n\
              \x20 /model gpt-4o\n\
              \x20 /model list\n\
              \x20 /model list anthropic\n\
@@ -955,7 +955,7 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              \x20 /spawn --bg analyze test coverage for src/\n\
              \x20 /spawn --bg --model gpt-4o -o report.md review error handling\n\
              \x20 /spawn --parallel fix auth tests --- write parser docs --- add error handling\n\
-             \x20 /spawn --parallel -m claude-sonnet-4-20250514 task A --- task B\n\
+             \x20 /spawn --parallel -m claude-sonnet-5-5 task A --- task B\n\
              \x20 /spawn collect 1\n\
              \x20 /spawn runs\n\
              \x20 /spawn replay latest\n\
