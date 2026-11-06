@@ -441,11 +441,12 @@ fn test_build_json_output_structure_completeness() {
     let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
     let obj = parsed.as_object().unwrap();
 
-    // Exactly 9 top-level keys (8 original + `external_servers`, #895).
+    // Exactly 10 top-level keys (8 original + `external_servers`, #895, +
+    // `incomplete`, #1026 item 1: null here, the reply ended normally).
     assert_eq!(
         obj.len(),
-        9,
-        "expected 9 top-level keys, got {:?}",
+        10,
+        "expected 10 top-level keys, got {:?}",
         obj.keys().collect::<Vec<_>>()
     );
     assert!(obj.contains_key("response"));
@@ -457,6 +458,7 @@ fn test_build_json_output_structure_completeness() {
     assert!(obj.contains_key("duration_ms"));
     assert!(obj.contains_key("num_turns"));
     assert!(obj.contains_key("external_servers"));
+    assert_eq!(obj["incomplete"], serde_json::Value::Null);
 
     // usage sub-object has exactly 4 keys
     let usage_obj = parsed["usage"].as_object().unwrap();
@@ -1774,4 +1776,50 @@ fn json_output_carries_delegated_spend_apart_from_own() {
     spend.cost_usd = None;
     let parsed: serde_json::Value = serde_json::from_str(&json_with_spend(&spend)).unwrap();
     assert_eq!(parsed["sub_agents"]["cost_usd"], serde_json::Value::Null);
+}
+
+/// #1026 item 1: `is_error` in the json object agrees with the exit code
+/// `exit_code_for_outcome` gives the same ending, and `incomplete` names it.
+#[test]
+fn json_is_error_and_incomplete_agree_with_the_exit_code() {
+    use crate::prompt::{incomplete_forces_failure, Incomplete};
+    for incomplete in [
+        None,
+        Some(Incomplete::OutputLimitUserSet),
+        Some(Incomplete::OutputLimitDefault),
+        Some(Incomplete::Refusal),
+    ] {
+        let response = PromptOutcome {
+            text: "partial".to_string(),
+            text_since_last_tool: String::new(),
+            last_tool_error: None,
+            last_tool_name: None,
+            was_overflow: false,
+            last_api_error: None,
+            incomplete,
+        };
+        let json = build_json_output(
+            &response,
+            "m",
+            &Usage::default(),
+            false,
+            &SessionChanges::new(),
+            std::time::Duration::from_millis(1),
+            1,
+            &yoagent::SubAgentSpend::default(),
+        );
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let code =
+            exit_code_for_outcome(false, false, incomplete_forces_failure(incomplete), false);
+        assert_eq!(
+            v["is_error"],
+            serde_json::Value::Bool(code != 0),
+            "{incomplete:?}: is_error must agree with exit {code}"
+        );
+        assert_eq!(
+            v["incomplete"].is_null(),
+            incomplete.is_none(),
+            "{incomplete:?}"
+        );
+    }
 }

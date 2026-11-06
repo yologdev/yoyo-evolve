@@ -85,6 +85,22 @@ limit nobody chose is a failure: the partial text would otherwise pass for the w
 The same codes apply to piped mode and to `--output-format json`; `--output-format stream-json`
 exits 0 or 1 by the same rules (it has no checkpoint code).
 
+With `--output-format json`, the result object says how the final reply ended in an
+`incomplete` field, so `jq .response` is not the only thing a script can read:
+
+| `incomplete` | Meaning | `is_error` | Exit |
+|--------------|---------|------------|------|
+| `null` | The reply ended normally (a failed run is reported by `is_error`). | as the run | as the run |
+| `{"reason": "output_limit", "limit_set_by": "default"}` | Cut at a limit you never set. | `true` | 1 |
+| `{"reason": "output_limit", "limit_set_by": "user"}` | Cut at your own `max_tokens`. | `false` | 0 |
+| `{"reason": "refusal"}` | The model refused. | `true` | 1 |
+
+`is_error` always agrees with the exit code for these endings. With
+`--output-format stream-json`, the same stderr line the text modes print (the output-limit
+warning, or the refusal notice) is printed to **stderr** when the final reply was cut or
+refused; stdout stays pure JSON lines, and the final `agentEnd` message still carries the
+raw `stopReason`.
+
 ## Slash commands are not expanded here
 
 A prompt whose first non-space character is `/` is treated as a REPL command, not as

@@ -26,7 +26,7 @@ pub use interrupt::{
     install_panic_counter, interrupted_exit_code, mark_single_shot, stream_cut_short,
     was_interrupted,
 };
-pub use output_limit::{incomplete_forces_failure, Incomplete};
+pub use output_limit::{incomplete_forces_failure, incomplete_json, Incomplete};
 mod stream_external_servers;
 #[cfg(test)]
 mod stream_json_retry_tests;
@@ -2087,6 +2087,13 @@ async fn handle_stream_json_events(
                     }
                     AgentEvent::AgentEnd { messages, .. } => {
                         incomplete = output_limit::final_incomplete(messages, agent.max_tokens);
+                        // #1026 item 1: the human signal the text path prints,
+                        // same wording, stderr only (stdout stays JSON lines).
+                        match incomplete {
+                            Some(Incomplete::Refusal) => eprintln!("{}", refusal_notice(model)),
+                            Some(_) => output_limit::print_output_limit_note(agent.max_tokens),
+                            None => {}
+                        }
                         // Extract usage from assistant messages
                         for msg in messages {
                             if let AgentMessage::Llm(Message::Assistant {

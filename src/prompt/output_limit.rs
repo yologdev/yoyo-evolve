@@ -57,6 +57,24 @@ pub fn incomplete_forces_failure(incomplete: Option<Incomplete>) -> bool {
     }
 }
 
+/// The `incomplete` field of the `--output-format json` result object (#1026
+/// item 1): `null` when the final reply ended normally (a failed run is
+/// already `is_error`), else `{"reason": "output_limit", "limit_set_by":
+/// "user" | "default"}` or `{"reason": "refusal"}`. A field of its own, not a
+/// new meaning for `is_error` (the #895 `external_servers` precedent).
+pub fn incomplete_json(incomplete: Option<Incomplete>) -> serde_json::Value {
+    match incomplete {
+        None => serde_json::Value::Null,
+        Some(Incomplete::OutputLimitDefault) => {
+            serde_json::json!({"reason": "output_limit", "limit_set_by": "default"})
+        }
+        Some(Incomplete::OutputLimitUserSet) => {
+            serde_json::json!({"reason": "output_limit", "limit_set_by": "user"})
+        }
+        Some(Incomplete::Refusal) => serde_json::json!({"reason": "refusal"}),
+    }
+}
+
 /// The stop reason of the LAST assistant message of the run, if any.
 fn final_stop_reason(messages: &[AgentMessage]) -> Option<&StopReason> {
     messages.iter().rev().find_map(|m| match m {
@@ -115,9 +133,17 @@ pub(super) fn end_turn(
     state.incomplete = final_incomplete(&messages, max_tokens);
     state.handle_agent_end(messages, model);
     if cut {
-        let note = output_limit_note(max_tokens, is_plain_output());
-        eprintln!("\n{YELLOW}  {note}{RESET}");
+        print_output_limit_note(max_tokens);
     }
+}
+
+/// The one printer of the output-limit note, shared by the text path's
+/// `end_turn` and stream-json's AgentEnd arm (#1026 item 1), so the two
+/// doors cannot drift into two wordings. stderr only: stream-json's stdout
+/// is pure JSON lines.
+pub(super) fn print_output_limit_note(max_tokens: Option<u32>) {
+    let note = output_limit_note(max_tokens, is_plain_output());
+    eprintln!("\n{YELLOW}  {note}{RESET}");
 }
 
 #[cfg(test)]

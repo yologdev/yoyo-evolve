@@ -292,7 +292,12 @@ fn build_json_output_with(
         "cost_usd": cost_usd,
         "duration_ms": duration.as_millis() as u64,
         "num_turns": num_turns,
-        "is_error": is_error,
+        // #1026 item 1: a cut or refused final reply is visible in the object,
+        // and `is_error` agrees with the exit code `exit_code_for_outcome`
+        // gives the same outcome (before, it read only `run_failed`, so a
+        // default-limit cut or a refusal exited 1 with `is_error: false`).
+        "is_error": is_error || prompt::incomplete_forces_failure(response.incomplete),
+        "incomplete": prompt::incomplete_json(response.incomplete),
         "session": session_changes.to_json_summary(),
         // #895: a script must be able to tell a DEGRADED run from a healthy one.
         // Emitted always, never only on failure — a key that appears only when

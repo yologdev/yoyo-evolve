@@ -2573,3 +2573,155 @@ fn exit_code_follows_who_set_the_limit_on_the_piped_and_stream_json_doors() {
         }
     }
 }
+
+/// #1026 item 1, @yuanhao's decision: "Add the note to json and stream-json
+/// output too". The json result object carries `incomplete` (null, or
+/// `{"reason": "output_limit", "limit_set_by": ...}` / `{"reason": "refusal"}`),
+/// and `is_error` agrees with the exit code for the same outcome. Both the
+/// prompt door and the piped door build the object, so both are driven.
+#[test]
+fn json_result_object_says_when_the_reply_was_cut_or_refused() {
+    // (stop_reason, limit flags, want incomplete, want is_error, want exit)
+    let rows: [(&str, &[&str], serde_json::Value, bool, i32); 4] = [
+        (
+            "max_tokens",
+            &[],
+            serde_json::json!({"reason": "output_limit", "limit_set_by": "default"}),
+            true,
+            1,
+        ),
+        (
+            "max_tokens",
+            &["--max-tokens", "30"],
+            serde_json::json!({"reason": "output_limit", "limit_set_by": "user"}),
+            false,
+            0,
+        ),
+        (
+            "refusal",
+            &[],
+            serde_json::json!({"reason": "refusal"}),
+            true,
+            1,
+        ),
+        // Near-miss: a normal ending must not claim a cut.
+        ("end_turn", &[], serde_json::Value::Null, false, 0),
+    ];
+    for (stop_reason, limit, want_incomplete, want_is_error, want_code) in rows {
+        let body = || sse_turn("msg_len", vec![text_block(&["1 2 3 ", "4 5"])], stop_reason);
+        let mut prompt_extra = limit.to_vec();
+        prompt_extra.extend(["--output-format", "json", "-p", "numbers 1 to 200"]);
+        let prompt = run_yoyo_with(
+            &["--no-tools", "--max-turns", "1"],
+            &prompt_extra,
+            None,
+            vec![body()],
+        );
+        let mut piped_extra = limit.to_vec();
+        piped_extra.extend(["--output-format", "json"]);
+        let piped = run_yoyo_with(
+            &["--no-tools", "--max-turns", "1"],
+            &piped_extra,
+            Some("numbers 1 to 200"),
+            vec![body()],
+        );
+        for (door, run) in [("prompt", prompt), ("piped", piped)] {
+            assert!(
+                run.stub_hit,
+                "{door}: anti-vacuous: no POST; stderr={}",
+                run.stderr
+            );
+            let v: serde_json::Value = serde_json::from_slice(&run.stdout).unwrap_or_else(|e| {
+                panic!(
+                    "{door}: json stdout must be one value: {e}; stdout={:?}",
+                    String::from_utf8_lossy(&run.stdout)
+                )
+            });
+            assert_eq!(
+                v["incomplete"], want_incomplete,
+                "{door}: stop_reason={stop_reason} limit={limit:?}; object={v}"
+            );
+            assert_eq!(
+                v["is_error"],
+                serde_json::Value::Bool(want_is_error),
+                "{door}: is_error must agree with the exit code; stop_reason={stop_reason} \
+                 limit={limit:?}; object={v}"
+            );
+            assert_eq!(
+                run.code,
+                Some(want_code),
+                "{door}: stop_reason={stop_reason} limit={limit:?}; stderr={}",
+                run.stderr
+            );
+            assert!(
+                v["response"].as_str().unwrap_or("").contains("1 2 3 4 5"),
+                "{door}: the partial answer must still be in the object; object={v}"
+            );
+        }
+    }
+}
+
+/// #1026 item 1, stream-json half: the stderr note the text path prints for a
+/// cut or refused reply now prints here too, through the same wording, and
+/// stdout stays pure JSON lines.
+#[test]
+fn stream_json_prints_the_cut_and_refusal_notes_on_stderr_only() {
+    // (stop_reason, limit flags, stderr must contain, stderr must not contain)
+    let rows: [(&str, &[&str], Option<&str>); 4] = [
+        (
+            "max_tokens",
+            &[],
+            Some("reply stopped at the output limit (the model's default max_tokens)"),
+        ),
+        (
+            "max_tokens",
+            &["--max-tokens", "30"],
+            Some(OUTPUT_LIMIT_NOTE),
+        ),
+        ("refusal", &[], Some("refused this request")),
+        ("end_turn", &[], None),
+    ];
+    for (stop_reason, limit, want_note) in rows {
+        let body = sse_turn("msg_len", vec![text_block(&["1 2 3 ", "4 5"])], stop_reason);
+        let mut extra = limit.to_vec();
+        extra.extend(["--output-format", "stream-json", "-p", "numbers 1 to 200"]);
+        let run = run_yoyo_with(
+            &["--no-tools", "--max-turns", "1"],
+            &extra,
+            None,
+            vec![body],
+        );
+        assert!(run.stub_hit, "anti-vacuous: no POST; stderr={}", run.stderr);
+        let stdout = String::from_utf8(run.stdout.clone()).expect("utf-8 stdout");
+        let lines: Vec<&str> = stdout.lines().filter(|l| !l.trim().is_empty()).collect();
+        assert!(
+            !lines.is_empty(),
+            "anti-vacuous: stream-json printed nothing"
+        );
+        for line in &lines {
+            assert!(
+                serde_json::from_str::<serde_json::Value>(line).is_ok(),
+                "stop_reason={stop_reason}: every stdout line must be JSON; line={line:?}"
+            );
+            assert!(
+                !line.contains("reply stopped at the output limit"),
+                "the note goes to stderr only; line={line:?}"
+            );
+        }
+        match want_note {
+            Some(note) => assert_eq!(
+                occurrences(&run.stderr, note),
+                1,
+                "stop_reason={stop_reason} limit={limit:?}: stderr must carry the note once; \
+                 stderr={}",
+                run.stderr
+            ),
+            None => assert!(
+                !run.stderr.contains("output limit")
+                    && !run.stderr.contains("refused this request"),
+                "near-miss: a normal end must not warn; stderr={}",
+                run.stderr
+            ),
+        }
+    }
+}
