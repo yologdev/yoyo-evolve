@@ -1558,7 +1558,7 @@ pub(crate) fn fallback_switch_note(primary: &str, fallback: &str) -> String {
 /// (e.g. `"Max turns reached (25/25)"`). Hitting `max_turns` is a bound, not a
 /// failure, so the call returns **`Ok`** — which is why every `Err`-branching
 /// decorator beside this one is structurally blind to it.
-/// <!-- yoagent-version-claim: 0.26 -->
+/// <!-- yoagent-version-claim: 0.27 -->
 ///
 /// The prefix is used **by reference** rather than re-spelled, so an upstream
 /// rename is a compile error here instead of a silently dead match.
@@ -1590,7 +1590,7 @@ pub(crate) fn sub_agent_partial_notice(text: &str) -> Option<String> {
 /// `agent_loop::CANCELLED_MARKER` (`"[Agent stopped: cancelled]"`), which also
 /// starts with that prefix and which `extract_error` also returns as an error
 /// (`sub_agent.rs:790-797` at 0.26.6), so a cancelled child is never annotated PARTIAL.
-/// <!-- yoagent-version-claim: 0.26 -->
+/// <!-- yoagent-version-claim: 0.27 -->
 fn annotate_if_partial(result: yoagent::types::ToolResult) -> yoagent::types::ToolResult {
     let joined = result
         .content
@@ -1618,7 +1618,7 @@ fn annotate_if_partial(result: yoagent::types::ToolResult) -> yoagent::types::To
     // Before yoagent 0.25.9 providers sent only the FIRST text block, so the
     // model saw only this notice and not the answer; on the Anthropic wire the
     // text blocks are now joined with "\n" into one string (`tool_result_text`).
-    // yoagent-version-claim: 0.26
+    // yoagent-version-claim: 0.27
     let mut content = result.content;
     content.insert(0, yoagent::types::Content::Text { text: note });
     yoagent::types::ToolResult {
@@ -1727,7 +1727,7 @@ impl AgentTool for FallbackSubAgentTool {
                 // only the FIRST text block was sent, so the model saw only this
                 // note and not the answer; on the Anthropic wire the text blocks
                 // are now joined with "\n" into one string (`tool_result_text`).
-                // yoagent-version-claim: 0.26
+                // yoagent-version-claim: 0.27
                 let mut content = result.content;
                 content.insert(
                     0,
@@ -5393,7 +5393,7 @@ mod diagnostic_sub_agent_tests {
     /// The marker shape is captured from yoagent's own source rather than
     /// hand-typed: `check_limits()` builds `"Max turns reached ({turns}/{max})"`
     /// and the loop wraps it as `"[Agent stopped: {reason}]"`.
-    /// <!-- yoagent-version-claim: 0.26 -->
+    /// <!-- yoagent-version-claim: 0.27 -->
     const STOP_MARKER: &str = "[Agent stopped: Max turns reached (25/25)]";
 
     /// `CountingStub::ok` takes a `&'static str`, and every fixture here is

@@ -28,7 +28,7 @@
 //! by reference. It also shows `SubAgentOutputMarkerTool`'s PARTIAL notice
 //! cannot fire on it: the marker shares `AGENT_STOPPED_PREFIX` but arrives as
 //! `Err`, never `Ok`.
-//! <!-- yoagent-version-claim: 0.26 -->
+//! <!-- yoagent-version-claim: 0.27 -->
 //!
 //! **What the spelling cannot carry.** `agent_loop.rs` marks a run `Aborted`
 //! whenever the token is cancelled, *whatever* the provider error was, so a

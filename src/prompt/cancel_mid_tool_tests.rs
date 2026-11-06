@@ -7,11 +7,12 @@
 //! against yoagent's `MockProvider` — abort while the tool runs, no drain,
 //! `finish()`, then a second prompt — and read the history back.
 //!
-//! The second prompt is itself a check: `MockProvider` validates the transcript
-//! it receives and panics on an unpaired `tool_use` (the shape a real provider
-//! rejects with a 400). A panic inside the spawned loop leaves `finish()` with
-//! stale state, so each test also asserts that the second turn's answer
-//! actually arrived — a silent panic cannot pass as a clean run.
+//! The second prompt checks that the turn really answered: a panic inside the
+//! spawned loop leaves `finish()` with stale state, so a silent panic cannot
+//! pass as a clean run. Superseded (yoagent 0.27 upgrade, #1142): this said the
+//! second prompt also caught an unpaired `tool_use` because `MockProvider`
+//! panics on one. Since 0.27.0 the loop answers such a call when the next run
+//! starts, so only the id-set check on the restored history can see H.
 //!
 //! Three tool shapes, because "a tool mid-cancel" is not one population:
 //! a tool that honours `ctx.cancel`, a tool that ignores it and finishes late,
@@ -326,14 +327,16 @@ async fn no_cancel_history_is_the_ordinary_four_message_shape() {
     assert_eq!(last_assistant_text(&msgs).as_deref(), Some(AFTER));
 }
 
-/// Positive control for the two checks `probe` relies on: hand the agent the
-/// exact shape H describes — the measured post-cancel history with its
-/// `toolResult` removed — and confirm both checks see it. The id-set check must
-/// report the unpaired id, and the second turn must NOT produce its answer
-/// (`MockProvider` rejects the transcript the way a real provider 400s). If
-/// either check were blind, every "paired" verdict above would be vacuous.
+/// Positive control for the id-set check `probe` relies on: hand the agent the
+/// exact shape H describes (the measured post-cancel history with its
+/// `toolResult` removed) and confirm the check reports the unpaired id. If it
+/// were blind, every "paired" verdict above would be vacuous. The second half
+/// pins what yoagent 0.27 does with that history: it answers the call with an
+/// error result before sending (never re-runs it), so the next turn answers.
+/// Superseded (0.27 upgrade, #1142): under 0.26 the second turn must NOT have
+/// answered, as `MockProvider` rejected the transcript the way a provider 400s.
 #[tokio::test]
-async fn positive_control_an_unpaired_tool_use_is_seen_by_both_checks() {
+async fn positive_control_id_check_sees_an_unpaired_tool_use_and_yoagent_answers_it() {
     let mut agent = agent_with(
         Box::new(SlowTool(Shape::HonoursCancel)),
         tool_call("slow", serde_json::json!({})),
@@ -351,11 +354,21 @@ async fn positive_control_an_unpaired_tool_use_is_seen_by_both_checks() {
 
     agent.replace_messages(unpaired);
     let after = second_turn(&mut agent).await;
-    assert_ne!(
+    let reading = describe(&after);
+    let (calls2, results2) = call_and_result_ids(&after);
+    assert_eq!(
+        calls2, calls,
+        "the healed history keeps the one call:\n{reading}"
+    );
+    assert_eq!(calls2, results2, "yoagent answers the call:\n{reading}");
+    assert!(
+        reading.contains("is_error=true") && reading.contains("No result was recorded"),
+        "the answer is yoagent's error result, not a re-run:\n{reading}"
+    );
+    assert_eq!(
         last_assistant_text(&after).as_deref(),
         Some(AFTER),
-        "a transcript with an unpaired tool_use must not reach a second answer:\n{}",
-        describe(&after)
+        "{reading}"
     );
 }
 

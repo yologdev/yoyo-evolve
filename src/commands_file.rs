@@ -170,7 +170,7 @@ pub enum AddResult {
 
 /// Read an image file from disk and return base64-encoded data and MIME type.
 /// Refuses, before reading, any path the session's directory fence forbids (#1002).
-/// Refuses, also before reading, an image over 20 MB (`image_cap.rs`, yoagent's cap).
+/// Refuses, also before reading, an image over 3.75 MB (`image_cap.rs`, yoagent's cap).
 pub fn read_image_for_add(
     path: &str,
     restrictions: &crate::config::DirectoryRestrictions,

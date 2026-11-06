@@ -3052,7 +3052,7 @@ mod tests {
     /// **Superseded (0.25.2, Day 225, #1007), recorded rather than erased:** 0.25.2
     /// renders `Rate limited, retry after 14454000ms` (no `Some(..)`), or a bare
     /// `Rate limited` with no hint (`provider/traits.rs:262`); both are rows below.
-    /// <!-- yoagent-version-claim: 0.26 -->
+    /// <!-- yoagent-version-claim: 0.27 -->
     #[test]
     fn stream_cut_off_mid_answer_is_retriable_not_fatal() {
         // (shape, expected verdict, why)

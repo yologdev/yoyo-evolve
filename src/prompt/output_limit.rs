@@ -5,10 +5,10 @@
 //! so `yoyo --max-tokens 30 -p "numbers 1 to 200"` printed `1 … 15`, exited 0
 //! and wrote nothing to stderr: a truncated answer reported as a complete one.
 //!
-//! yoagent 0.25.2 does not continue on `Length`: `agent_loop.rs:727` maps an
-//! assistant message stopped on `Length` to `RunEnd::Completed`, and
-//! `extension.rs:459` says `on_stop` is not even called for it. So the cut-off
-//! message is the turn's end, and the note keys on the turn's FINAL assistant
+//! yoagent 0.27.1 does not continue on `Length` by itself: `agent_loop.rs:947`
+//! maps it to `RunEnd::Completed`. Since 0.27.0 `on_stop` IS called for it (it
+//! said not, 0.25.2), so an extension could continue; yoyo installs none (#1142).
+//! So the cut-off message is the turn's end, and the note keys on the FINAL assistant
 //! message only: a `Length` stop that was followed by more turns (tool calls
 //! in a truncated message) is not what the user sees as the answer ending.
 //!

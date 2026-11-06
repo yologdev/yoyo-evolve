@@ -1997,7 +1997,7 @@ pub(crate) fn build_explore_agent_tool(
 /// (`sub_agent.rs:515-525` at 0.26.6), so a model still cannot send a per-dispatch `read_only`
 /// argument. #881 is closed anyway, by a second dispatch tool (`explore_agent`, below).
 ///
-/// <!-- yoagent-version-claim: 0.26 -->
+/// <!-- yoagent-version-claim: 0.27 -->
 /// What distinguishes yoyo's two dispatch tools from each other: the name the
 /// parent model sees, and the sentence it is given about the tool.
 ///
