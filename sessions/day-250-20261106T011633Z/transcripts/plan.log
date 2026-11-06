@@ -1,0 +1,39 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md; grep -rln "yoagent-versio… ✓ (394ms)
+  ▶ $ gh issue view 1012 --json title,comments --jq '.title, (.comments[-3:][]|.create… ✓ (596ms)
+  ▶ $ git grep -n '#1084\b' -- src docs skills ARCHITECTURE.md CLAUDE.md | head; git g… ✓ (406ms)
+  ▶ $ ls ~/.cargo/registry/src/*/ | grep yoagent; f=$(ls -d ~/.cargo/registry/src/*/yo… ✓ (13ms)
+  ▶ $ f=~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.27.1; sed -n … ✓ (5ms)
+  ▶ $ gh issue view 1122 --json state,title,comments --jq '.state, .title, (.comments[… ✓ (379ms)
+  ▶ $ gh issue comment 1012 --body "Scope: #1084 folded in here (c… (4 lines) ✓ (3.0s)
+  ▶ write session_plan/task_01.md (23 lines)  ▶ write session_plan/task_02.md (17 lines) ✓ (0ms)
+ ✓ (0ms)
+  ▶ $ cat > session_plan/issue_responses.md <<'EOF' (11 lines) ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  10 tools completed in 2m 0s (10 ✓)
+
+The plan is written: two tasks in session_plan/, both on #1142, the yoagent 0.26 → 0.27.1 upgrade the creator asked for. The commit step failed because session_plan/ is gitignored, so the files exist on disk but nothing was committed. The instruction's || true suggests that's expected.
+
+`task_01.md`: Part of #1142 (bump the version and re-read every claim)
+• Set yoagent to "0.27" and move the lock to 0.27.1. Tonight's probe compiled cleanly under 0.27; cargo test hasn't been run against it yet.
+• This task touches more than 3 files, on purpose. tests/doc_version_claims.rs fails on all 34 0.26 markers as soon as the lock moves, so the bump and the marker re-read can't be split without leaving the tree red in between. Everything outside Cargo.toml, Cargo.lock, image_cap.rs and output_limit.rs is a comment edit.
+• What gets re-read is everything the 0.27 changes touch in my tree, not only the 34 marked paragraphs. Two claims are already known to be false:
+  • Image cap: src/image_cap.rs says its 20 MB cap matches yoagent's. At 0.27.1 yoagent sends only PNG, JPEG and WebP, up to 3.75 MB. The task makes the cap read yoagent::tools::DEFAULT_MAX_IMAGE_BYTES instead of a typed number, with tests exactly at the limit and one byte over.
+  • `on_stop`: the comment in src/prompt/output_limit.rs says on_stop isn't called when an answer hits the output limit. Since 0.27.0 it is.
+• It also warns about two files close to the size limit: src/config.rs is 11 lines away and src/commands_risk_unhittable.rs 14.
+
+`task_02.md`: Fixes #1142 and #1138
+• Startup certificate check: the task first measures what yoagent 0.27.1 actually prints when the certificate setting is bad. The default is to keep my check, because it refuses before any prompt is sent and names the variable. It gets dropped only if yoagent's message turns out to arrive as early and name the variable too. The reason goes into the module doc.
+• Crash message: when the agent task panics, yoyo currently says "reply cut off". The task gives a crash its own message and a non-zero exit code. It's tested on the function that decides which message to show, not just on the text.
+• Old pointers: every #1138 mention in src/ and docs/ gets updated, since this push closes that issue.
+
+Done with `gh` while planning (these changed GitHub, not files):
+• #1084 closed as superseded. On #1012, @yuanhao decided to drop yoyo's own price table and use yoagent's prices, and noted that this "also answers most of #1084". I moved #1084's two rows onto #1012 as checks for that replacement, so they still have an open issue. Nothing in the tree pointed at #1084. This leaves 12 open issues I filed for myself, which is under the 13 that would force the second slot to close one, so both slots go to the upgrade.
+• #1012 stays open. What's left on it is one job, the owner's table replacement, so there was nothing separate to split out.
+
+Not done: no release this session, since v0.4.0 went out two days ago.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
