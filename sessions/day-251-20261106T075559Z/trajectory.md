@@ -1,0 +1,76 @@
+# YOUR TRAJECTORY
+
+Last computed: 2026-11-06T06:45Z. Day 251. Window: last 10 sessions / 14 days.
+
+## Recent session outcomes (last 10)
+day-251 (2026-11-06 03:50:28): tasks 1/1 ✅ — build OK, tests OK
+day-250 (2026-11-06 01:16:33): tasks 2/2 ✅ — build OK, tests OK
+day-250 (2026-11-05 23:26:07): tasks 2/2 ✅ — build OK, tests OK
+day-250 (2026-11-05 13:09:02): tasks 2/2 ✅ — build OK, tests OK
+day-250 (2026-11-05 08:59:39): tasks 2/2 ✅ — build OK, tests OK
+day-250 (2026-11-05 02:55:03): tasks 2/2 ✅ — build OK, tests OK
+day-249 (2026-11-05 00:22:30): tasks 2/2 ✅ — build OK, tests OK
+day-249 (2026-11-04 22:49:31): tasks 2/2 ✅ — build OK, tests OK
+day-249 (2026-11-04 13:27:00): tasks 2/2 ✅ — build OK, tests OK
+day-249 (2026-11-04 11:13:34): tasks 2/2 ✅ — build OK, tests OK
+Claim corroboration: 0 of 5 checkable claiming sessions claimed success with no task commits.
+5 further claiming session(s) could NOT be checked — NOT counted above: 4 window opens before this shallow clone's oldest commit; 1 oldest session read, no predecessor to open its window.
+
+## Per-task activity (last 14 days)
+"Fixes #1119: every provider default resolves through a prese…": 2 attempt(s), last day-250
+"Load a subdirectory's instruction file (YOYO.md / CLAUDE.md …": 2 attempt(s), last day-250
+"Part of #1012: /cost prices through yoagent's PriceTable fir…": 1 attempt(s), last day-251
+"Fixes #1142, Fixes #1138: decide the TLS pre-flight now that…": 1 attempt(s), last day-250
+"Part of #1142: upgrade yoagent 0.26 → 0.27.1, re-read every …": 1 attempt(s), last day-250
+"Part of #1026: `-p` exits nonzero when the reply was cut by …": 1 attempt(s), last day-250
+
+## Reverts in window
+0 task reverts in last ~10 sessions, 0 whole-session revert commits in 14 days.
+
+## Subsystem concentration (last 12 self-driven task commits)
+prompt: 4/12
+dispatch: 3/12
+main: 3/12
+agent: 2/12
+format: 2/12
+(+24 other subsystem(s) with fewer)
+
+## Recurring CI errors (failed runs, last 14 days) (4 older failure(s) outside the window, not shown)
+CI has gone green since (last <1d ago): every failure below predates it. Not proof the causes are fixed — a flaky test passes sometimes — only that CI is not red on these patterns now.
+[1×, last 9d ago] test post_hook_feedback_reaches_the_model_as_its_own_tool_result_block ... faile
+[1×, last 9d ago] thread 'post_hook_feedback_reaches_the_model_as_its_own_tool_result_block' (3913
+[1×, last 9d ago] {"max_tokens":n,"messages":[{"content":[{"text":"run echo hi","type":"text"}],"r
+[1×, last 9d ago] test result: failed. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; 
+[1×, last 9d ago] ^[[1m^[[91merror^[[0m: test failed, to rerun pass `--test hook_feedback_request`
+
+## Provider/API health
+10 sessions, no provider-error lines in audit.jsonl, transcripts/*.log.
+
+## Usage records
+10 of 10 sessions carry >=1 usage record (#848 channel is live).
+
+## Phase spend (audit-log phases/*/spend.jsonl, last 7 days)
+- social: 22 run(s), $24.38 summed cost_usd.
+- dream: 1 run(s), $2.55 summed cost_usd.
+- synthesize: 7 run(s), $8.38 summed cost_usd.
+Sums include sub-agent spend; any gap listed above makes a sum a floor.
+
+## Module sizes (the size gate warns but only fails on the exit code)
+src/commands_risk_unhittable.rs is 2036 lines, 36 past the 2000-line cap and UNLISTED — 14 more line(s) makes `cargo test` FATAL, which reverts the whole task. Fix: split it, or add ("src/commands_risk_unhittable.rs", 2036) to GRANDFATHERED_OVERSIZED_MODULES.
+src/config.rs is 4851 lines vs its recorded 4762 (+89 drift) — 11 more line(s) makes it FATAL. Fix: paste ("src/config.rs", 4851) over its entry.
+
+## Doc freshness (the header, not the body)
+CLAUDE_CODE_GAP.md: header verified day-74, 177 day(s) old (repo is day 251) — STALE, past the 30-day threshold. The body has NOT been re-verified; re-read a row before trusting it.
+
+## Productivity
+OUT OF RANGE: day-249 claimed 8 success(es), but the 14 task commit(s) in this window carry day-250..day-251 (2 distinct) — the git slice never spanned that day, so this is NOT a finding about its productivity.
+
+## Counterfactual pairing
+6 of 6 UNEARNED rows paired, 1 PAIR_SIGNAL (src+tests 2/2, tests 4/4). Says pairing RAN, never that a verdict is RIGHT.
+
+## Epistemic blind spots (files graded outcomes have taught the model least about)
+- src/prompt/turn_prefix.rs (3.6) — predicted 3×, never graded; stale (149 snapshots)
+- src/commands_bg_kill_tests.rs (3.1) — predicted 8×, never graded; stale (41 snapshots)
+- src/format/cost/bedrock_region.rs (2.5) — predicted 3×, never graded; stale (6 snapshot…
+- never forecast (0 predictions ever, unranked): src/tool_wrappers_cancel_tests.rs, src/tls_preflight.rs (+3 more)
+(planner hint: point the self-driven slot at one of these — the never-forecast files are the darkest, the ranking cannot see them — guess first, grade after)
