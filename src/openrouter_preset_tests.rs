@@ -202,3 +202,127 @@ fn dashed_anthropic_ids_still_resolve_where_yoagent_refuses_them() {
         assert!(!runs_on_guessed_limits("openrouter", dashed), "{dashed}");
     }
 }
+
+/// #1117 (Day 251): yoagent 0.27.2 knows Claude Opus 4.7 / 4.6 / 4.5 from its
+/// price table's limits (no named preset, so yoyo's `anthropic_preset` has no
+/// branch for them and must not grow one). yoagent resolves only OpenRouter's
+/// dotted spelling; the dashed one a config may carry resolves through its
+/// dotted twin, so both spellings get exactly the limits yoagent states.
+/// Expected values are read from yoagent, never typed.
+#[test]
+fn dashed_opus_ids_yoagent_knows_resolve_through_their_dotted_twin() {
+    use yoagent::provider::ModelConfig;
+    for (dashed, dotted, anthropic_id) in [
+        (
+            "anthropic/claude-opus-4-7",
+            "anthropic/claude-opus-4.7",
+            "claude-opus-4-7",
+        ),
+        (
+            "anthropic/claude-opus-4-6",
+            "anthropic/claude-opus-4.6",
+            "claude-opus-4-6",
+        ),
+        (
+            "anthropic/claude-opus-4-5",
+            "anthropic/claude-opus-4.5",
+            "claude-opus-4-5",
+        ),
+    ] {
+        assert!(
+            anthropic_preset(anthropic_id).is_none(),
+            "premise: no yoyo row for {anthropic_id} (yoagent's table owns it)"
+        );
+        let first_party = ModelConfig::anthropic(anthropic_id, anthropic_id);
+        let routed = ModelConfig::preset("openrouter", dotted).expect("premise: yoagent row");
+        assert_eq!(
+            (routed.context_window, routed.max_tokens),
+            (first_party.context_window, first_party.max_tokens),
+            "premise: yoagent routes {dotted} to {anthropic_id}'s limits"
+        );
+        for model in [dashed, dotted] {
+            let c = create_model_config("openrouter", model, None);
+            assert_eq!(
+                (c.context_window, c.max_tokens),
+                (first_party.context_window, first_party.max_tokens),
+                "{model}"
+            );
+            assert_ne!((c.context_window, c.max_tokens), guess(), "{model}");
+            assert!(!runs_on_guessed_limits("openrouter", model), "{model}");
+            assert_eq!(c.id, model, "the id sent to OpenRouter is the user's");
+            assert_eq!(c.base_url, "https://openrouter.ai/api/v1");
+        }
+    }
+}
+
+/// #1117 near-misses: the dashed spelling resolves only when its dotted twin
+/// does. Sonnet 4.5 and Opus 4.1 are retired or retiring and yoagent has no
+/// row for them on purpose, so yoyo really is guessing and says so; `:batch`
+/// is OpenRouter's half-price variant, which must not borrow the full-price
+/// row (price work is #1012).
+#[test]
+fn retired_ids_and_batch_variants_keep_the_guess_in_both_spellings() {
+    use crate::providers::openrouter_routed_preset;
+    for model in [
+        "anthropic/claude-sonnet-4-5",
+        "anthropic/claude-sonnet-4.5",
+        "anthropic/claude-opus-4-1",
+        "anthropic/claude-opus-4.1",
+        "anthropic/claude-sonnet-4.6:batch",
+        "anthropic/claude-sonnet-4-6:batch",
+        "anthropic/claude-opus-4-6:batch",
+    ] {
+        assert!(openrouter_routed_preset(model).is_none(), "{model}");
+        let c = create_model_config("openrouter", model, None);
+        assert_eq!((c.context_window, c.max_tokens), guess(), "{model}");
+        assert!(runs_on_guessed_limits("openrouter", model), "{model}");
+    }
+}
+
+#[test]
+fn openrouter_routed_preset_tries_the_dotted_twin_only_for_anthropic() {
+    use crate::providers::openrouter_routed_preset;
+    assert!(openrouter_routed_preset("anthropic/claude-opus-4-6").is_some());
+    // The id the config carries is the user's, not the twin's.
+    let p = openrouter_routed_preset("anthropic/claude-opus-4-6").unwrap();
+    assert_eq!(p.provider, "openrouter");
+    // Other vendors are not respelled: yoagent's own refusal stands.
+    for model in ["openai/gpt-6-sol-pro", "x-ai/grok-4-7", "anthropic/", ""] {
+        assert!(openrouter_routed_preset(model).is_none(), "{model}");
+    }
+}
+
+#[test]
+fn cost_prices_dashed_and_dotted_opus_ids_alike() {
+    let usage = yoagent::Usage {
+        input: 1_000_000,
+        output: 1_000_000,
+        cache_read: 0,
+        cache_write: 0,
+        total_tokens: 0,
+    };
+    for (dashed, dotted, anthropic_id) in [
+        (
+            "anthropic/claude-opus-4-7",
+            "anthropic/claude-opus-4.7",
+            "claude-opus-4-7",
+        ),
+        (
+            "anthropic/claude-opus-4-6",
+            "anthropic/claude-opus-4.6",
+            "claude-opus-4-6",
+        ),
+        (
+            "anthropic/claude-opus-4-5",
+            "anthropic/claude-opus-4.5",
+            "claude-opus-4-5",
+        ),
+    ] {
+        let a = crate::format::estimate_cost(&usage, dashed);
+        let b = crate::format::estimate_cost(&usage, dotted);
+        let c = crate::format::estimate_cost(&usage, anthropic_id);
+        assert!(c.is_some(), "premise: {anthropic_id} is priced");
+        assert_eq!(a, c, "{dashed}");
+        assert_eq!(b, c, "{dotted}");
+    }
+}

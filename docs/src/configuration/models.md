@@ -53,8 +53,11 @@ Use `--provider <name>` to select a provider. Each provider has a default model 
 > **OpenRouter and Claude ids:** OpenRouter spells Anthropic ids with dots
 > (`anthropic/claude-opus-4.8`). yoyo maps `anthropic/<id>`, dotted or dashed,
 > onto its Anthropic preset, so those models get their real context window,
-> output limit and price. A `:variant` id (such as `:batch`) and a Claude id
-> with no Anthropic preset still run on guessed limits, and yoyo warns about them.
+> output limit and price. Older Claude models yoagent knows only from its price
+> table (Opus 4.7, 4.6, 4.5) get their real limits in either spelling too. A
+> `:variant` id (such as `:batch`, which is half price) and a Claude id yoagent
+> has no row for (retired or retiring ones such as Opus 4.1 and Sonnet 4.5) still
+> run on guessed limits, and yoyo warns about them.
 >
 > Other vendors' ids on OpenRouter (`openai/`, `google/`, `x-ai/`, `z-ai/`, `qwen/`) take the
 > vendor's preset limits when yoagent has a row for that model: for example

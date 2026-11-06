@@ -1004,7 +1004,7 @@ pub fn create_model_config(provider: &str, model: &str, base_url: Option<&str>) 
             if let Some(p) = preset_id.and_then(|id| anthropic_preset(&id)) {
                 (config.context_window, config.max_tokens) = (p.context_window, p.max_tokens);
                 (config.cost, config.reasoning) = (p.cost, p.reasoning);
-            } else if let Some(p) = ModelConfig::preset("openrouter", model) {
+            } else if let Some(p) = crate::providers::openrouter_routed_preset(model) {
                 // #1122: other vendors' ids (google/, x-ai/, openai/...) take
                 // yoagent's vendor preset limits, not a 4096-token reply cap.
                 // Second, because yoagent refuses dashed claude ids and has no

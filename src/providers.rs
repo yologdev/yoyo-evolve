@@ -205,6 +205,29 @@ pub(crate) fn openrouter_anthropic_preset_id(model: &str) -> Option<String> {
     )
 }
 
+/// yoagent's OpenRouter preset for `model`, trying an `anthropic/` id's dotted
+/// twin when yoagent refuses the dashed spelling (#1117): yoagent 0.27.2 knows
+/// `anthropic/claude-opus-4.6` (price-table limits, no named preset) but not
+/// `anthropic/claude-opus-4-6`, the spelling a config may carry. The twin is
+/// yoagent's own OpenRouter rule (a trailing `-{major}-{minor}` is written
+/// `-{major}.{minor}`), so a dashed id resolves exactly when its dotted twin
+/// does: no hand-kept list. `:variant`s (`:batch` is half price) are never
+/// respelled, and other vendors keep yoagent's refusal.
+pub(crate) fn openrouter_routed_preset(model: &str) -> Option<yoagent::provider::ModelConfig> {
+    use yoagent::provider::ModelConfig;
+    ModelConfig::preset("openrouter", model).or_else(|| {
+        let id = model.strip_prefix("anthropic/")?;
+        let num = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+        let (head, minor) = id.rsplit_once('-')?;
+        if id.contains(':') || !num(minor) || !head.rsplit_once('-').is_some_and(|(_, m)| num(m)) {
+            return None;
+        }
+        let mut p = ModelConfig::preset("openrouter", &format!("anthropic/{head}.{minor}"))?;
+        (p.id, p.name) = (model.to_string(), model.to_string());
+        Some(p)
+    })
+}
+
 /// Whether `model` is a **known** id for `provider`.
 ///
 /// One matching rule, consulted by every surface that asks "is this id known?"
