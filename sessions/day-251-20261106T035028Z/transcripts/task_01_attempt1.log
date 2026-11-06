@@ -1,0 +1,235 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | head; sed -…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ensure_bundled_prices" … ✓ (20ms)
+ ✓ (39ms)
+  ▶ $ Y=~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.27.1; grep -n… ✓ (9ms)
+  ▶ $ Y=~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.27.1; sed -n … ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn estimate_cost_with\|… ✓ (8ms)
+  ▶ $ Y=~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.27.1; grep -n… ✓ (6ms)
+  ▶ $ Y=~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoa… (12 lines) ✓ (23ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && Y=~/.cargo/r… (6 lines) ✓ (25ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && Y=~/.cargo/r… (6 lines)  ▶ read /tmp/ya.txt ✗ (0ms)
+    │ Cannot access /tmp/ya.txt: No such file or directory (os error 2)
+ ✓ (26ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp /tmp/ya.txt ./ya_tmp.txt 2>&1… ✓ (11ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/ya_tmp.txt ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && rm ya_tmp.txt; grep -n "gemini-3… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,100p src/format/cost/pr… ✓ (14ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs:36..426 ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs:135..375 ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "clear_bundled\|install… ✓ (26ms)
+  ▶ $ Y=~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.27.1; sed -n … ✓ (10ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  18 tools completed in 2m 48s (17 ✓, 1 ✗)
+
+Now the edits. First, expose the existing Once helper rather than copying it.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/^fn ensure_bundled_pri… ✓ (6ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs (5 → 12 lines)
+  - /// **Precedence: explicit user override > yoagent preset > local table.**
+  - /// A user's own number always wins — it is the whole point of the override:
+  - /// anyone on a negotiated contract, behind a re-pricing proxy, or running a
+  - /// self-hosted model has a real rate my table cannot know.
+  + /// **Precedence: explicit user override > yoagent's price table > yoyo's own
+  + /// table (promos, presets, then the local arms).** A user's own number always
+  + /// wins — it is the whole point of the override: anyone on a negotiated
+  + /// contract, behind a re-pricing proxy, or running a self-hosted model has a
+  + /// real rate my table cannot know.
+  + ///
+  + /// yoagent's table comes second because @yuanhao decided (#1012, 2026-11-03)
+  + /// that yoyo reuses yoagent's vendor-checked prices instead of keeping its own.
+  + /// yoyo's table is still consulted for the ids yoagent does not price, only
+  + /// until the live models.dev layer lands (#1012 slice 2); deleting it now would
+  + /// leave ~70 models unpriced. That is a sequencing reason, not a preference.
+    ///
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs (4 → 58 lines)
+  -     promo::promo_pricing_at(strip_router_prefix(model), promo::now_unix_secs())
+  +     let id = strip_router_prefix(model);
+  +     yoagent_price_row(id)
+  +         .or_else(|| promo::promo_pricing_at(id, promo::now_unix_secs()))
+            .or_else(|| builtin_model_pricing(model))
+            .map(|row| xai_region::region_row(model, row))
+  + }
+  + 
+  + /// yoagent's price for `id`, from the process-wide resolved table (bundled
+  + /// snapshot, plus any `YOAGENT_PRICES` override or fetched layer installed
+  + /// before this call: read per lookup, nothing cached, so a live layer that
+  + /// slice 2 installs later is seen).
+  + ///
+  + /// Flat rates only: an entry's `context_tiers` are ignored here exactly as the
+  + /// flat lookup always ignored them. The per-request tier path
+  + /// (`estimate_request_cost_with`) is still yoyo's own (#1012 slice 3).
+  + fn yoagent_price_row(id: &str) -> Option<(f64, f64, f64, f64)> {
+  +     crate::agent_builder::ensure_bundled_prices();
+  +     unique_cost_for_id(&yoagent::provider::prices::global::resolved(), id).map(|c| cost_row(&c))
+  + }
+  ... (39 more lines)
+ ✓ (24.0s)
+  - /// **Precedence: explicit user override > yoagent preset > local table.**
+  - /// A user's own number always wins — it is the whole point of the override:
+  - /// anyone on a negotiated contract, behind a re-pricing proxy, or running a
+  - /// self-hosted model has a real rate my table cannot know.
+  + /// **Precedence: explicit user override > yoagent's price table > yoyo's own
+  + /// table (promos, presets, then the local arms).** A user's own number always
+  + /// wins — it is the whole point of the override: anyone on a negotiated
+  + /// contract, behind a re-pricing proxy, or running a self-hosted model has a
+  ... (8 more lines)
+ ✓ (48.2s)
+  -     promo::promo_pricing_at(strip_router_prefix(model), promo::now_unix_secs())
+  +     let id = strip_router_prefix(model);
+  +     yoagent_price_row(id)
+  +         .or_else(|| promo::promo_pricing_at(id, promo::now_unix_secs()))
+            .or_else(|| builtin_model_pricing(model))
+            .map(|row| xai_region::region_row(model, row))
+  + }
+  + 
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 50,58p src/format/cost.rs… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i '55{/^$/d}' src/format/co… ✓ (13.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (3m 2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo 2>&1 | gre… ✓ (2m 9s)
+  ▶ $ Y=~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoa… (10 lines) ✓ (25ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 925,960p src/format/cost/… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^fn cost_row" -A12 src/… ✓ (5ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs (3 → 11 lines)
+    
+  - /// The local price table, consulted only when neither a user override nor a
+  - /// yoagent preset applies.
+  + /// yoagent's bundled price for `id` as `/cost` bills it, for tests that pin a
+  + /// yoagent-priced row: read from `PriceTable::builtin()`, never hand-typed, so
+  + /// a yoagent upgrade that re-prices a row moves the expectation with it.
+  + #[cfg(test)]
+  + pub(crate) fn yoagent_builtin_row(id: &str) -> Option<(f64, f64, f64, f64)> {
+  +     unique_cost_for_id(&yoagent::provider::PriceTable::builtin(), id).map(|c| cost_row(&c))
+  + }
+  + 
+  + /// The local price table, consulted only when neither a user override nor
+  + /// yoagent's price table applies.
+ ✓ (23.7s)
+    
+  - /// The local price table, consulted only when neither a user override nor a
+  - /// yoagent preset applies.
+  + /// yoagent's bundled price for `id` as `/cost` bills it, for tests that pin a
+  + /// yoagent-priced row: read from `PriceTable::builtin()`, never hand-typed, so
+  + /// a yoagent upgrade that re-prices a row moves the expectation with it.
+  + #[cfg(test)]
+  + pub(crate) fn yoagent_builtin_row(id: &str) -> Option<(f64, f64, f64, f64)> {
+  ... (5 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  11 tools completed in 7m 56s (11 ✓)
+
+Expected — consumers next. Fixing the first test:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (14 lines) ✓ (18ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for l in 1560 1690 1730 1785; do… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "promo" src tests docs … ✓ (24ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,22p src/format/cost/pro… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat src/format/cost/promo_tests.… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 1m 18s (5 ✓)
+
+Now the shadow test (positive control first: it should fail naming the rows before I delete them).
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/f… (66 lines) ✓ (37.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (24 lines) ✓ (19ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 59.3s (2 ✓)
+
+The 3.7 promo row's only stated reason ("bills what its successor bills") now points at yoagent's 3.8 row, so PROMOS empties and the module goes. Converting its tests rather than dropping them:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git rm -q sr… (19 lines) ✓ (34ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "promo" src/format.rs s… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "pub use cost\|cost::\*… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 17.6s (3 ✓)
+
+Now fix the tests that referenced promo and pinned values. Let me edit price_audit_tests' two with_now wrappers and the loops.
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "with_now\|AFTER_ALL\|pr… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (24 lines) ✓ (19ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1678,1684p src/format/cos… ✓ (5ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost/price_audit_tests.rs:1676..1684  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost/price_audit_tests.rs:1764..1782 ✓ (0ms)
+ ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (32 lines) ✓ (15.0s)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 57.7s (6 ✓)
+
+Now route the preset/bedrock paths through the same cost_row (same yoagent CostConfig, same zero-means-input meaning):
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (47 lines) ✓ (14.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "for (id, expected) in r… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (18 lines) ✓ (3m 0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn ours_from_catalogue"… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (32 lines) ✓ (19ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '("gemini-3.7-flash", ('… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i '1796s|("gemini-3.7-flash… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (15 lines) ✓ (19ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn region_row" -A12 src… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  9 tools completed in 4m 30s (9 ✓)
+
+Good. Now the DeepSeek tests in cost.rs — the #1084 acceptance row. Let me read them.
+  ╭─ Turn 51 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2020,2040p src/format/cos… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=2056 && NR<=2124' src/f… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (63 lines) ✓ (26ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "MODELS_DEV_DEEPSEEK_202… ✓ (5ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs:3200..3370 ✓ (1ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs:3370..3670 ✓ (2ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/format/cost.rs:3468..3620 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (80 lines) ✓ (27ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 322,330p src/format/cost.… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (16 lines) ✓ (2m 56s)
+
+────────────────────────────────────────────────────────────────────────────────
+  10 tools completed in 5m 0s (10 ✓)
+
+Bin tests green. Now the tests the task names (yoagent wins, yoyo fallback, override wins, ambiguous id, zero-cache mapping):
+  ╭─ Turn 61 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/f… (92 lines) ✓ (39.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (23.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --stat; sed -n 3270,330… ✓ (16ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 34s (3 ✓)
+
+Cost.rs grew; the house pattern (bedrock_region.rs, xai_region.rs) is a submodule. Moving the lookup there, and fixing the v4-pro reason — "off-peak half" is false for it (0.435 ≠ 1.32/2):
+  ╭─ Turn 64 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (43 lines) ✓ (14.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (23.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "RESIDUE, not an oversig… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (12 lines) ✓ (23ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn \|DEFAULT\|const .*:… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/format/cost/price_audi… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (9 lines) ✓ (17ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (32 lines) ✓ (25.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (10 lines)
+  (interrupted)
+
