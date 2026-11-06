@@ -197,9 +197,16 @@ fn sonnet_4_6_matches_anthropic_published_figures() {
     assert!(anthropic_preset("claude-sonnet-4-20250514").is_none());
 }
 
+/// #1121/#1122: /cost resolves a Bedrock id to its Anthropic model through
+/// yoagent's `ModelConfig::bedrock_anthropic_id`, the same table yoagent's
+/// limits use, so the price and the "limits are guesses" warning can no longer
+/// disagree about one id. Stray shapes (an unknown geo prefix, a `-vN` suffix
+/// on a model whose Bedrock id has none, a dateless Haiku 4.5) are not
+/// bedrock-runtime ids on AWS's model cards: an id we warn we don't know gets
+/// no price, rather than a confident wrong one.
 #[test]
-fn bedrock_anthropic_preset_id_table() {
-    use crate::providers::bedrock_anthropic_preset_id as map;
+fn bedrock_ids_resolve_through_yoagents_bedrock_anthropic_id() {
+    let map = ModelConfig::bedrock_anthropic_id;
     let rows: &[(&str, Option<&str>)] = &[
         // yoyo's no-config bedrock default.
         ("anthropic.claude-sonnet-4-6", Some("claude-sonnet-4-6")),
@@ -211,16 +218,23 @@ fn bedrock_anthropic_preset_id_table() {
             "global.anthropic.claude-sonnet-4-6",
             Some("claude-sonnet-4-6"),
         ),
-        // Bedrock's version suffix is dropped, the date kept.
+        // Bedrock's own spelling of Haiku 4.5.
         (
-            "anthropic.claude-sonnet-4-20250514-v1:0",
-            Some("claude-sonnet-4-20250514"),
+            "anthropic.claude-haiku-4-5-20251001-v1:0",
+            Some("claude-haiku-4-5"),
         ),
         (
             "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-            Some("claude-haiku-4-5-20251001"),
+            Some("claude-haiku-4-5"),
         ),
-        ("anthropic.claude-sonnet-4-6-v2", Some("claude-sonnet-4-6")),
+        // Strays the old yoyo-side mapping accepted (#1121's list): unpriced now.
+        ("xx.anthropic.claude-sonnet-4-6", None),
+        ("anthropic.claude-sonnet-4-6-v1:0", None),
+        ("anthropic.claude-sonnet-4-6-v2", None),
+        ("anthropic.claude-haiku-4-5", None),
+        ("us.anthropic.claude-opus-5-5-v1:0", None),
+        // A real Bedrock id with no Anthropic preset: the hand table prices it.
+        ("anthropic.claude-sonnet-4-20250514-v1:0", None),
         // Other vendors on bedrock: not Anthropic, not mapped.
         ("amazon.nova-pro-v1:0", None),
         ("meta.llama3-70b-instruct-v1:0", None),
@@ -236,7 +250,35 @@ fn bedrock_anthropic_preset_id_table() {
         ("", None),
     ];
     for (model, want) in rows {
-        assert_eq!(map(model), *want, "{model}");
+        assert_eq!(map(model).as_deref(), *want, "{model}");
+        // The price follows the mapping exactly: priced iff mapped.
+        assert_eq!(
+            crate::format::bedrock_preset_cost(model).is_some(),
+            want.is_some(),
+            "{model}"
+        );
+    }
+    // Real ids price at the Anthropic preset's rate x the regional premium
+    // (the module's own constant, never a typed number per id).
+    let m = crate::format::BEDROCK_REGIONAL_PREMIUM;
+    for (id, anthropic) in [
+        ("anthropic.claude-sonnet-4-6", "claude-sonnet-4-6"),
+        ("us.anthropic.claude-sonnet-4-6", "claude-sonnet-4-6"),
+        (
+            "anthropic.claude-haiku-4-5-20251001-v1:0",
+            "claude-haiku-4-5",
+        ),
+    ] {
+        let base = anthropic_preset(anthropic).unwrap().cost.unwrap();
+        let got = crate::format::bedrock_preset_cost(id).expect(id);
+        for (g, b) in [
+            (got.input_per_million, base.input_per_million),
+            (got.output_per_million, base.output_per_million),
+            (got.cache_read_per_million, base.cache_read_per_million),
+            (got.cache_write_per_million, base.cache_write_per_million),
+        ] {
+            assert!((g - b * m).abs() < 1e-9, "{id}: {g} vs {b} x {m}");
+        }
     }
 }
 
@@ -315,9 +357,9 @@ fn bedrock_claude_ids_run_on_the_anthropic_preset() {
             (200_000, generic.max_tokens),
             "{id}"
         );
-        // Pricing is still the looser /cost lookup (#1124's residue): the
-        // three Claude-shaped strays are priced, the other vendors are not.
-        assert_eq!(c.cost, crate::format::bedrock_preset_cost(id), "{id}");
+        // #1121: an id we warn we don't know gets no price, rather than a
+        // confident wrong one (the Day-248 mapping priced the strays as Claude).
+        assert_eq!(c.cost, None, "{id}");
         assert!(runs_on_guessed_limits("bedrock", id), "{id}");
     }
 }
@@ -353,4 +395,31 @@ fn cost_prices_bedrock_claude_ids_by_endpoint() {
         price("anthropic.claude-sonnet-4-20250514-v1:0"),
         (3.0, 3.75, 0.30, 15.0)
     );
+}
+
+/// #1121 item 1: `--provider bedrock --model us.anthropic.claude-sonnet-4-6`
+/// (a cross-region inference profile) must not print "Unknown model", and a
+/// stray geo prefix still does. Already true at yoagent 0.27.2 with no yoyo
+/// change: `ModelConfig::preset("bedrock", id)` (read by
+/// `model_is_known_for_provider`) resolves the profile through
+/// `bedrock_anthropic_id`. Checked: this test passed before any edit here.
+#[test]
+fn bedrock_inference_profile_ids_are_known_models() {
+    use crate::providers::model_is_known_for_provider as known;
+    for id in [
+        "us.anthropic.claude-sonnet-4-6",
+        "eu.anthropic.claude-sonnet-4-6",
+        "global.anthropic.claude-opus-5-5",
+        "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+    ] {
+        assert!(known("bedrock", id), "{id}");
+    }
+    for id in [
+        "xx.anthropic.claude-sonnet-4-6",
+        "anthropic.claude-sonnet-4-6-v1:0",
+    ] {
+        assert!(!known("bedrock", id), "{id}");
+    }
+    // Provider-scoped: a Bedrock id under another provider stays unknown.
+    assert!(!known("anthropic", "us.anthropic.claude-sonnet-4-6"));
 }

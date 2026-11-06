@@ -205,37 +205,6 @@ pub(crate) fn openrouter_anthropic_preset_id(model: &str) -> Option<String> {
     )
 }
 
-/// #1116: a Bedrock Claude id -> the anthropic preset id it is the same model
-/// as. Bedrock spells them `[geo.]anthropic.<id>[-vN[:M]]` (`us.`, `eu.`,
-/// `apac.`, `global.` are cross-region inference profiles; `-v1:0` is
-/// Bedrock's version suffix). `None` for any other vendor (`amazon.nova-…`,
-/// `meta.llama…`) and for an ARN.
-///
-/// **Pricing only, since yoagent 0.26.7.** Limits come from
-/// `ModelConfig::preset("bedrock", id)` in `create_model_config`'s bedrock
-/// arm; this lookup now only finds the Anthropic price for /cost
-/// (`format::cost::bedrock_region`), because yoagent's Bedrock preset is
-/// unpriced and carries no vendor id. It is looser than yoagent's (any geo
-/// prefix, any `-vN` suffix), so it may price an id yoagent gives no limits.
-/// The pricing half is still #1124's residue.
-pub(crate) fn bedrock_anthropic_preset_id(model: &str) -> Option<&str> {
-    let id = model.strip_prefix("anthropic.").or_else(|| {
-        let (geo, rest) = model.split_once('.')?;
-        let geo_ok = !geo.is_empty() && geo.bytes().all(|b| b.is_ascii_lowercase() || b == b'-');
-        geo_ok.then_some(rest)?.strip_prefix("anthropic.")
-    })?;
-    let id = match id.rsplit_once("-v") {
-        Some((head, ver))
-            if ver.starts_with(|c: char| c.is_ascii_digit())
-                && ver.bytes().all(|b| b.is_ascii_digit() || b == b':') =>
-        {
-            head
-        }
-        _ => id,
-    };
-    (!id.is_empty()).then_some(id)
-}
-
 /// Whether `model` is a **known** id for `provider`.
 ///
 /// One matching rule, consulted by every surface that asks "is this id known?"

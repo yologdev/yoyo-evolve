@@ -157,13 +157,17 @@ only turns still in the conversation, so after `/compact` it can be lower). A
 `[model_pricing]` override for the model replaces its pricing wholesale and no
 tier applies. Gemini 3.1 Pro (see Google below) is tiered the same way.
 
-Sonnet 4.6 has no yoagent preset; since Day 247 (#1116) yoyo carries its own
-row from Anthropic's pages: 1M context at standard pricing (no long-context
+Sonnet 4.6 is priced from yoagent's `claude_sonnet_4_6` preset (yoyo's own
+row from Day 247, #1116, was replaced by it at yoagent 0.26.7): 1M context at standard pricing (no long-context
 tier), 128K max output, $3 / $3.75 cache write / $0.30 cache read / $15.
 
-**Amazon Bedrock.** A Bedrock Claude id (`[us.|eu.|apac.|global.]anthropic.<id>[-vN:M]`,
-such as yoyo's bedrock default `anthropic.claude-sonnet-4-6`) is priced from the
-same Anthropic preset. Bedrock bills Claude 4.5 and later 10% more on regional
+**Amazon Bedrock.** A Bedrock Claude id (such as yoyo's bedrock default
+`anthropic.claude-sonnet-4-6`, or a `us.` / `eu.` / `apac.` / `global.` profile of
+it) is priced from the same Anthropic preset. Which Anthropic model an id is comes
+from yoagent's `ModelConfig::bedrock_anthropic_id`, the same table yoagent's
+Bedrock limits use (Day 251, #1121), so an id that runs on guessed limits never
+gets the Bedrock Claude price. A misspelled id (`xx.anthropic.…`, a `-v1:0` on a
+model whose Bedrock id has none) is not a Bedrock model, and AWS refuses it. Bedrock bills Claude 4.5 and later 10% more on regional
 endpoints than on `global.` (Anthropic's pricing page, "Regional and multi-region
 endpoint pricing"). The endpoint is in the id, so yoyo reads it: a `global.` id
 is billed at the preset's rate, and every other one (the bare in-region id and

@@ -1,7 +1,10 @@
 //! Bedrock Claude prices (#1116, Day 247).
 //!
-//! A Bedrock Claude id (`[geo.]anthropic.<id>[-vN:M]`) is the same model as the
-//! anthropic preset, and costs what that preset costs **on the `global.`
+//! A Bedrock Claude id is the same model as the anthropic preset that
+//! yoagent's `ModelConfig::bedrock_anthropic_id` names (#1121, Day 251: the
+//! same table yoagent's Bedrock limits use, so an id that runs on guessed
+//! limits is also unpriced, never priced as a Claude it may not be), and it
+//! costs what that preset and costs what that preset costs **on the `global.`
 //! endpoint**. Every other Bedrock endpoint (the bare in-region id and the
 //! `us.`/`eu.`/`apac.` profiles) is regional, and Anthropic's pricing page
 //! ("Regional and multi-region endpoint pricing for Claude 4.5 models and
@@ -16,13 +19,13 @@
 use yoagent::provider::CostConfig;
 
 /// Regional (non-`global.`) Bedrock endpoints: +10% on every rate.
-const REGIONAL_PREMIUM: f64 = 1.1;
+pub(crate) const REGIONAL_PREMIUM: f64 = 1.1;
 
 /// The price Bedrock bills `model` at, or `None` when it is not a Bedrock
 /// Claude id with an anthropic preset.
 pub(crate) fn bedrock_preset_cost(model: &str) -> Option<CostConfig> {
-    let id = crate::providers::bedrock_anthropic_preset_id(model)?;
-    let mut cost = crate::agent_builder::anthropic_preset(id)?.cost?;
+    let id = yoagent::provider::ModelConfig::bedrock_anthropic_id(model)?;
+    let mut cost = crate::agent_builder::anthropic_preset(&id)?.cost?;
     if model.starts_with("global.") {
         return Some(cost);
     }

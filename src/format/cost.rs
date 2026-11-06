@@ -7,6 +7,8 @@ use crate::config::ModelPricingOverrides;
 // #1116: Bedrock Claude ids price as the anthropic preset, +10% off `global.`.
 mod bedrock_region;
 pub(crate) use bedrock_region::bedrock_preset_cost;
+#[cfg(test)]
+pub(crate) use bedrock_region::REGIONAL_PREMIUM as BEDROCK_REGIONAL_PREMIUM;
 // #1012 (Day 251): yoagent's PriceTable is consulted before yoyo's own rows.
 mod yoagent_price;
 pub(crate) use yoagent_price::cost_row;
