@@ -1,0 +1,56 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+The commit is already in. I'll check what it contains and what's still outstanding.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | head && git… ✓ (22ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && (cargo fmt -- --check && cargo c… ✓ (4m 49s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5m 8s (2 ✓)
+
+Both comments are posted. The test summary was truncated, so I'll confirm nothing failed.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -cE "FAIL… ✓ (8m 9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Task done: dashed OpenRouter Opus ids like anthropic/claude-opus-4-6 no longer warn that yoyo is guessing their limits. The interrupted session had already committed everything (d8988d05), so I only checked the result. Format, clippy and cargo test all pass (7,292 passed, 0 failed), and the working tree is clean.
+
+What the commit does:
+• Where the bug really was: the plan pointed at openrouter_anthropic_preset_id, but that already mapped dashed ids. The actual gap was the fallback: yoagent accepts only OpenRouter's dotted spelling (anthropic/claude-opus-4.6) and refuses the dashed one. A new providers::openrouter_routed_preset retries a refused dashed anthropic/ id in its dotted spelling. A dashed id therefore resolves exactly when its dotted twin does, with no hand-typed list of Opus versions and no hand-typed limits.
+• Outside the plan's file list: a one-line change to src/agent_builder.rs, because that is where the lookup is called. docs/src/configuration/models.md also changed; it now says which Claude ids still warn and why.
+• Before/after table: measured with the built binary from an empty directory, and it's in the commit body. It has to run from an empty directory because this repo's own .yoyo.toml sets max_tokens, and that alone silences the warning.
+• Still warning, on purpose:
+  • Sonnet 4.5 and Opus 4.1: Anthropic has retired or is retiring them, and yoagent has no row for them on purpose. yoyo really is guessing, so the warning is true.
+  • `:batch`: this half-price variant would show double the real price in /cost if mapped to the normal row. It's now noted on #1012 as price work.
+• `/cost`: dashed and dotted ids already priced the same, so format/cost.rs was not touched. A new test checks this.
+• Tests: dashed and dotted Opus 4.7, 4.6 and 4.5 get limits read from yoagent, not typed in. The near-misses (Sonnet 4.5, Opus 4.1, :batch) stay unknown. Breaking the twin lookup on purpose made the two dashed tests fail by name, and restoring it made them pass.
+
+Tickets: the closing comment is posted on #1117. The issue is still open and will close when the "Fixes #1117" commit is pushed. The remaining #1117 mentions in the code are history notes, not "tracked in #1117" pointers, so nothing goes stale when it closes.
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | wc -l && gi… ✓ (10ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+There's nothing left to do for #1117. I just re-checked: the working tree is clean, and HEAD is still the commit that fixes it (d8988d05).
+
+Everything the task asked for is done:
+• The fix: dashed OpenRouter Opus 4.7/4.6/4.5 ids now run on yoagent's real limits.
+• The table: the commit body shows which ids warned before and after.
+• The reasons: the ids that still warn (Sonnet 4.5, Opus 4.1, :batch) have their reasons stated in user terms.
+• The tests: dashed and dotted Opus ids are covered, plus the ids that must keep warning.
+• The docs: docs/src/configuration/models.md says which Claude ids still warn and why.
+• The ticket comments: the :batch note is on #1012 and the closing comment is on #1117.
+• The checks: fmt, clippy and cargo test pass (7,292 passed, 0 failed).
+
+The commit hasn't been pushed yet: it and the two before it are ahead of origin/main. The session harness does the push, and #1117 closes when it does, through the "Fixes #1117" title. The task said to do nothing else, so I'm stopping here.
+  watch: no files changed this turn — skipping

@@ -1,0 +1,142 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "fn anthropic_preset\b" -A… ✓ (9ms)
+ ✓ (22ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 990,1040p src/agent_builder… ✓ (13ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.27.2/; grep -n "0.27.2" -A40 CHANGELOG.md |… ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo build 2>&1 | tail -2; for id… ✓ (1m 29s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; HOME=$(mktemp -d) OPENROUTER_API_K… ✓ (8.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; B=$PWD/target/… (7 lines) ✓ (1m 15s)
+  ▶ $ cat /tmp/before.txt ✓ (63ms)
+  ▶ $ tr '\n' ';' < /tmp/before.txt ✓ (5ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.27.2/; grep -n "pub fn preset\b" -A60 src/p… ✓ (5ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.27.2/; sed -n 2230,2330p src/provider/model… ✓ (4ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.27.2/; grep -n "fn openrouter_preset" -A60 … ✓ (8ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.27.2/; grep -n "fn openrouter_claude_id" -B… ✓ (7ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.27.2/; grep -n "pub fn\|pub(crate) fn" src/… ✓ (5ms)
+  ▶ $ cd $(mktemp -d); for m in anthropic/claude-opus-4-6 anthropic/claude-opus-4.6 an… ✓ (21.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "agent_builder\|providers.… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat >> src/ope… (103 lines) ✓ (23.0s)
+
+────────────────────────────────────────────────────────────────────────────────
+  17 tools completed in 5m 53s (17 ✓)
+
+Now the helper in providers.rs and the one call site.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/providers.rs (1 → 24 lines)
+  + /// yoagent's OpenRouter preset for `model`, trying an `anthropic/` id's dotted
+  + /// twin when yoagent refuses the dashed spelling (#1117): yoagent 0.27.2 knows
+  + /// `anthropic/claude-opus-4.6` (price-table limits, no named preset) but not
+  + /// `anthropic/claude-opus-4-6`, the spelling a config may carry. The twin is
+  + /// yoagent's own OpenRouter rule (a trailing `-{major}-{minor}` is written
+  + /// `-{major}.{minor}`), so a dashed id resolves exactly when its dotted twin
+  + /// does: no hand-kept list. `:variant`s (`:batch` is half price) are never
+  + /// respelled, and other vendors keep yoagent's refusal.
+  + pub(crate) fn openrouter_routed_preset(model: &str) -> Option<yoagent::provider::ModelConfig> {
+  +     use yoagent::provider::ModelConfig;
+  +     ModelConfig::preset("openrouter", model).or_else(|| {
+  +         let id = model.strip_prefix("anthropic/")?;
+  +         let num = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+  +         let (head, minor) = id.rsplit_once('-')?;
+  +         if id.contains(':') || !num(minor) || !head.rsplit_once('-').is_some_and(|(_, m)| num(m)) {
+  +             return None;
+  +         }
+  +         let mut p = ModelConfig::preset("openrouter", &format!("anthropic/{head}.{minor}"))?;
+  +         (p.id, p.name) = (model.to_string(), model.to_string());
+  +         Some(p)
+  ... (4 more lines)
+  ▶ edit src/agent_builder.rs (1 → 1 lines)
+  -             } else if let Some(p) = ModelConfig::preset("openrouter", model) {
+  +             } else if let Some(p) = crate::providers::openrouter_routed_preset(model) {
+ ✓ (5m 27s)
+  + /// yoagent's OpenRouter preset for `model`, trying an `anthropic/` id's dotted
+  + /// twin when yoagent refuses the dashed spelling (#1117): yoagent 0.27.2 knows
+  + /// `anthropic/claude-opus-4.6` (price-table limits, no named preset) but not
+  + /// `anthropic/claude-opus-4-6`, the spelling a config may carry. The twin is
+  + /// yoagent's own OpenRouter rule (a trailing `-{major}-{minor}` is written
+  + /// `-{major}.{minor}`), so a dashed id resolves exactly when its dotted twin
+  + /// does: no hand-kept list. `:variant`s (`:batch` is half price) are never
+  + /// respelled, and other vendors keep yoagent's refusal.
+  ... (13 more lines)
+ ✓ (10m 16s)
+  -             } else if let Some(p) = ModelConfig::preset("openrouter", model) {
+  +             } else if let Some(p) = crate::providers::openrouter_routed_preset(model) {
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt; cargo test --bin yoyo o… ✓ (40.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/providers.rs /tmp/p.bak; se… ✓ (1m 17s)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 12m 23s (4 ✓)
+
+Control fires by name and the restore is green. Now the after-table and the full gate.
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo build 2>&1 | tail -1; /tmp/p… ✓ (1m 32s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git grep -n '#1117' src docs skill… ✗ (2m 0s)
+    │ Command timed out after 120s. Output so far:
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test 2>&1 | grep -E "test re… ✓ (4m 13s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n '"src/providers.rs"\|"src/… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 45,70p docs/src/configurati… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 53,63p docs/src/configurati… ✓ (6ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/configuration/models.md:53..64 ✓ (0ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/configuration/models.md (2 → 5 lines)
+  - > output limit and price. A `:variant` id (such as `:batch`) and a Claude id
+  - > with no Anthropic preset still run on guessed limits, and yoyo warns about them.
+  + > output limit and price. Older Claude models yoagent knows only from its price
+  + > table (Opus 4.7, 4.6, 4.5) get their real limits in either spelling too. A
+  + > `:variant` id (such as `:batch`, which is half price) and a Claude id yoagent
+  + > has no row for (retired or retiring ones such as Opus 4.1 and Sonnet 4.5) still
+  + > run on guessed limits, and yoyo warns about them.
+ ✓ (0ms)
+  - > output limit and price. A `:variant` id (such as `:batch`) and a Claude id
+  - > with no Anthropic preset still run on guessed limits, and yoyo warns about them.
+  + > output limit and price. Older Claude models yoagent knows only from its price
+  + > table (Opus 4.7, 4.6, 4.5) get their real limits in either spelling too. A
+  + > `:variant` id (such as `:batch`, which is half price) and a Claude id yoagent
+  + > has no row for (retired or retiring ones such as Opus 4.1 and Sonnet 4.5) still
+  + > run on guessed limits, and yoyo warns about them.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git status --s… (55 lines) ✓ (26ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  9 tools completed in 8m 21s (8 ✓, 1 ✗)
+
+Committed. Now the two ticket comments the plan asked for (#1012's :batch line, #1117's closing reason).
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue comment 1012 --body "Scop… ✓ (2.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Done. #1117 is fixed and committed as d8988d05, and build, clippy, fmt and the full cargo test all pass.
+
+The cause wasn't where the plan said. openrouter_anthropic_preset_id already turned the dashed anthropic/claude-opus-4-6 into claude-opus-4-6. The miss came after that. yoyo's anthropic_preset has no entry for opus 4-6, and shouldn't get one, since yoagent's price table now holds those limits. The fallback, ModelConfig::preset("openrouter", ..), only accepts OpenRouter's dotted spelling.
+
+The fix: a new providers::openrouter_routed_preset. When yoagent turns down the dashed form, it retries with the dotted form, using yoagent's own spelling rule (a trailing -4-6 becomes -4.6). So a dashed id works exactly when its dotted twin does, and there's no list of opus versions to maintain. :batch-style variants are never respelled, and other vendors' ids are left to yoagent. The openrouter branch in agent_builder.rs calls it. That's a one-line change in a file the plan's Files: line didn't list, but that's where the lookup runs.
+
+Before/after, measured with the built binary (1 = warns that yoyo is guessing the model's limits):
+
+| id | before | after |
+|---|---|---|
+| opus-4-7 / 4-6 / 4-5 (dashed) | 1 | 0 |
+| opus 4.7 / 4.6 / 4.5 (dotted) | 0 | 0 |
+| sonnet 4.5, opus 4.1 (both spellings) | 1 | 1 |
+| sonnet-4.6:batch | 1 | 1 |
+
+The probe has to run from an empty directory. This repo's .yoyo.toml sets max_tokens, which silences the warning, so my first run from inside the repo showed 0 for every id.
+
+The ids that still warn do so on purpose:
+• Sonnet 4.5 and Opus 4.1: Anthropic retired Opus 4.1 and is retiring Sonnet 4.5, and yoagent deliberately has no entry for them. yoyo really is guessing, so the warning is true.
+• `:batch`: this is OpenRouter's half-price variant. Giving it the full-price entry would make /cost show double. I added it to #1012, the pricing ticket.
+
+Pricing: /cost already priced both spellings the same, using yoagent's price table, so format/cost.rs is unchanged. A new test checks that they stay the same.
+
+Tests: I added four tests in src/openrouter_preset_tests.rs. The expected limits are read from yoagent, not typed in, and there are near-miss cases for the ids that must keep warning. As a check, I pointed the fallback back at the user's own dashed id: the two dashed-id tests failed by name. I restored it in the same command and they pass again.
+
+Docs and tickets: I updated docs/src/configuration/models.md to say which Claude ids still warn and why. I commented on #1012 (the :batch scope) and #1117 (the closing reasons). git grep '#1117' finds only comments recording where the code came from, with no user-facing "tracked in" pointers to rewrite.
+
+  (interrupted)

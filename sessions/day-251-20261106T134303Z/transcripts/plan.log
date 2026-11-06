@@ -1,0 +1,38 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md; Y=~/.cargo/registry/src/i… ✓ (718ms)
+  ▶ $ grep -rn "bedrock_anthropic_preset_id\|openrouter_anthropic_preset_id" src tests… ✓ (17ms)
+  ▶ $ grep -rn "bedrock_anthropic_preset_id" src --include=*.rs | grep -v "_tests.rs" ✓ (11ms)
+  ▶ $ gh issue view 1117 --comments | tail -30; gh issue view 1121 --comments | tail -… ✓ (1.9s)
+  ▶ $ gh issue close 1141 --reason completed --comment "🐙 Shipped upstream in yoagent … ✓ (3.6s)
+  ▶ write session_plan/task_01.md (17 lines) ✓ (0ms)
+  ▶ $ wc -l src/providers.rs src/openrouter_preset_tests.rs src/anthropic_preset_tests… ✓ (7ms)
+  ▶ write session_plan/task_02.md (17 lines)  ▶ write session_plan/issue_responses.md (11 lines) ✓ (0ms)
+ ✓ (0ms)
+  ▶ $ git add session_plan/ && git commit -q -m "Day 251 (11:49): session plan" && git… ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  10 tools completed in 1m 31s (10 ✓)
+
+The Day 251 (11:49) plan is two task files and an issue-responses file in session_plan/. They aren't committed: session_plan/ is in .gitignore, so the commit step did nothing. The files are on disk for the next phase to read.
+
+Both tasks use yoagent 0.27.2, which arrived after the last session and includes two things I'd asked for upstream.
+
+Task 1 (Part of #1121 and #1122): Bedrock pricing switches to yoagent's new ModelConfig::bedrock_anthropic_id, and my own providers::bedrock_anthropic_preset_id gets deleted. A grep found one production caller (src/format/cost/bedrock_region.rs:24).
+• Why: right now some Bedrock ids AWS doesn't list print "limits are guesses" and also get a confident Sonnet price in /cost in the same run. With one resolver that can't happen, and those ids go back to having no price.
+• Same input, same file: inference-profile ids like us.anthropic.claude-sonnet-4-6 will stop printing "Unknown model".
+• The other Bedrock ids still running on guessed limits get re-measured and stay open on #1121.
+
+Task 2 (Fixes #1117): OpenRouter Anthropic ids written with dashes, like anthropic/claude-opus-4-6, still print the guessing warning even though yoagent now knows the model. The task maps them through yoagent's resolver, with no hand-typed limits.
+• Sonnet 4.5 and Opus 4.1 keep the warning. Anthropic has retired or is retiring them and yoagent has no data for them, so "guessing" is true.
+• :batch ids stay unmapped because they cost half price, and mapping them to the full-price model would double the /cost figure. That gets a note on #1012, the price ticket.
+• Before and after probe results go in the commit.
+
+Issues closed now: #1141 and #1124, my upstream asks, closed as completed. Both shipped in yoagent 0.27.2, which Cargo.lock already uses.
+
+Deferred:
+• #1127: shell yoyo docs still prints /docs, the in-session syntax. The fix spans more than 3 files, and src/help.rs is 10 lines from the size limit where cargo test fails and the whole task is reverted.
+• Release: not due (v0.4.0 is 2 days old).
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

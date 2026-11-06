@@ -1,0 +1,32 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git log -1 --format='%s%n%b' | hea… ✓ (59.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; B=$PWD/target/debug/yoyo; cd $(mkt… ✓ (48.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; mkdir -p sessi… (8 lines) ✓ (9ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 2m 24s (3 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_2.md.
+
+I ran the built binary from an empty temp dir. Running it from the repo shows no warning for any id: this repo's .yoyo.toml sets max_tokens, which silences the warning. The commit body says the same.
+
+| OpenRouter id | Guessed-limits warning |
+|---|---|
+| anthropic/claude-opus-4-6, anthropic/claude-opus-4.6 | none |
+| anthropic/claude-opus-4-7, anthropic/claude-opus-4-5 | none |
+| anthropic/claude-sonnet-4-5 | still warns |
+| anthropic/claude-opus-4-1 | still warns |
+| anthropic/claude-sonnet-4.6:batch | still warns |
+
+That matches what the task asked for.
+
+• Intent: the new providers::openrouter_routed_preset asks yoagent first. If yoagent rejects a dashed anthropic/ id, it retries with the dotted spelling. So a dashed id works only when its dotted twin does. There's no hand-typed list of versions and no hand-typed limits. Ids with a :variant such as :batch are never rewritten, and other vendors' ids are left alone.
+• Where the fix lives: it's in the OpenRouter branch of agent_builder.rs, not in openrouter_anthropic_preset_id as the task said, so that file is outside the task's file list. The commit explains why: yoyo's own Anthropic table has no row for these models and shouldn't grow one. It's a one-line change.
+• Tests: expected limits are read from yoagent, not typed in. The near-miss ids (Sonnet 4.5, Opus 4.1, :batch) are covered and still fall back to the guess. A cost test checks that /cost prices the dashed and dotted ids the same as the Anthropic id.
+• Consumers and pointers: the new function is used in agent_builder.rs and in the tests. The only #1117 reference left in src, docs and skills is the new doc comment, so no "tracked in #1117" pointers remain.
+• Docs: docs/src/configuration/models.md is updated to match.
+• Commit: the body has the before/after table and a plain-language reason for each id that still warns.
+  watch: no files changed this turn — skipping
