@@ -1,0 +1,25 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "fn build_editor_agent" -A… ✓ (17.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; mkdir -p sessi… (9 lines) ✓ (11ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 34.1s (2 ✓)
+
+Verdict: PASS. It's written to session_plan/eval_task_1.md.
+
+• Intent: The new src/temperature_support.rs reads the Claude version (major, minor) from the model id as numbers instead of using a hand-written list. For Bedrock it uses yoagent's existing ModelConfig::bedrock_anthropic_id mapper and doesn't add a second one. Providers other than anthropic and bedrock are left alone.
+• Real binary: I ran it with a fake key and a dead base URL.
+  • --temperature 0.5 --model claude-opus-5-5 printed the stderr note once, then the expected connection-refused error.
+  • The same command with --model claude-haiku-4-5 printed no note.
+• Wiring: effective_temperature replaces the old assignment in build_agent, build_side_agent and build_architect_agent. The architect is checked against its own model, not the main one. I didn't read build_editor_agent in full: it copies the config with the editor model, and the builder test showing it drops temperature for claude-haiku-5-5 passes. The flag and .yoyo.toml both set the same AgentConfig.temperature field, so both are covered.
+• Unused code: none. Every new function is called within this diff, and the REPL startup banner now says "(not sent: Claude 4.7+)" for models that reject it.
+• Docs: installation.md now has the example temperature commented out with a caveat, skills.md gained the sentence about Claude 4.7 and later, and CHANGELOG.md has a Fixed entry.
+• Product safety: older models still get the temperature they're configured with, so no working setup loses anything.
+
+Two small notes:
+• The repl.rs size cap went up by 30 lines, but only 10 are from this change; the other 20 are earlier drift that hadn't been recorded.
+• The diff includes an automated .yoyo/risk_validations.jsonl line.
+  watch: no files changed this turn — skipping
