@@ -1,23 +1,46 @@
-//! TLS CA-environment pre-flight (#1138, yoyo's half).
+//! TLS CA-environment pre-flight (#1138, fixed upstream in yoagent 0.27.1).
 //!
 //! On Linux-like targets reqwest's TLS verifier (rustls-platform-verifier)
 //! builds its trust store from `rustls_native_certs::load_native_certs()`. When
 //! `SSL_CERT_FILE` or `SSL_CERT_DIR` is set, that loader reads ONLY those paths
-//! (not the system store), and if they yield zero certificates the verifier
-//! errors and yoagent's `reqwest::Client::new()` panics inside a tokio worker.
-//! The user then sees a panic backtrace line and `(reply cut off: ...)`, exit 1,
-//! and no word about which variable is wrong. Even an `http://` base URL hits
-//! it: the client builds its TLS config whether or not it will use it.
+//! (not the system store), and if they yield zero certificates the HTTP client
+//! cannot be built. Before yoagent 0.27.1 that was a `reqwest::Client::new()`
+//! panic inside a tokio worker: a backtrace line, `(reply cut off: ...)`,
+//! exit 1, and no word about which variable was wrong. Even an `http://` base
+//! URL hit it: the client builds its TLS config whether or not it will use it.
 //!
-//! The root fix (no panic) is upstream, on #1138. This module refuses the
-//! panicking environment before any agent is built and names the variable,
-//! the path and what is wrong with it.
+//! **Fixed upstream in yoagent 0.27.1** (yologdev/yoagent#427): every provider
+//! now returns `ProviderError::Other` instead of panicking. Measured on the
+//! built binary with this pre-flight bypassed (Day 250, `SSL_CERT_FILE=/dev/null
+//! yoyo -p hi`, dead `http://` base URL and the real Anthropic URL alike), no
+//! panic, exit 1, and on stderr:
+//!
+//! ```text
+//! error: cannot build the HTTP client (builder error: unexpected error: No CA
+//! certificates were loaded from the system). Usually the CA certificates:
+//! SSL_CERT_FILE / SSL_CERT_DIR, if set, must name PEM certificates (a file, or
+//! directories of them) that load; if neither is set, install the system's CA
+//! bundle (e.g. ca-certificates) or point SSL_CERT_FILE at one.
+//! API error with no fallback configured. Exiting.
+//! ```
+//!
+//! **This module stays (#1142 step 4), for two reasons yoagent's message
+//! cannot cover.** (1) *When:* yoagent builds the client per provider request
+//! (`provider::http_client()`), so in the REPL its error arrives only after the
+//! user has typed and sent a first turn; this pre-flight refuses at startup,
+//! before the wizard, the banner or any prompt. (2) *What:* yoagent's message
+//! names both variables conditionally ("Usually ... if set"), because it cannot
+//! see which one is set or what is wrong with it; this one names the variable
+//! that is set, its path and the problem (`SSL_CERT_FILE is "/dev/null", which
+//! is empty`). With the panic gone, the cost of a miss here is small: a shape
+//! this pre-flight lets through now gets yoagent's error, not a crash.
 //!
 //! **The decision is the loader's own outcome, not a re-implementation of it.**
 //! [`loaded_cert_count`] calls the same `rustls-native-certs` crate the
 //! verifier calls, on the same paths, and the refusal fires only when it loads
-//! zero certificates — the exact condition of the panic. Measured on the built
-//! binary (Day 249), every shape below followed that rule:
+//! zero certificates — the exact condition of the failure. Measured on the built
+//! binary (Day 249, yoagent 0.26, where that failure was a panic; since 0.27.1
+//! the same rows get yoagent's error instead), every shape followed that rule:
 //!
 //! | env                                                   | outcome   |
 //! |-------------------------------------------------------|-----------|
@@ -37,8 +60,9 @@
 //!
 //! Known gap, stated rather than implied: a PEM block whose base64 decodes but
 //! is not a parsable X.509 certificate counts as loaded here, while the
-//! verifier's `add_parsable_certificates` drops it. That shape still panics as
-//! before (fails open to the old behaviour, never refuses a working env).
+//! verifier's `add_parsable_certificates` drops it. That shape is let through
+//! here (never refuses a working env) and, since yoagent 0.27.1, gets
+//! yoagent's "cannot build the HTTP client" error instead of a panic.
 //!
 //! On macOS, Windows and Android the verifier does not read these variables,
 //! so the pre-flight is a no-op there: refusing would be a new bug.
@@ -213,7 +237,8 @@ pub(crate) fn loaded_cert_count(file: Option<&Path>, dirs: &[PathBuf]) -> usize 
 }
 
 /// Run the pre-flight against the process environment. `Some(message)` means
-/// building a provider client would panic; print it and exit 1.
+/// building a provider client would fail (a panic before yoagent 0.27.1, an
+/// error since); print it and exit 1.
 pub(crate) fn preflight_ca_env() -> Option<String> {
     #[cfg(all(unix, not(target_vendor = "apple"), not(target_os = "android")))]
     {

@@ -93,6 +93,9 @@ pub(super) struct RetrySafeGate {
     /// every ending it reaches (done, error, abort, rejected input), so a
     /// close without it means the agent task died (a panic) mid-run.
     saw_agent_end: bool,
+    /// #1142: the process's panic count when this turn began, so the close
+    /// can say whether the task crashed or the stream was cut short.
+    panics_at_start: usize,
 }
 
 impl RetrySafeGate {
@@ -106,6 +109,7 @@ impl RetrySafeGate {
             failed_text: String::new(),
             panic_sink: Box::new(std::io::stdout()),
             saw_agent_end: false,
+            panics_at_start: super::interrupt::panic_count(),
         }
     }
 
@@ -244,12 +248,21 @@ impl RetrySafeGate {
         self.closed && !self.saw_agent_end
     }
 
+    /// #1142: how this turn's stream ended: finished, cut short, or crashed
+    /// (a panic was counted since the gate was made).
+    pub(super) fn run_end(&self) -> super::interrupt::RunEnd {
+        super::interrupt::classify_run_end(
+            self.ended_without_agent_end(),
+            self.panics_at_start,
+            super::interrupt::panic_count(),
+        )
+    }
+
     /// #1016: called by the loop once `next()` returns `None`; records a run
-    /// that ended without its `AgentEnd` (exit 1, a note on stderr).
+    /// that ended without its `AgentEnd` (exit 1, a note on stderr, worded
+    /// as a crash when the task panicked: #1142).
     pub(super) fn report_unfinished_run(&self) {
-        if self.ended_without_agent_end() {
-            super::interrupt::record_stream_cut_short();
-        }
+        super::interrupt::record_unfinished_run(self.run_end());
     }
 
     /// Text the filter is still holding (an attempt in flight, or a failed
@@ -481,6 +494,24 @@ mod tests {
         assert!(!gate.ended_without_agent_end());
         while gate.next(&mut rx).await.is_some() {}
         gate.ended_without_agent_end()
+    }
+
+    /// #1142, the hop: a real agent-like task that panics mid-stream, with
+    /// the counter main installs, ends the gate's run as a crash, not as a
+    /// cut-off reply. (The table in interrupt.rs pins the wording.)
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_task_that_panics_mid_stream_ends_the_run_as_a_crash() {
+        super::super::interrupt::install_panic_counter();
+        let mut gate = RetrySafeGate::with_panic_sink(false, Box::new(Sink::default()));
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let task = tokio::spawn(async move {
+            tx.send(start()).expect("send");
+            tx.send(text("HALF")).expect("send");
+            panic!("deliberate panic in a test agent task (#1142)");
+        });
+        while gate.next(&mut rx).await.is_some() {}
+        assert!(task.await.unwrap_err().is_panic());
+        assert_eq!(gate.run_end(), super::super::interrupt::RunEnd::Crashed);
     }
 
     /// #1016 (the 2026-10-24T09:36Z row: "exit code for the closed-mid-attempt

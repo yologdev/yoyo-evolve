@@ -8,7 +8,8 @@ static SINGLE_SHOT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBoo
 pub(super) static INTERRUPTED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
-/// #1016: set when the event stream closed before the run's `AgentEnd`.
+/// #1016: set when the event stream closed before the run's `AgentEnd`
+/// (#1142: either kind, cut short or crashed; both exit 1).
 static STREAM_CUT_SHORT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Mark this process as a single-shot run (`-p` / piped prompt).
@@ -26,19 +27,86 @@ pub fn was_interrupted() -> bool {
 }
 
 /// #1016: did a turn's event stream close before its `AgentEnd` (the agent
-/// task died mid-run)? A single-shot run then counts as failed: exit 1, and
+/// task died mid-run, by a panic or otherwise; see [`RunEnd`])? A single-shot run then counts as failed: exit 1, and
 /// `--output-format json` reports `is_error: true`.
 pub fn stream_cut_short() -> bool {
     STREAM_CUT_SHORT.load(std::sync::atomic::Ordering::SeqCst)
 }
 
-/// #1016: record a stream that closed without `AgentEnd` and say so. Nobody
+/// #1142: panics seen by the hook [`install_panic_counter`] puts in front of
+/// the default one. A turn snapshots this at its start, so a run that ended
+/// without `AgentEnd` can be told apart: a panic happened in between (the
+/// agent task crashed) or none did (the stream was cut short some other way).
+static PANICS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// #1142: count every panic in this process, then run the hook that was
+/// there before (the default one prints `thread '...' panicked at ...` to
+/// stderr exactly as before). Process-wide: it reaches every panic on every
+/// thread, and changes nothing about any of them except this count. Idempotent.
+pub fn install_panic_counter() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            PANICS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            previous(info);
+        }));
+    });
+}
+
+/// #1142: panics counted so far (0 when the counter was never installed).
+pub(super) fn panic_count() -> usize {
+    PANICS.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// #1016/#1142: how a turn's event stream ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum RunEnd {
+    /// The run reached its `AgentEnd` (done, error, abort, rejected input).
+    Finished,
+    /// The stream closed without `AgentEnd` and nothing panicked meanwhile.
+    CutShort,
+    /// The stream closed without `AgentEnd` and a panic happened during the
+    /// turn: the agent task crashed. Not a limit; a bug in yoyo or yoagent.
+    Crashed,
+}
+
+/// #1142: the decision. A panic counted between the turn's start and the
+/// stream's close turns an unfinished run into a crash; a finished run is
+/// finished whatever else panicked.
+pub(super) fn classify_run_end(
+    ended_without_agent_end: bool,
+    panics_at_start: usize,
+    panics_now: usize,
+) -> RunEnd {
+    if !ended_without_agent_end {
+        RunEnd::Finished
+    } else if panics_now > panics_at_start {
+        RunEnd::Crashed
+    } else {
+        RunEnd::CutShort
+    }
+}
+
+/// #1016/#1142: the note for each ending (`None` for a finished run).
+pub(super) fn run_end_note(end: RunEnd) -> Option<String> {
+    match end {
+        RunEnd::Finished => None,
+        RunEnd::CutShort => Some(stream_cut_short_note()),
+        RunEnd::Crashed => Some(crashed_note()),
+    }
+}
+
+/// #1016/#1142: record an unfinished run and say how it ended. Nobody
 /// chooses this ending, and stdout holds only what streamed before it, so a
-/// script must be able to tell it from a finished reply.
-pub(super) fn record_stream_cut_short() {
+/// script must be able to tell it from a finished reply: both unfinished
+/// kinds set the flag `main` turns into exit 1 (`is_error: true` in json).
+pub(super) fn record_unfinished_run(end: RunEnd) {
     use std::io::Write;
+    let Some(note) = run_end_note(end) else {
+        return;
+    };
     STREAM_CUT_SHORT.store(true, std::sync::atomic::Ordering::SeqCst);
-    let note = stream_cut_short_note();
     if is_single_shot() {
         let _ = std::io::stderr().write_all(note.as_bytes());
     } else {
@@ -49,6 +117,17 @@ pub(super) fn record_stream_cut_short() {
 /// #1016: the note for a reply cut off by a dead agent task.
 pub(super) fn stream_cut_short_note() -> String {
     format!("\n{DIM}  (reply cut off: the agent stopped before finishing the turn){RESET}\n")
+}
+
+/// #1142: the note for an agent task that panicked mid-turn. Until Day 250
+/// this case got the "reply cut off" note, which reads as a truncated stream
+/// or a limit; it is a crash, and the panic line above it is the evidence.
+pub(super) fn crashed_note() -> String {
+    format!(
+        "\n{DIM}  (the agent crashed before finishing the turn: a panic, printed above. \
+         That is a bug in yoyo or yoagent, not a limit you hit; please report it at \
+         https://github.com/yologdev/yoyo-evolve/issues){RESET}\n"
+    )
 }
 
 /// #993/#1015/#1016: the exit code a cut-short single-shot run should use:
@@ -148,6 +227,28 @@ mod tests {
         );
         // Glyph-free: the note reaches pipes and logs.
         assert!(stream_cut_short_note().is_ascii());
+    }
+
+    /// #1142: the decision table, driven through the deciding function.
+    #[test]
+    fn run_end_tells_a_crash_from_a_cut_off_stream_from_a_finished_run() {
+        // (a) closed without AgentEnd, no panic during the turn: cut off.
+        assert_eq!(classify_run_end(true, 3, 3), RunEnd::CutShort);
+        let cut = run_end_note(RunEnd::CutShort).expect("a note");
+        assert!(cut.contains("reply cut off"), "{cut}");
+        // (b) closed without AgentEnd and a panic happened: a crash, never
+        // worded as a cut-off stream.
+        assert_eq!(classify_run_end(true, 3, 4), RunEnd::Crashed);
+        assert_eq!(classify_run_end(true, 0, 2), RunEnd::Crashed);
+        let crash = run_end_note(RunEnd::Crashed).expect("a note");
+        assert!(crash.contains("crashed"), "{crash}");
+        assert!(crash.contains("panic"), "{crash}");
+        assert!(!crash.contains("cut off"), "{crash}");
+        assert!(crash.is_ascii(), "the note reaches pipes and logs");
+        // (c) the run reached AgentEnd: no note, even if something panicked.
+        assert_eq!(classify_run_end(false, 3, 3), RunEnd::Finished);
+        assert_eq!(classify_run_end(false, 3, 9), RunEnd::Finished);
+        assert_eq!(run_end_note(RunEnd::Finished), None);
     }
 
     #[test]

@@ -177,9 +177,10 @@ pub(crate) async fn run_non_interactive_review(
 
     let prompt = build_review_prompt(&label, &content, effort);
 
-    // #1138: `yoyo review` is the one shell verb that builds a model agent
-    // (it skips main's pre-flight), so it refuses a CA env that would make the
-    // provider client panic, here where it is about to build one.
+    // #1138 (fixed upstream in yoagent 0.27.1): `yoyo review` is the one
+    // shell verb that builds a model agent (it skips main's pre-flight), so it
+    // refuses a CA env that cannot build the provider client, here where it is
+    // about to build one, naming the variable (yoagent's error cannot).
     if let Some(msg) = crate::tls_preflight::preflight_ca_env() {
         eprintln!("{msg}");
         return Err("no CA certificates could be loaded".to_string());

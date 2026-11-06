@@ -1271,6 +1271,9 @@ async fn restore_session(agent: &mut Agent, strict: bool) {
 
 #[tokio::main]
 async fn main() {
+    // #1142: count panics (the default hook still prints them) so a turn
+    // whose agent task panics is reported as a crash, not "reply cut off".
+    prompt::install_panic_counter();
     // Restore the default SIGPIPE disposition (Unix only). Rust sets SIGPIPE
     // to SIG_IGN at startup, so when the reader of a pipe closes early
     // (`yoyo risk accuracy | head -1`), `println!` gets EPIPE and panics with
@@ -1331,8 +1334,10 @@ async fn main() {
         return;
     }
 
-    // #1138: an SSL_CERT_FILE / SSL_CERT_DIR that loads zero CA certificates
-    // makes the provider's `reqwest::Client::new()` panic mid-turn. Shell
+    // #1138 (fixed upstream in yoagent 0.27.1, which returns an error where
+    // it used to panic): an SSL_CERT_FILE / SSL_CERT_DIR that loads zero CA
+    // certificates cannot build the provider's HTTP client. This refuses at
+    // startup and names the variable; why it stays: tls_preflight.rs. Shell
     // subcommands were dispatched inside `parse_args`, so only agent paths
     // (REPL, -p, piped) reach here; refuse before the wizard or any agent.
     if let Some(msg) = tls_preflight::preflight_ca_env() {

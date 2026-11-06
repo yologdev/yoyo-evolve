@@ -22,7 +22,10 @@ pub(crate) mod reserved_dns;
 mod retry_after_partial;
 mod retry_safe_pipe;
 mod sigterm;
-pub use interrupt::{interrupted_exit_code, mark_single_shot, stream_cut_short, was_interrupted};
+pub use interrupt::{
+    install_panic_counter, interrupted_exit_code, mark_single_shot, stream_cut_short,
+    was_interrupted,
+};
 pub use output_limit::{incomplete_forces_failure, Incomplete};
 mod stream_external_servers;
 #[cfg(test)]
