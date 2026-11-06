@@ -107,7 +107,8 @@ pub fn cli_help_text() -> String {
     );
     let _ = writeln!(
         s,
-        "  --image <file>    Attach an image to the prompt (png/jpg/jpeg/gif/webp/bmp;"
+        "  --image <file>    Attach an image to the prompt ({};",
+        crate::commands_file::supported_image_extensions()
     );
     let _ = writeln!(s, "                    requires -p, ignored in REPL mode)");
     let _ = writeln!(s, "  --output, -o <f>  Write final response text to a file");

@@ -259,7 +259,10 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // to 1999 and under the cap. Branch 3 fired the moment that happened, which
     // is the ratchet working: registering would have converted a paid debt into
     // a permanent ceiling. Restoring an entry here would be a regression.
-    ("src/commands_file.rs", 2854),
+    // Day 251 (#1143): 2854 -> 2936 (+82). gif left SUPPORTED_IMAGE_FORMATS; the
+    // refused-format list, the one joiner every "supported" message reads, the
+    // --image refusal (moved out of cli.rs, -1 there) and their refusal tests.
+    ("src/commands_file.rs", 2936),
     // Day 224 (#1008): 3484 -> 3679 (+195). ~100 was already sitting in the grace
     // band unregistered; +95 is the argv doors for `yoyo commit` / `yoyo diff`
     // (`commit_args_from_argv`, `diff_options_from_argv`, their shared token cores)

@@ -2733,9 +2733,8 @@ directory ({e}); this run is trusted, later runs will not be."
                 std::process::exit(1);
             }
             if !crate::commands_file::is_image_extension(img_path) {
-                eprintln!(
-                    "{RED}error:{RESET} '{img_path}' is not a supported image format. Supported: png, jpg, jpeg, gif, webp, bmp"
-                );
+                let why = crate::commands_file::image_flag_refusal(img_path);
+                eprintln!("{RED}error:{RESET} {why}");
                 std::process::exit(1);
             }
         }

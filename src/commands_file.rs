@@ -123,17 +123,54 @@ pub fn format_add_content(path: &str, content: &str) -> String {
 
 // ── Image support helpers ─────────────────────────────────────────────
 
-/// The image formats the Anthropic API accepts, as (extension, MIME type) pairs.
-/// Single source of truth for `is_image_extension` and `mime_type_for_extension`
-/// (#698: two hand-typed lists agreed with each other and were jointly wrong —
-/// bmp was accepted here, printed a success, and the API rejected it a turn later).
+/// The image formats both the Anthropic API and yoagent's `read_file` accept, as
+/// (extension, MIME type) pairs. Single source of truth for `is_image_extension`,
+/// `mime_type_for_extension` and every "supported" message (#698: two hand-typed lists
+/// agreed with each other and were jointly wrong — bmp was accepted here, printed a
+/// success, and the API rejected it a turn later). gif left on Day 251 (#1143): Gemini
+/// does not list it and OpenAI takes only still ones, so it broke after `/provider`.
 pub const SUPPORTED_IMAGE_FORMATS: &[(&str, &str)] = &[
     ("png", "image/png"),
     ("jpg", "image/jpeg"),
     ("jpeg", "image/jpeg"),
-    ("gif", "image/gif"),
     ("webp", "image/webp"),
 ];
+
+/// Image extensions refused with a reason instead of read as text, matching yoagent
+/// 0.27.1 `tools/file.rs` `REFUSED_IMAGE_EXTENSIONS` by hand (that const is private).
+const REFUSED_IMAGE_EXTENSIONS: &[&str] = &[
+    "gif", "bmp", "tif", "tiff", "heic", "heif", "avif", "ico", "jxl",
+];
+
+/// `"png, jpg, jpeg, webp"`, read from `SUPPORTED_IMAGE_FORMATS`, never typed.
+pub fn supported_image_extensions() -> String {
+    let exts: Vec<&str> = SUPPORTED_IMAGE_FORMATS.iter().map(|(e, _)| *e).collect();
+    exts.join(", ")
+}
+
+/// Why `--image <path>` is refused: the named format's reason, or the supported list.
+pub fn image_flag_refusal(path: &str) -> String {
+    refused_image_message(path).unwrap_or_else(|| {
+        let ok = supported_image_extensions();
+        format!("'{path}' is not a supported image format. Supported: {ok}")
+    })
+}
+
+/// Why `path` is not attached, when its extension is an image format yoyo refuses;
+/// `None` for supported images and for everything that is not an image.
+pub fn refused_image_message(path: &str) -> Option<String> {
+    let ext = std::path::Path::new(path)
+        .extension()?
+        .to_str()?
+        .to_lowercase();
+    REFUSED_IMAGE_EXTENSIONS.contains(&ext.as_str()).then(|| {
+        format!(
+            "{path}: {} images are not attached (the model's read_file and several providers refuse them; supported: {}). Convert it to PNG first, e.g. `magick '{path}' out.png`",
+            ext.to_uppercase(),
+            supported_image_extensions()
+        )
+    })
+}
 
 /// Check if a file path has an image extension the API supports.
 pub fn is_image_extension(path: &str) -> bool {
@@ -272,7 +309,10 @@ pub fn handle_add(
         }
 
         for path in &paths {
-            // Check if this is an image file
+            if let Some(why) = refused_image_message(path) {
+                println!("{RED}  ✗ {why}{RESET}");
+                continue;
+            }
             if is_image_extension(path) {
                 // Line ranges don't apply to images
                 if range.is_some() {
@@ -416,8 +456,12 @@ pub fn expand_file_mentions(
             continue;
         }
 
-        // It's a real file — read it
-        if is_image_extension(raw_path) {
+        // It's a real file — read it, unless it is an image format yoyo refuses
+        if let Some(why) = refused_image_message(raw_path) {
+            eprintln!("{RED}  ✗ {why}{RESET}");
+            output.push('@');
+            output.push_str(mention);
+        } else if is_image_extension(raw_path) {
             if range.is_some() {
                 // Line ranges don't apply to images — leave unchanged
                 output.push('@');
@@ -1490,8 +1534,9 @@ error[E0308]: second
         assert!(is_image_extension("photo.png"));
         assert!(is_image_extension("photo.jpg"));
         assert!(is_image_extension("photo.jpeg"));
-        assert!(is_image_extension("photo.gif"));
         assert!(is_image_extension("photo.webp"));
+        // #1143: gif is refused by yoagent's read_file and by Gemini/OpenAI.
+        assert!(!is_image_extension("photo.gif"));
         // #698: bmp is rejected by the API — must NOT be treated as an image.
         assert!(!is_image_extension("photo.bmp"));
     }
@@ -1501,7 +1546,7 @@ error[E0308]: second
         assert!(is_image_extension("photo.PNG"));
         assert!(is_image_extension("image.Jpg"));
         assert!(is_image_extension("banner.JPEG"));
-        assert!(is_image_extension("icon.GIF"));
+        assert!(!is_image_extension("icon.GIF"));
         assert!(is_image_extension("pic.WeBp"));
         assert!(!is_image_extension("scan.BMP"));
     }
@@ -1544,8 +1589,9 @@ error[E0308]: second
     }
 
     #[test]
-    fn mime_type_gif() {
-        assert_eq!(mime_type_for_extension("gif"), "image/gif");
+    fn mime_type_gif_not_supported() {
+        // #1143: yoagent's read_file, Gemini and OpenAI refuse gif — no image MIME.
+        assert_eq!(mime_type_for_extension("gif"), "application/octet-stream");
     }
 
     #[test]
@@ -1570,7 +1616,43 @@ error[E0308]: second
     fn mime_type_case_insensitive() {
         assert_eq!(mime_type_for_extension("PNG"), "image/png");
         assert_eq!(mime_type_for_extension("Jpg"), "image/jpeg");
-        assert_eq!(mime_type_for_extension("GIF"), "image/gif");
+        assert_eq!(mime_type_for_extension("GIF"), "application/octet-stream");
+    }
+
+    #[test]
+    fn refused_image_formats_say_why_and_supported_ones_pass() {
+        // #1143: one list feeds every "supported" message, and gif is not on it.
+        assert_eq!(supported_image_extensions(), "png, jpg, jpeg, webp");
+        for path in ["a.gif", "dir/Anim.GIF", "scan.bmp", "photo.heic"] {
+            let msg = refused_image_message(path).expect(path);
+            assert!(msg.contains(path) && msg.contains("PNG"), "{msg}");
+            assert!(msg.contains("png, jpg, jpeg, webp"), "{msg}");
+        }
+        assert!(image_flag_refusal("a.gif").starts_with("a.gif: GIF images"));
+        let other = image_flag_refusal("notes.txt");
+        assert!(
+            other.ends_with("Supported: png, jpg, jpeg, webp"),
+            "{other}"
+        );
+        let help = crate::help::cli_help_text();
+        assert!(help.contains("prompt (png, jpg, jpeg, webp;") && !help.contains("gif"));
+        // Near-misses: supported images, text files, no extension, dotted dir.
+        for path in ["a.png", "a.WEBP", "gif.rs", "Makefile", "x.gif/notes", ""] {
+            assert_eq!(refused_image_message(path), None, "{path}");
+        }
+    }
+
+    #[test]
+    fn handle_add_and_mentions_refuse_a_real_gif() {
+        let dir = TempDir::new().unwrap();
+        let gif = dir.path().join("anim.gif");
+        fs::write(&gif, b"GIF89a\x01\x00\x01\x00\x00\x00\x00;").unwrap();
+        let gif = gif.to_str().unwrap();
+        let (results, added) = handle_add(&format!("/add {gif}"), &NO_FENCE);
+        assert!(results.is_empty() && added.is_empty(), "{results:?}");
+        let (text, results) = expand_file_mentions(&format!("see @{gif}"), &NO_FENCE);
+        assert!(results.is_empty(), "{results:?}");
+        assert_eq!(text, format!("see @{gif}"));
     }
 
     // ── AddResult ─────────────────────────────────────────────────────
