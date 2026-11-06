@@ -24,6 +24,7 @@ use crate::mcp_prefix::{
 };
 use crate::prompt::{run_prompt, run_prompt_with_content, PromptOutcome};
 use crate::prompt_budget::is_audit_enabled;
+use crate::temperature_support::effective_temperature;
 use crate::tool_wrappers::{with_session_cap, SESSION_TOOL_CALL_CAP};
 use crate::tools::{
     build_explore_agent_tool, build_hook_registry, build_sub_agent_tool, build_tools_with_hooks,
@@ -1652,9 +1653,7 @@ impl AgentConfig {
             }
             agent = agent.with_max_tokens(max);
         }
-        if let Some(temp) = self.temperature {
-            agent.temperature = Some(temp);
-        }
+        agent.temperature = effective_temperature(&self.provider, &self.model, self.temperature);
 
         // Checkpoint mode: register on_before_turn to stop when context gets high
         if self.context_strategy == cli::ContextStrategy::Checkpoint {
@@ -1831,9 +1830,7 @@ impl AgentConfig {
             // out of so all three builders carry one policy, not two.
             .with_execution_limits(ExecutionLimits::default().with_max_turns(1));
 
-        if let Some(temp) = self.temperature {
-            agent.temperature = Some(temp);
-        }
+        agent.temperature = effective_temperature(&self.provider, &self.model, self.temperature);
 
         agent
     }
@@ -1876,9 +1873,8 @@ impl AgentConfig {
             // out of so all three builders carry one policy, not two.
             .with_execution_limits(ExecutionLimits::default().with_max_turns(1));
 
-        if let Some(temp) = self.temperature {
-            agent.temperature = Some(temp);
-        }
+        agent.temperature =
+            effective_temperature(&self.provider, architect_model, self.temperature);
 
         agent
     }

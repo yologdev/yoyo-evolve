@@ -203,7 +203,8 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // `openai_preset` routing yoagent 0.26.4's new GPT-6.1 Terra preset.
     // Day 249 (#1122): +4, the openrouter arm's second lookup (yoagent routed presets).
     // Day 250 (#1026): +3, `incomplete: None` in three existing PromptOutcome test literals.
-    ("src/agent_builder.rs", 4984),
+    // Day 251 (#1145): 4984 -> 4980, temperature wiring moved to src/temperature_support.rs.
+    ("src/agent_builder.rs", 4980),
     // Day 164 (#728): +98 lines — `/skill install`'s destination becomes a third
     // auto-discovery source, so an explicitly installed skill actually loads.
     // The two near-identical per-directory blocks were collapsed into one loop
@@ -649,7 +650,10 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 162 (#689): +14 lines — double Ctrl+C at the idle REPL prompt now
     // exits (consecutive-flag `ctrl_c_armed`, dim hint on first press).
     // Day 174: +91 absorbed since Day 166.
-    ("src/repl.rs", 3358),
+    // Day 251 (#1145): 3358 -> 3388 -- +20 earlier unregistered drift, +10 for the
+    // banner saying "(not sent)" when the model rejects temperature (logic in
+    // src/temperature_support.rs).
+    ("src/repl.rs", 3388),
     // Day 174: raised 3269 -> 3490 for `git_redirection_refusal_message` +
     // `classify_redirection_reason` (~76 lines) and their emission-point tests
     // (~146) — the worktree-confinement refusal now names the accepted

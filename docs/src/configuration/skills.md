@@ -180,6 +180,8 @@ yoyo --temperature 0.2   # More focused/deterministic
 yoyo --temperature 0.9   # More creative/varied
 ```
 
+Claude 4.7 and later (including the default `claude-opus-5-5`, on Anthropic and on Bedrock) reject `temperature`: Anthropic removed it, and the API answers every request that sets it with HTTP 400. So yoyo doesn't send it to those models and prints one note on stderr saying so. Other models get the value as set.
+
 ### `--max-turns <int>`
 
 Limit the number of agentic turns (tool-use loops) per prompt. Defaults to 200. Useful for keeping costs predictable or preventing runaway tool loops:

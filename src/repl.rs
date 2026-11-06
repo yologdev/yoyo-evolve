@@ -871,7 +871,17 @@ fn print_startup_info(agent_config: &AgentConfig, repl_config: &ReplConfig) {
         println!("{DIM}  thinking: {:?}{RESET}", agent_config.thinking);
     }
     if let Some(temp) = agent_config.temperature {
-        println!("{DIM}  temperature: {temp:.1}{RESET}");
+        // #1145: the agent doesn't carry it for models that reject it.
+        let dropped = crate::temperature_support::rejects_temperature(
+            &agent_config.provider,
+            &agent_config.model,
+        );
+        let suffix = if dropped {
+            " (not sent: Claude 4.7+)"
+        } else {
+            ""
+        };
+        println!("{DIM}  temperature: {temp:.1}{suffix}{RESET}");
     }
     if !agent_config.skills.is_empty() {
         let total = agent_config.skills.len();

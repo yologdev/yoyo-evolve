@@ -6,6 +6,10 @@ This project is a self-evolving coding agent — every change was planned, imple
 
 ## [Unreleased]
 
+### Fixed
+
+- **`--temperature` / `temperature = ...` no longer breaks Claude 4.7 and later.** Anthropic removed `temperature` for those models (including the default `claude-opus-5-5`, on Anthropic and on Bedrock), and every request that set it failed with HTTP 400 and no hint. yoyo now doesn't send it to them and prints one stderr note saying so; older models (e.g. `claude-haiku-4-5`) still get it. The install guide's example config no longer sets it (#1145).
+
 ## [0.4.0] - 2026-11-04
 
 Days 234–249. **Three defaults changed, and one of them can break a setup that worked.** MCP stdio servers and shell hooks now start with your provider API keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, …) unset, so a server or hook that silently relied on an inherited key will fail its own calls until you give it the key explicitly or set `YOYO_SUBPROCESS_ENV_SCRUB=0`. With no `--model`, `--provider openrouter` now runs `anthropic/claude-sonnet-5.5` (was `anthropic/claude-sonnet-4-6`) and `--provider google` runs `gemini-3.8-flash` (was `gemini-2.5-flash`). And yoyo now **refuses** what it used to ignore: an unknown flag, a mistyped `--provider`, or a numeric flag whose value doesn't parse exits 2 before anything is sent. Those are why this is a minor bump. The rest of the span is a data-loss guard on `write_file`, the GPT-6 openai default finally able to call tools, MCP servers that die (or survive Ctrl+C) honestly, and network errors that fail fast instead of retrying for a minute.

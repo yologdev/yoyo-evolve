@@ -202,6 +202,7 @@ mod smart_edit;
 mod stream_leading_blank;
 mod symbols;
 mod sync_util;
+mod temperature_support;
 mod tls_preflight;
 mod tool_truncate;
 mod tool_wrappers;
