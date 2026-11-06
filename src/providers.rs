@@ -81,6 +81,11 @@ pub fn find_provider_key(
 
 /// Get well-known model names for a provider (for diagnostic suggestions).
 /// Returns a slice of commonly-used model identifiers.
+///
+/// Membership also silences the "Unknown model" warning, so an id written
+/// here from memory hides from the one check that would catch it. Ids
+/// checked against vendor pages and dropped are in `IDS_NO_VENDOR_SERVES`
+/// (tests below, #1147); the non-Claude rows are otherwise unsourced yet.
 pub fn known_models_for_provider(provider: &str) -> &'static [&'static str] {
     match provider {
         // The default leads: the 404 hint's switch line names `[0]`, and the
@@ -108,7 +113,6 @@ pub fn known_models_for_provider(provider: &str) -> &'static [&'static str] {
             "gpt-5",
             "gpt-5-mini",
             "gpt-5.5",
-            "gpt-5.5-mini",
             "gpt-4o",
             "gpt-4o-mini",
             "gpt-4.1",
@@ -118,7 +122,6 @@ pub fn known_models_for_provider(provider: &str) -> &'static [&'static str] {
             "o3",
             "o3-mini",
             "o4-mini",
-            "o4-mini-high",
         ],
         "google" => &[
             "gemini-4-argon",
@@ -133,16 +136,8 @@ pub fn known_models_for_provider(provider: &str) -> &'static [&'static str] {
             "llama-4-scout-17b",
             "llama-3.3-70b-versatile",
             "llama-3.1-8b-instant",
-            "mixtral-8x7b-32768",
         ],
-        "xai" => &[
-            "grok-4.7",
-            "grok-4",
-            "grok-4-mini",
-            "grok-3",
-            "grok-3-mini",
-            "grok-2",
-        ],
+        "xai" => &["grok-4.7", "grok-4", "grok-4-mini", "grok-3", "grok-3-mini"],
         // `deepseek-flash` is the id the evolve loop actually runs on (2026-09-15);
         // `deepseek-v4-pro` remains the legacy id for the same routed backend.
         // Listed first because it is the current one — this slice is only used for
@@ -163,7 +158,6 @@ pub fn known_models_for_provider(provider: &str) -> &'static [&'static str] {
             "MiniMax-M2.5",
             "MiniMax-M2.5-highspeed",
             "MiniMax-M1",
-            "MiniMax-M1-40k",
         ],
         "bedrock" => &[
             "anthropic.claude-sonnet-4-6",
@@ -410,6 +404,78 @@ pub fn unknown_provider_refusal(provider: &str, base_url_given: bool) -> Option<
 mod tests {
     use super::*;
 
+    /// #1147 (Day 251): ids yoyo used to offer that no vendor serves, each with
+    /// the page that says so (all read 2026-11-06). Kept as a register so a
+    /// later session re-adding one from memory fails here, by name.
+    const IDS_NO_VENDOR_SERVES: &[(&str, &str, &str)] = &[
+        (
+            "openai",
+            "o4-mini-high",
+            "not an API id: developers.openai.com/api/docs/models/o4-mini-high is a 404, \
+             and /models/all lists o4-mini and o4-mini-deep-research only",
+        ),
+        (
+            "openai",
+            "gpt-5.5-mini",
+            "developers.openai.com/api/docs/models/gpt-5.5-mini is a 404; /models/all lists \
+             gpt-5.5 and gpt-5.5-pro only",
+        ),
+        (
+            "groq",
+            "mixtral-8x7b-32768",
+            "retired: console.groq.com/docs/deprecations, 'March 20, 2025: Mixtral 8x7B'",
+        ),
+        (
+            "xai",
+            "grok-2",
+            "retired: absent from docs.x.ai/developers/models; the grok-2 family answers \
+             'Model not found - retired by xAI' (reported in BerriAI/litellm#38179)",
+        ),
+        (
+            "minimax",
+            "MiniMax-M1-40k",
+            "not an API id: platform.minimax.io/docs/api-reference/text-post names \
+             MiniMax-M1, never -40k",
+        ),
+    ];
+
+    #[test]
+    fn ids_no_vendor_serves_are_not_offered_and_warn_when_typed() {
+        for (provider, id, why) in IDS_NO_VENDOR_SERVES {
+            for p in KNOWN_PROVIDERS {
+                assert!(
+                    !known_models_for_provider(p).contains(id),
+                    "{p} offers {id} ({why})"
+                );
+            }
+            assert!(
+                !crate::commands::KNOWN_MODELS.contains(id),
+                "/model completion offers {id} ({why})"
+            );
+            assert_ne!(
+                default_model_for_provider(provider),
+                *id,
+                "{id} is {provider}'s default"
+            );
+            let warning = crate::cli::unknown_model_warning(provider, id)
+                .unwrap_or_else(|| panic!("typing {id} on {provider} must warn ({why})"));
+            assert!(
+                warning.contains(&format!("Unknown model '{id}'")),
+                "{warning}"
+            );
+        }
+        // Near-miss: the real sibling of each stays offered and silent.
+        for (provider, real) in [
+            ("openai", "o4-mini"),
+            ("openai", "gpt-5.5"),
+            ("minimax", "MiniMax-M1"),
+            ("groq", "llama-3.3-70b-versatile"),
+            ("xai", "grok-4.7"),
+        ] {
+            assert_eq!(crate::cli::unknown_model_warning(provider, real), None);
+        }
+    }
+
     /// #1119: providers whose built-in default runs WITHOUT a preset, each
     /// with the reason in user terms. Every other provider's default must
     /// resolve through one (checked by the guessed-limits warning's own
@@ -630,7 +696,8 @@ mod tests {
         assert_eq!(models.first(), Some(&"MiniMax-M3"));
         assert!(models.contains(&"MiniMax-M3"));
         assert!(models.contains(&"MiniMax-M1"));
-        assert!(models.contains(&"MiniMax-M1-40k"));
+        // #1147: `MiniMax-M1-40k` is no API id (see IDS_NO_VENDOR_SERVES).
+        assert!(!models.contains(&"MiniMax-M1-40k"));
     }
 
     #[test]
@@ -767,10 +834,8 @@ mod tests {
             "openai should include gpt-5-mini"
         );
         assert!(models.contains(&"gpt-5.5"), "openai should include gpt-5.5");
-        assert!(
-            models.contains(&"gpt-5.5-mini"),
-            "openai should include gpt-5.5-mini"
-        );
+        // #1147: OpenAI ships no gpt-5.5-mini (see IDS_NO_VENDOR_SERVES).
+        assert!(!models.contains(&"gpt-5.5-mini"));
     }
 
     #[test]
