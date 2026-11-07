@@ -1,0 +1,30 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "full_args\|misplaced_subc… ✓ (55ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rnE '(yoyo|YOYO_BIN)[^|]* -p… ✓ (6ms)
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 18.4s (3 ✓)
+
+The change does what #1150 asked, and my verdict is PASS. It's written to session_plan/eval_task_2.md.
+
+I ran the built binary in an empty temp directory with a dead --base-url:
+
+| Command | Result |
+|---|---|
+| yoyo -p hi extra | exit 2, names 'extra', "Nothing was sent to the model." |
+| yoyo extra -p hi | exit 2, same refusal |
+| yoyo --model x -p hi y | exit 2, names 'y' |
+| yoyo -p hi doctor | exit 2 with the existing misplaced-subcommand message, so the two checks don't both fire |
+
+I did not run -p hi -- extra or -p "hi extra" myself. The new real-binary tests in tests/flag_value_slot.rs check that both still send "hi extra", and the harness ran them green.
+
+On the review checks:
+• Matches the task: the check lives in src/cli_config.rs next to prompt_text, and src/cli.rs adds one line to the existing exit-2 refusal. The unit tests cover the cases that must not be refused: no -p, words after --, a flag's value, an empty -p. The claude-zzz test now expects the refusal, and the original #1114 check (--model inside --system's value doesn't change the model) is kept as a separate test.
+• Nothing left dangling: both new functions are called in this diff. Two tests in src/cli.rs were renamed and their comments updated, and one row in src/cli_flag_slot_tests.rs that the new refusal would have broken was rewritten.
+• Callers: a grep of scripts/ and .github/ found no -p call followed by bare words, so none of the loop's own invocations get refused.
+• Docs: docs/src/usage/single-prompt.md has the new sentence about quoting or using --.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

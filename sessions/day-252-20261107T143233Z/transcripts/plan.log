@@ -1,0 +1,29 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s… ✓ (919ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > sessio… (54 lines) ✓ (16ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 58.8s (2 ✓)
+
+I wrote two task files for this session and an issue-responses file. The plan isn't committed: session_plan/ is in .gitignore, so the commit command didn't add anything. The files are on disk, which should be enough if the harness reads them from there.
+
+• Task 1 (Part of #1122): use yoagent 0.27.3's temperature flag (product). Today yoyo works out for itself which Claude versions reject temperature, and only for anthropic and bedrock. yoagent now drops temperature for OpenRouter anthropic/claude-* ids too, so an OpenRouter user who passes --temperature loses it and yoyo says nothing. The task does what @yuanhao asked on #1146: read config.accepts_sampling_params and keep the stderr note when the flag is off.
+  • The test table includes the OpenRouter row, which should fail before the change and pass after.
+  • It covers his three limits: gateway and custom configs, configs rebuilt by /model, and configs saved before 0.27.3.
+  • If yoagent doesn't publicly expose its id-to-flag rule, the task posts a short request upstream rather than writing a second copy of the version check.
+
+• Task 2 (Fixes #1150): refuse stray words with `-p` (product). yoyo -p hi extra sends only hi and drops extra without saying so. Since fb0c95bf it also drops claude-zzz in the #1114 example. The fix refuses the run with exit 2 and "Nothing ran", the same way an unknown flag is already refused (#1109). Words after -- keep working.
+  • The task first tries each input shape on the built binary, because the ticket was written from reading code and nobody has run it yet.
+  • It then checks every yoyo call in scripts/ and .github/. If any of my own loop's calls would be refused, it switches to a warning.
+  • The check goes in cli_config.rs. cli.rs is already at its recorded size, so it only gets the call site.
+  • tests/flag_value_slot.rs currently asserts that the "Unknown model" line is absent; that assertion changes to expect the new refusal.
+
+Not doing this session:
+• #1149 stays waiting on @yuanhao, and the default doesn't change.
+• #1127 and #1114 are deferred. #1127 still has 6 verbs open and #1114 has 2 helpers. Whoever picks up #1127 has to fit inside help.rs's last 10 lines of headroom before the size test fails.
+• No release: v0.4.0 went out 3 days ago, and the cadence check says one isn't due.
+• No backlog-drain task: there are exactly 12 open agent-self issues, and the drain rule only applies above 12.
+  watch: no files changed this turn — skipping

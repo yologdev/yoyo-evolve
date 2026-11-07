@@ -1,0 +1,321 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --short | head;…  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; gh issue view 1150 --comments 2>&1 | head -80 ✓ (11ms)
+ ✓ (483ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; gh issue view 1150 2>&1 | head -60; echo ---;…  ▶ read src/cli_config.rs:340..450 ✓ (0ms)
+ ✓ (974ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 9.1s (4 ✓)
+
+Now the cli.rs call site and collect_positional_args.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -n "prompt_text\|fn collect_positional_a… ✓ (18ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 870,960p src/cli.rs; echo ----; sed -n… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -n "full_args" src/cli.rs | head -20; gr… ✓ (8ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 14.3s (3 ✓)
+
+Build and probe first (step 1).
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; cargo build 2>&1 | tail -2; sed -n 1,80p test… ✓ (114ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 80,300p tests/flag_value_slot.rs ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /tmp && rm -rf probe && mkdir -p probe/home probe/proj &&… (28 lines) ✓ (3.3s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 19.9s (3 ✓)
+
+Probe confirms: extra, y, claude-zzz all vanish; -- works; misplaced subcommand already refuses earlier (dispatch_sub), so no double-fire. Now the caller census.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -rn -- '-p\b\|--prompt\b' scripts/ .gith… ✓ (5ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -rnE '(yoyo|YOYO_BIN|YOYO|run_yoyo)[^|;]… ✓ (9ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; for f in scripts/*.sh; do awk -v F="$f" '/"\$… ✓ (24ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 744,756p scripts/evolve.sh; sed -n 380… ✓ (13ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 240,275p scripts/scan_commitments.py; … ✓ (5ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -n "def _yoyo_argv" -A14 scripts/scan_co… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 450,515p src/cli_config.rs; grep -n "p… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 52.1s (7 ✓)
+
+Census clean. Now implement the helper in cli_config.rs.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli_config.rs (2 → 49 lines)
+  + /// Bare words a `-p` run would drop (#1150): with `-p`/`--prompt` set,
+  + /// [`prompt_text`] sends `-p`'s value plus the words after `--`, so a bare
+  + /// word anywhere else (`yoyo -p hi extra`, `yoyo --system --model claude-zzz
+  + /// -p hi`) never reached the model and nothing said so. Values of
+  + /// `FLAGS_NEEDING_VALUES` flags and words after `--` are not stray. `-p ""`
+  + /// counts as unset, as in `flag_value`, because then the bare words ARE the
+  + /// prompt. Reads the option position without `flag_value`'s warning.
+  + pub(crate) fn stray_prompt_words(args: &[String]) -> Vec<String> {
+  +     let opts = option_args(args);
+  +     let p_set = option_position(args, &["-p", "--prompt"])
+  +         .and_then(|i| opts.get(i + 1))
+  +         .is_some_and(|v| !v.trim().is_empty());
+  +     if !p_set {
+  +         return Vec::new();
+  +     }
+  +     let mut pos = crate::cli::collect_positional_args(args, crate::cli::FLAGS_NEEDING_VALUES);
+  +     pos.truncate(pos.len().saturating_sub(operand_args(args).len()));
+  +     pos
+  + }
+  + 
+  ... (29 more lines)
+  ▶ edit src/cli.rs (1 → 3 lines)
+  -     if let Some(msg) = crate::cli_config::unknown_flag_refusal(args) {
+  +     if let Some(msg) = crate::cli_config::unknown_flag_refusal(args)
+  +         .or_else(|| crate::cli_config::stray_prompt_word_refusal(full_args))
+  +     {
+ ✓ (57.6s)
+  + /// Bare words a `-p` run would drop (#1150): with `-p`/`--prompt` set,
+  + /// [`prompt_text`] sends `-p`'s value plus the words after `--`, so a bare
+  + /// word anywhere else (`yoyo -p hi extra`, `yoyo --system --model claude-zzz
+  + /// -p hi`) never reached the model and nothing said so. Values of
+  + /// `FLAGS_NEEDING_VALUES` flags and words after `--` are not stray. `-p ""`
+  + /// counts as unset, as in `flag_value`, because then the bare words ARE the
+  + /// prompt. Reads the option position without `flag_value`'s warning.
+  + pub(crate) fn stray_prompt_words(args: &[String]) -> Vec<String> {
+  ... (13 more lines)
+ ✓ (1m 11s)
+  -     if let Some(msg) = crate::cli_config::unknown_flag_refusal(args) {
+  +     if let Some(msg) = crate::cli_config::unknown_flag_refusal(args)
+  +         .or_else(|| crate::cli_config::stray_prompt_word_refusal(full_args))
+  +     {
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 16s (2 ✓)
+
+Now unit tests, and look at the cli.rs test the plan named.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -n "fn test_collect_positional_prompt_fl… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; python3 - <<'EOF' (17 lines) ✓ (17ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -n "fn unknown_flag_refusal_escapes_cont… ✓ (2ms)
+  ▶ edit src/cli_config.rs (4 → 44 lines)
+            assert!(!out.as_bytes().contains(&0x1b), "{out:?}");
+  +     }
+  + 
+  +     /// #1150: a bare word beside `-p` is stray; the near-misses are not.
+  +     #[test]
+  +     fn stray_prompt_words_table() {
+  +         let rows: &[(&[&str], &[&str])] = &[
+  +             (&["-p", "hi", "extra"], &["extra"]),
+  +             (&["extra", "-p", "hi"], &["extra"]),
+  +             (&["--model", "x", "-p", "hi", "y", "z"], &["y", "z"]),
+  +             (&["--system", "--model", "claude-zzz", "-p", "hi"], &["claude-zzz"]),
+  +             (&["--prompt", "hi", "extra"], &["extra"]),
+  +             // Near-misses: nothing is dropped, so nothing is stray.
+  +             (&["-p", "hi"], &[]),
+  +             (&["-p", "hi extra"], &[]),
+  +             (&["-p", "hi", "--", "extra"], &[]),
+  +             (&["-p", "--", "hi", "extra"], &[]), // `-p --` takes the rest
+  +             (&["--model", "x", "-p", "hi"], &[]), // a flag's value
+  +             (&["--system", "-p", "hi"], &[]),    // -p is --system's value
+  +             (&["hi", "extra"], &[]),             // no -p: words ARE the prompt
+  ... (24 more lines)
+ ✓ (52.7s)
+            assert!(!out.as_bytes().contains(&0x1b), "{out:?}");
+  +     }
+  + 
+  +     /// #1150: a bare word beside `-p` is stray; the near-misses are not.
+  +     #[test]
+  +     fn stray_prompt_words_table() {
+  +         let rows: &[(&[&str], &[&str])] = &[
+  +             (&["-p", "hi", "extra"], &["extra"]),
+  ... (13 more lines)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; cargo test --bin yoyo stray_prompt 2>&1 | gre… ✓ (87ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 1m 31s (5 ✓)
+
+Unit passes. Now the real-binary rows in tests/flag_value_slot.rs.
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; python3 - <<'EOF' (77 lines) ✓ (511ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control: drop the .or_else wire, run, restore — one atomic command.
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; cp src/cli.rs /tmp/cli.rs.bak && sed -i 's|  … ✓ (243ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; cp src/cli.rs /tmp/cli.rs… (3 lines) ✓ (8.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 17.4s (2 ✓)
+
+Control reddens exactly the two refusal rows by name; restored (0 markers). Docs next.
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -n -- '-p\b\|--prompt\|`--`' docs/src/us… ✓ (4ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 12,24p docs/src/usage/single-prompt.md ✓ (2ms)
+  ▶ edit docs/src/usage/single-prompt.md (1 → 4 lines)
+    Both forms are equivalent. The bare prompt form is shorter and matches how most CLI tools work.
+  + `-p` takes exactly one word, so quote a prompt with spaces: `yoyo -p hi there` is refused
+  + (exit 2, nothing sent) and names `there`, instead of silently sending only `hi`. Quote it
+  + (`yoyo -p "hi there"`) or put the rest after `--` (`yoyo -p hi -- there`).
+ ✓ (0ms)
+    Both forms are equivalent. The bare prompt form is shorter and matches how most CLI tools work.
+  + `-p` takes exactly one word, so quote a prompt with spaces: `yoyo -p hi there` is refused
+  + (exit 2, nothing sent) and names `there`, instead of silently sending only `hi`. Quote it
+  + (`yoyo -p "hi there"`) or put the rest after `--` (`yoyo -p hi -- there`).
+  3 tools completed in 11.2s (3 ✓)
+
+Full gate.
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; cargo fmt && cargo clippy --all-targets -- -D… ✓ (1m 4s)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; cargo test 2>&1 | grep -E "test result|FAILED… ✓ (10.9s)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; cargo test --bin yoyo 2>&1 | grep -E "FAILED|… ✓ (10.9s)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; cargo test --bin yoyo > /tmp/t.log 2>&1; echo… ✓ (12.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 1m 51s (4 ✓)
+
+A unit test drives parse_args with a stray word and hit the exit(2). Find it.
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -n "error: word\|error:.*would be droppe… ✓ (12.1s)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; cargo test --bin yoyo -- --test-threads=1 > /… ✓ (12.4s)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -n "fn test_explicit_prompt_flag_overrid… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 37.8s (3 ✓)
+
+This test pinned the bug itself ("ignored" silently dropped). Rewrite it to the new property rather than delete it.
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; python3 - <<'EOF' (28 lines) ✓ (22ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; cargo fmt; cargo test --bin yoyo > /tmp/t.log… ✓ (59.7s)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; tail -8 /tmp/t.log ✓ (4ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; cargo test --bin yoyo -- --test-threads=1 2>&… ✓ (37.9s)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; cargo test --bin yoyo -- --test-threads=1 > /… ✓ (37.6s)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; tail -5 /tmp/t1.log | cut -c1-300 ✓ (4ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -n "fn other_booleans_and_value_lookups_… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 2m 45s (7 ✓)
+
+--system --thinking high -p hi has high as a stray word now. Keep the guard's power by dropping -p so high is the (bare) prompt:
+  ╭─ Turn 42 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 1,18p src/cli_flag_slot_tests.rs ✓ (2ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; python3 - <<'EOF' (11 lines) ✓ (2m 54s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3m 4s (2 ✓)
+
+Unit suite green. Full gate:
+  ╭─ Turn 44 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; cargo fmt -- --check && echo FMT_OK; cargo cl… ✓ (3m 37s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+rustfmt's trailing-comment alignment mangles that block; put the near-miss comment on its own line instead.
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; python3 - <<'EOF' (12 lines) ✓ (50.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All green; module_size passes without raising cli.rs's entry. Re-probe the built binary for the commit record:
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp; . probe/run.sh (10 lines) ✓ (161ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Every probe row matches the plan; the issue has no comments and its done-when (refused, exit 2, nothing sent, tested at the real binary) is met, so "Fixes" holds. Commit:
+  ╭─ Turn 47 ────────────────────────────────────────────────────────────╮
+  ▶ $ pkill -f probe/stub.py; cd ~/work/yoyo-evolve/yoyo-evolve; g… (55 lines) ✓ (10ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; git log --oneline -2; git status --short | he… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 15.2s (2 ✓)
+
+pkill -f matched my own shell's command line, so the commit never ran. Redoing it in separate steps:
+  ╭─ Turn 49 ────────────────────────────────────────────────────────────╮
+  ▶ $ pgrep -f "python3 probe/stub" | xargs -r kill; cat > /tmp/ms… (56 lines) ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Same mistake a second time: the pgrep -f pattern was in my own command line too. Commit on its own:
+  ╭─ Turn 50 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; ls -la /tmp/msg.txt; git log --oneline -1 ✓ (8ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -q -F /tmp/msg.txt… ✓ (17ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.3s (2 ✓)
+
+The new commit's subject reads like Task 1's. Checking what actually landed:
+  ╭─ Turn 52 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; git log -3 --format='%h %s' ; git show --stat… ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; F=$(mktemp /tmp/t2msg.XXX… (56 lines) ✓ (18ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 18.6s (2 ✓)
+
+The commit's title is right now. Cleaning up the probe stub, using a pattern that can't match this command:
+  ╭─ Turn 54 ────────────────────────────────────────────────────────────╮
+  ▶ $ for p in $(pgrep -f "[s]tub\.py"); do kill $p; done; pgrep -f "[s]tub\.py" | wc … ✓ (15ms)
+
+yoyo -p hi extra no longer drops extra without a word. It now exits 2, names the word, and sends nothing to the model. Committed as 0a3305e0 ("Fixes #1150"). fmt, clippy with -D warnings, the build and the full cargo test all passed.
+
+Probe before and after (built binary, local stub):
+
+| Command | Before | After |
+|---|---|---|
+| -p hi extra / extra -p hi / --model x -p hi y | sent only hi | exit 2, names the word, nothing sent |
+| --system --model claude-zzz -p hi (the #1114 repro) | sent hi, claude-zzz vanished | exit 2, names claude-zzz |
+| -p hi -- extra, -p "hi extra" | sent hi extra | unchanged |
+| -p hi doctor | refused as a misplaced subcommand | unchanged; that check runs earlier, so the two never both fire |
+
+The message: `error: word 'extra' is not part of -p's value and would be dropped. Quote the whole prompt (-p "hi extra") or put the extra words after -- (-p "hi" -- extra). Nothing was sent to the model.`
+
+• Who could break: every script and workflow that runs yoyo passes the prompt on stdin. The one that uses --prompt (humaneval_one.sh) quotes it. None of them gets refused, so I went with a refusal rather than a warning.
+• Where the code lives: the logic is in src/cli_config.rs (stray_prompt_words and stray_prompt_word_refusal). src/cli.rs only adds 2 lines next to the unknown-flag refusal, so the check runs before the trust prompt or any request. The module_size test passes without raising cli.rs's size entry.
+• New tests: a unit table with near-miss rows (quoted prompt, --, a flag's value, empty -p, no -p, control bytes), plus real-binary rows in tests/flag_value_slot.rs. The #1114 value-slot check keeps its own row without a stray word.
+• Positive control: with the check replaced by a no-op, exactly the two refusal tests failed by name. I restored it; no sabotage marker remains.
+• Old tests: three tests had the old dropping built in, and I rewrote them rather than deleting them. One asserted that "ignored" was dropped. One had a name claiming -p takes precedence. One used --system --thinking high -p hi, where high is now a stray word, so it runs without -p and checks the same thing.
+• Docs: docs/src/usage/single-prompt.md now says -p takes one word: quote the prompt or put the rest after --.
+
+Two mistakes on the way:
+• Twice I tried to stop the probe stub with a pkill/pgrep -f pattern that also matched my own shell command, which killed that command before the commit ran.
+• My commit message file at /tmp/msg.txt had been overwritten by Task 1's message. So my diff first landed under Task 1's title, which says "Part of #1122". I caught it right away and amended my own unpushed commit with the correct title and body.
+
+#1150 has no comments, so there were no extra open rows to clear before using "Fixes".
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 1/2 changed files were in top-10 predictions (50.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 1/2 (50.0%) — reactive was 50.0%
+     Predicted correctly: src/cli.rs
+     Surprises (not predicted): src/cli_config.rs
