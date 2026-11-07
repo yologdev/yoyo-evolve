@@ -202,3 +202,31 @@ fn gpt_6_sol_thinking_high_sends_effort_and_no_temperature() {
         "no --temperature given, so no temperature may be sent: {body}"
     );
 }
+
+/// #1152 / #1060 row 3: since yoagent 0.27.4 an explicit `--temperature` is
+/// left out of a GPT-6 request (OpenAI's guide: remove `temperature` when the
+/// reasoning effort is not `none`). Before 0.27.4 this body carried
+/// `"temperature":0.30000001192092896` next to `"effort":"high"`.
+#[test]
+fn gpt_6_sol_explicit_temperature_with_effort_is_not_sent() {
+    let req = first_request("gpt-6-sol", &["--thinking", "high", "--temperature", "0.3"]);
+    assert!(req.path.ends_with("/v1/responses"), "{}", req.path);
+    let body = json(&req.body);
+    assert_eq!(body["reasoning"]["effort"], "high", "{body}");
+    assert!(
+        body.get("temperature").is_none(),
+        "GPT-6 takes no temperature at effort high, so --temperature must be dropped: {body}"
+    );
+}
+
+/// Near-miss for the test above: a non-GPT-6 OpenAI id still gets the
+/// temperature, so that test's absence check can fail.
+#[test]
+fn non_gpt_6_openai_id_still_sends_explicit_temperature() {
+    let req = first_request("gpt-4o", &["--temperature", "0.3"]);
+    let body = json(&req.body);
+    let t = body["temperature"]
+        .as_f64()
+        .unwrap_or_else(|| panic!("gpt-4o must still carry --temperature: {body}"));
+    assert!((t - 0.3).abs() < 1e-6, "{body}");
+}

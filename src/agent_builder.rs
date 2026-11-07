@@ -1004,7 +1004,8 @@ pub fn create_model_config(provider: &str, model: &str, base_url: Option<&str>) 
             let preset_id = crate::providers::openrouter_anthropic_preset_id(model);
             // #1122: a Claude id takes yoagent's sampling rule (4.7+ rejects
             // `temperature`), read off `ModelConfig::anthropic` when there is no
-            // preset. `ModelConfig::openai` above leaves the flag on for every id.
+            // preset. `ModelConfig::openai` above infers it from the id itself
+            // since yoagent 0.27.4 (#1152); this copy predates that and is kept.
             if let Some(id) = &preset_id {
                 config.accepts_sampling_params = anthropic_model_config(id).accepts_sampling_params;
             }

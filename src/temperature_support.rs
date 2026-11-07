@@ -13,11 +13,17 @@
 //! yoagent doesn't: a note on stderr, once per process, when the user set a
 //! temperature that won't be sent (yoagent only logs a `tracing` warning).
 //!
+//! OpenAI's GPT-6 models are the second family (yoagent 0.27.4, #1152):
+//! OpenAI's latest-model guide says to remove `temperature` when reasoning
+//! effort is not `none`, and no GPT-6 model defaults to `none`. Since 0.27.4
+//! `ModelConfig::openai` / `openai_responses` infer the flag from the id too
+//! (a `gpt-6…` id, or a Claude 4.7+ id, after any `vendor/` prefix).
+//!
 //! Where the flag comes from in yoyo (`create_model_config`): the
-//! `anthropic` arm takes yoagent's own config; the `bedrock` and
-//! `openrouter` arms are built from `custom()` / `openai()`, which leave the
-//! flag on, so they copy it from yoagent's config for the Anthropic id behind
-//! the id. `ollama`, `custom` and unknown OpenAI-compatible providers keep
+//! `anthropic` and `openai` arms take yoagent's own config; the `bedrock` arm
+//! is built from `custom()`, which leaves the flag on, so it copies it from
+//! yoagent's config for the Anthropic id behind the id; the `openrouter` arm
+//! gets it from `openai()` and also copies it for an `anthropic/…` id. `ollama`, `custom` and unknown OpenAI-compatible providers keep
 //! yoagent's default (on): yoagent infers nothing for them and exports no
 //! id predicate (`takes_sampling_params` is `pub(crate)`), so a Claude id
 //! behind such a gateway still gets the temperature (asked upstream on #1122).
@@ -25,10 +31,34 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// The stderr note printed when a configured temperature is dropped.
+///
+/// The reason names the vendor whose rule dropped it. The family is read off
+/// the id here only to pick the wording; whether to drop is yoagent's call
+/// (`accepts_sampling_params`), so an id this match doesn't recognise still
+/// gets a true, neutral sentence rather than another vendor's reason. Each
+/// reason claims only what is sourced: Anthropic's 400 was measured on
+/// Anthropic's own API (#1145), so it names that API; for GPT-6 the source is
+/// OpenAI's guide ("remove `temperature`"), with no captured rejection, so
+/// the note states the rule and nothing about a 400. A gateway (OpenRouter
+/// documents that it ignores unsupported parameters) is not claimed to
+/// reject anything.
 pub fn temperature_dropped_note(model: &str) -> String {
+    let id = model
+        .rsplit('/')
+        .next()
+        .unwrap_or(model)
+        .to_ascii_lowercase();
+    let reason = if id.starts_with("gpt-6") {
+        "OpenAI's guide says to remove temperature from GPT-6 requests unless \
+         reasoning effort is `none`, and no GPT-6 model defaults to `none`"
+    } else if id.contains("claude") {
+        "Anthropic removed temperature for Claude 4.7 and later, and \
+         Anthropic's API rejects every request that sets it"
+    } else {
+        "this model does not accept a temperature"
+    };
     format!(
-        "note: temperature was not sent to {model}: Anthropic removed temperature for \
-         Claude 4.7 and later, and Anthropic's API rejects every request that sets it. \
+        "note: temperature was not sent to {model}: {reason}. \
          Remove --temperature / `temperature` from your config to silence this note."
     )
 }
@@ -90,6 +120,12 @@ mod tests {
             ("openrouter", "anthropic/claude-opus-5.5"),
             ("openrouter", "anthropic/claude-opus-5-5"),
             ("openrouter", "anthropic/claude-sonnet-5"),
+            // #1152 (yoagent 0.27.4): `ModelConfig::openai` infers the flag
+            // from the id, so a Claude 4.7+ id and a GPT-6 id turn it off.
+            ("openai", "claude-opus-5-5"),
+            ("openai", "gpt-6-sol"),
+            ("openai", "gpt-6.1-terra"),
+            ("openrouter", "openai/gpt-6-sol"),
         ];
         for (provider, model) in rejecting {
             assert!(
@@ -115,7 +151,9 @@ mod tests {
             ("openrouter", "google/gemini-3.1-pro-preview"),
             ("openrouter", "openai/gpt-5"),
             ("openai", "gpt-5"),
-            ("openai", "claude-opus-5-5"),
+            // OpenAI's other reasoning models keep it (yoagent 0.27.4: their
+            // default effort may be `none`).
+            ("openai", "o3"),
             // Known limit (#1122): yoagent infers nothing for a gateway and
             // exports no id predicate, so these keep the flag on.
             ("custom", "claude-opus-5-5"),
@@ -139,6 +177,31 @@ mod tests {
         // 400 is not measured, so the 400 claim must name whose API it is.
         assert!(note.contains("Anthropic's API rejects"), "{note}");
         assert!(!note.contains("the API rejects"), "{note}");
+    }
+
+    /// #1152: since yoagent 0.27.4 a GPT-6 id is dropped too, and its note
+    /// must give OpenAI's reason, not Anthropic's.
+    #[test]
+    fn dropped_note_gives_the_dropping_vendors_reason() {
+        for model in ["gpt-6-sol", "openai/gpt-6-sol"] {
+            let note = temperature_dropped_note(model);
+            assert!(note.contains(model), "{note}");
+            assert!(note.contains("OpenAI's guide"), "{note}");
+            assert!(note.contains("reasoning effort is `none`"), "{note}");
+            // No GPT-6 400 has been captured: the note must not claim one.
+            assert!(!note.contains("rejects"), "{note}");
+            assert!(!note.contains("Anthropic"), "{note}");
+            assert!(!note.contains("Claude"), "{note}");
+        }
+        let routed = temperature_dropped_note("anthropic/claude-opus-5.5");
+        assert!(routed.contains("Claude 4.7 and later"), "{routed}");
+        // An id neither family covers gets no vendor's reason at all.
+        let other = temperature_dropped_note("some-new-model");
+        assert!(other.contains("does not accept a temperature"), "{other}");
+        assert!(
+            !other.contains("Anthropic") && !other.contains("OpenAI"),
+            "{other}"
+        );
     }
 
     fn config(provider: &str, model: &str, temperature: Option<f32>) -> AgentConfig {

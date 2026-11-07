@@ -115,7 +115,7 @@ api_key = "sk-ant-api03-..."
 # Generation settings
 max_tokens = 8192
 max_turns = 50
-# temperature = 0.7  # ignored (with a stderr note) on Claude 4.7 and later, which reject it
+# temperature = 0.7  # ignored (with a stderr note) on Claude 4.7+ and GPT-6, which take none
 # An unparseable max_tokens / max_turns / temperature / context_window
 # (e.g. "abc", -5) prints a warning on stderr and falls back to the default.
 
