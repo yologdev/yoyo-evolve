@@ -45,10 +45,13 @@ fn other_booleans_and_value_lookups_skip_the_value_slot() {
     assert!(!c.verbose);
     let head: String = c.system_prompt.chars().take(40).collect();
     assert!(c.system_prompt.starts_with("--verbose"), "{head}");
-    assert!(parsed(&["--verbose", "-p", "hi"]).verbose); // near-miss
-                                                         // A value lookup: `--thinking` here is the system prompt, not a flag.
-    let c = parsed(&["--system", "--thinking", "high", "-p", "hi"]);
+    // Near-miss: a real `--verbose` still applies.
+    assert!(parsed(&["--verbose", "-p", "hi"]).verbose);
+    // A value lookup: `--thinking` here is the system prompt, not a flag.
+    // No `-p`: with one, `high` would be a stray word and refused (#1150).
+    let c = parsed(&["--system", "--thinking", "high"]);
     assert_eq!(c.thinking, yoagent::ThinkingLevel::Off);
+    assert_eq!(c.prompt_arg.as_deref(), Some("high")); // the bare prompt
     let c = parsed(&["--thinking", "high", "-p", "hi"]); // near-miss
     assert_ne!(c.thinking, yoagent::ThinkingLevel::Off);
 }

@@ -2413,7 +2413,9 @@ pub(crate) fn parse_args_with_config(
         crate::format::set_plain_output(true);
         crate::format::disable_color();
     }
-    if let Some(msg) = crate::cli_config::unknown_flag_refusal(args) {
+    if let Some(msg) = crate::cli_config::unknown_flag_refusal(args)
+        .or_else(|| crate::cli_config::stray_prompt_word_refusal(full_args))
+    {
         eprintln!("{RED}error:{RESET} {msg}");
         std::process::exit(2); // #1109: before the trust prompt, wizard and any request
     }
@@ -5497,9 +5499,9 @@ command = "server-two"
     }
 
     #[test]
-    fn test_collect_positional_prompt_flag_takes_precedence() {
-        // When --prompt is explicitly passed, collect_positional_args still
-        // collects positional args, but parse_args checks prompt_arg first.
+    fn test_collect_positional_reports_the_word_beside_prompt_flag() {
+        // With -p set, the bare word is still collected: that is how
+        // `stray_prompt_words` finds it and refuses the run (#1150).
         let flags = ["--model", "--prompt", "-p"];
         let args: Vec<String> = vec!["yoyo", "-p", "explicit prompt", "extra"]
             .into_iter()
@@ -5508,8 +5510,7 @@ command = "server-two"
         // -p consumes "explicit prompt" as its value, "extra" is positional
         let pos = collect_positional_args(&args, &flags);
         assert_eq!(pos, vec!["extra"]);
-        // But in parse_args, prompt_arg would already be Some("explicit prompt")
-        // so the positional branch is never taken.
+        // Before #1150, parse_args then sent "explicit prompt" alone.
     }
 
     #[test]
@@ -5563,16 +5564,15 @@ command = "server-two"
 
     #[test]
     #[serial]
-    fn test_explicit_prompt_flag_overrides_positional() {
-        // `yoyo -p "explicit" "ignored"` — -p takes precedence
+    fn test_explicit_prompt_flag_with_stray_word_is_refused() {
+        // `yoyo -p "explicit" "stray"` used to send "explicit" and drop "stray"
+        // silently; since #1150 parse_args exits 2 naming it (the exit itself
+        // is pinned at the real binary in tests/flag_value_slot.rs).
         std::env::set_var("ANTHROPIC_API_KEY", "test-key");
-        let args = vec![
-            "yoyo".to_string(),
-            "-p".to_string(),
-            "explicit".to_string(),
-            "ignored".to_string(),
-        ];
-        let config = parse_args(&args).unwrap();
+        let args: Vec<String> = ["yoyo", "-p", "explicit", "stray"].map(String::from).into();
+        let msg = crate::cli_config::stray_prompt_word_refusal(&args).unwrap();
+        assert!(msg.contains("'stray'"), "{msg}");
+        let config = parse_args(&args[..3]).unwrap();
         assert_eq!(config.prompt_arg, Some("explicit".to_string()));
     }
 

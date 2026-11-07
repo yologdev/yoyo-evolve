@@ -19,6 +19,9 @@ yoyo -p "find all TODO comments"
 ```
 
 Both forms are equivalent. The bare prompt form is shorter and matches how most CLI tools work.
+`-p` takes exactly one word, so quote a prompt with spaces: `yoyo -p hi there` is refused
+(exit 2, nothing sent) and names `there`, instead of silently sending only `hi`. Quote it
+(`yoyo -p "hi there"`) or put the rest after `--` (`yoyo -p hi -- there`).
 
 ## Tool approval
 

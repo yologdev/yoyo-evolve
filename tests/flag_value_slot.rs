@@ -210,32 +210,75 @@ fn after_double_dash_it_is_prompt_text() {
 
 /// `dispatch_sub::flag_value` (#1114, Day 252): `--model` written as
 /// `--system`'s value is the system prompt, so the run does not switch to the
-/// model named after it. Before, the request went out on `claude-zzz`.
+/// model named after it. Before, the request went out on `claude-zzz`. Since
+/// #1150 the word after it is stray beside `-p`, so the run is refused and
+/// names it; before that, it vanished without a word.
+#[test]
+fn model_in_system_value_slot_names_the_stray_word_and_sends_nothing() {
+    let r = run(&["--system", "--model", "claude-zzz", "-p", "hi"]);
+    assert_eq!(r.code, Some(2), "stderr: {}", r.err);
+    assert!(r.err.contains("'claude-zzz'"), "stderr: {}", r.err);
+    assert!(r.err.contains("Nothing was sent"), "stderr: {}", r.err);
+    assert!(
+        r.bodies.is_empty(),
+        "nothing is sent; bodies: {:?}",
+        r.bodies
+    );
+    assert!(
+        !r.err.contains("Unknown model 'claude-zzz'"),
+        "it was never a model; stderr: {}",
+        r.err
+    );
+}
+
+/// The #1114 property without the stray word: `--model` in `--system`'s value
+/// slot is the system prompt and does not take `-p` as the model.
 #[test]
 fn model_in_system_value_slot_does_not_switch_the_model() {
-    let r = run(&["--system", "--model", "claude-zzz", "-p", "hi"]);
+    let r = run(&["--system", "--model", "-p", "hi"]);
     assert!(
         !r.bodies.is_empty(),
         "anti-vacuous: a request must reach the stub; stderr: {}",
         r.err
     );
     assert!(
+        r.bodies.iter().all(|b| !b.contains(r#""model":"-p""#)),
+        "the model must not be -p; bodies: {:?}",
         r.bodies
-            .iter()
-            .all(|b| !b.contains(r#""model":"claude-zzz""#)),
-        "the model must not be claude-zzz; bodies: {:?}",
-        r.bodies
-    );
-    assert!(
-        !r.err.contains("Unknown model 'claude-zzz'"),
-        "no unknown-model warning for a word that was never a model; stderr: {}",
-        r.err
     );
     assert!(
         r.bodies.iter().any(|b| b.contains("--model")),
         "the system prompt is the literal `--model`; bodies: {:?}",
         r.bodies
     );
+}
+
+/// #1150: a bare word beside `-p` is refused, named, and nothing is sent.
+#[test]
+fn stray_word_beside_prompt_is_refused() {
+    for args in [&["-p", "hi", "extra"][..], &["extra", "-p", "hi"][..]] {
+        let r = run(args);
+        assert_eq!(r.code, Some(2), "{args:?} stderr: {}", r.err);
+        assert!(r.err.contains("'extra'"), "{args:?} stderr: {}", r.err);
+        assert!(r.err.contains("Nothing was sent"), "stderr: {}", r.err);
+        assert!(r.bodies.is_empty(), "{args:?} bodies: {:?}", r.bodies);
+    }
+}
+
+/// Near-misses for #1150: the two documented ways to send the extra word
+/// still send all of it.
+#[test]
+fn quoted_or_double_dash_prompt_still_sends_every_word() {
+    for args in [&["-p", "hi", "--", "extra"][..], &["-p", "hi extra"][..]] {
+        let r = run(args);
+        assert!(
+            r.bodies.iter().any(|b| b.contains(r#""text":"hi extra""#)),
+            "{args:?} bodies: {:?}; stderr: {}",
+            r.bodies,
+            r.err
+        );
+        assert!(!r.err.contains("would be dropped"), "stderr: {}", r.err);
+    }
 }
 
 /// Near-miss: a real `--model` still selects the model.
