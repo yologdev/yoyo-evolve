@@ -1,0 +1,108 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1,25p src/temperature_suppo… ✓ (43ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.0s (2 ✓)
+
+Output is being elided; let me print with line numbers via cat -A-free method.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; awk 'NR<=24' src/temperature_suppo… ✓ (33ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read src/temperature_support.rs (24 lines)  ▶ read src/temperature_support.rs:120..150 ✓ (0ms)
+ ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git log -S 'is deprecated for' --o… ✓ (435ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue view … (6 lines) ✓ (466ms)
+  ▶ $ [ -n "$OPENROUTER_API_KEY" ] && echo have-or-key || echo no-or-key ✓ (2ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 20.5s (6 ✓)
+
+Now the edits. Doc first:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit docs/src/configuration/skills.md (1 → 1 lines)
+  - Claude 4.7 and later (including the default `claude-opus-5-5`, on Anthropic, on Bedrock, and on OpenRouter as `anthropic/claude-...`) reject `temperature`: Anthropic removed it, and the API answers every request that sets it with HTTP 400. So yoyo doesn't send it to those models and prints one note on stderr saying so. Other models get the value as set.
+  + Anthropic removed `temperature` for Claude 4.7 and later (including the default `claude-opus-5-5`), so yoyo doesn't send it to those models — on Anthropic, on Bedrock, and on OpenRouter as `anthropic/claude-...` — and prints one note on stderr saying so. What each provider would have done with it differs. Anthropic's own API answers every request that sets it with HTTP 400 ("`temperature` is deprecated for this model"; measured with yoyo, #1145). For Bedrock, yoyo has no captured response. O… [yoyo: 337 more bytes elided — diff lines are capped at 500 bytes]
+  ▶ edit src/temperature_support.rs (1 → 5 lines)
+  -             // #1122: these sent a temperature (and got a 400) before.
+  +             // #1122: these sent a temperature before. No request was made, so
+  +             // whether OpenRouter answered 400 is unmeasured; its API reference
+  +             // says it ignores parameters a model doesn't support, and
+  +             // /api/v1/models omits `temperature` for these ids. Either way it
+  +             // was never applied, and now the user gets the stderr note.
+ ✓ (1ms)
+  - Claude 4.7 and later (including the default `claude-opus-5-5`, on Anthropic, on Bedrock, and on OpenRouter as `anthropic/claude-...`) reject `temperature`: Anthropic removed it, and the API answers every request that sets it with HTTP 400. So yoyo doesn't send it to those models and prints one note on stderr saying so. Other models get the value as set.
+  + Anthropic removed `temperature` for Claude 4.7 and later (including the default `claude-opus-5-5`), so yoyo doesn't send it to those models — on Anthropic, on Bedrock, and on OpenRouter as `anthropic/claude-...` — and prints one note on stderr saying so. What each provider would have done with it differs. Anthropic's own API answers every request that sets it with HTTP 400 ("`temperature` is deprecated for this model"; measured with yoyo, #1145). For Bedrock, yoyo has no captured response. O… [yoyo: 337 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (4m 53s)
+  -             // #1122: these sent a temperature (and got a 400) before.
+  +             // #1122: these sent a temperature before. No request was made, so
+  +             // whether OpenRouter answered 400 is unmeasured; its API reference
+  +             // says it ignores parameters a model doesn't support, and
+  +             // /api/v1/models omits `temperature` for these ids. Either way it
+  +             // was never applied, and now the user gets the stderr note.
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n 'temperature_support' test… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 5m 1s (3 ✓)
+
+Fine, no cap on this file. Now the module doc and the stderr note, which on OpenRouter/Bedrock also says "the API rejects every request":
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/temperature_support.rs (2 → 4 lines)
+  - //! and later: those models answer HTTP 400 "`temperature` is deprecated for
+  - //! this model" to every request that carries one. Since yoagent 0.27.3 the
+  + //! and later: Anthropic's own API answers HTTP 400 "`temperature` is
+  + //! deprecated for this model" to every request that carries one (measured
+  + //! with a real key, #1145). Bedrock's answer is uncaptured; OpenRouter's API
+  + //! reference says it ignores parameters a model doesn't support (#1122). Since yoagent 0.27.3 the
+  ▶ edit src/temperature_support.rs (1 → 1 lines)
+  -          Claude 4.7 and later, and the API rejects every request that sets it. \
+  +          Claude 4.7 and later, and Anthropic's API rejects every request that sets it. \
+ ✓ (4m 40s)
+  - //! and later: those models answer HTTP 400 "`temperature` is deprecated for
+  - //! this model" to every request that carries one. Since yoagent 0.27.3 the
+  + //! and later: Anthropic's own API answers HTTP 400 "`temperature` is
+  + //! deprecated for this model" to every request that carries one (measured
+  + //! with a real key, #1145). Bedrock's answer is uncaptured; OpenRouter's API
+  + //! reference says it ignores parameters a model doesn't support (#1122). Since yoagent 0.27.3 the
+ ✓ (9m 37s)
+  -          Claude 4.7 and later, and the API rejects every request that sets it. \
+  +          Claude 4.7 and later, and Anthropic's API rejects every request that sets it. \
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn 'API rejects every\|tempe… ✓ (27ms)
+  ▶ edit src/temperature_support.rs (1 → 5 lines)
+            assert!(note.contains("Claude 4.7 and later"), "{note}");
+  +         // #1122: the note is also printed for Bedrock and OpenRouter, where a
+  +         // 400 is not measured, so the 400 claim must name whose API it is.
+  +         assert!(note.contains("Anthropic's API rejects"), "{note}");
+  +         assert!(!note.contains("the API rejects"), "{note}");
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt && cargo build 2>&1 | ta… ✓ (5m 14s)
+            assert!(note.contains("Claude 4.7 and later"), "{note}");
+  +         // #1122: the note is also printed for Bedrock and OpenRouter, where a
+  +         // 400 is not measured, so the 400 claim must name whose API it is.
+  +         assert!(note.contains("Anthropic's API rejects"), "{note}");
+  +         assert!(!note.contains("the API rejects"), "{note}");
+ ✓ (5m 14s)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 15m 0s (5 ✓)
+
+Targeted tests pass. Positive control for the new assertion: revert the note wording and confirm the test fails, then restore it, all in one atomic command.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/temperature_support.rs /tmp… ✓ (128ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/temperature_support.rs /tmp… ✓ (101ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/temperature_support.rs /tmp… ✓ (1m 4s)
+  3 tools completed in 1m 12s (3 ✓)
+
+Control fails by name when sabotaged and passes once restored. Now the full suite and clippy:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo clippy --all-targets -- -D w… ✓ (4m 31s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test 2>&1 | grep -E '^test r… ✓ (3m 44s)
+
+  (interrupted)
