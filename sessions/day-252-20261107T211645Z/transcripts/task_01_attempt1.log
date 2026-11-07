@@ -1,0 +1,164 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --short | head;… ✓ (15ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; sed -n 330,500p src/cli_config.rs…  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; grep -n "fn flag_like_value_warni… ✓ (4ms)
+ ✓ (8ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; sed -n 440,485p src/cli_config.rs… ✓ (12ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; sed -n 1070,1095p src/dispatch_su… ✓ (393ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; sed -n 485,492p src/cli_config.rs… ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 44.6s (6 ✓)
+
+Writing the failing test first.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli_config.rs (3 → 38 lines)
+            let esc = stray_prompt_word_refusal(&argv(&["-p", "hi", "x\u{1b}[31m"])).unwrap();
+            assert!(!esc.as_bytes().contains(&0x1b), "{esc:?}");
+  +     }
+  + 
+  +     /// #1151: when a value-taking flag swallowed another known value-taking
+  +     /// flag, the word meant for the swallowed flag is the stray one. The
+  +     /// refusal blames the swallowing flag and never suggests folding the
+  +     /// stray word into the prompt.
+  +     #[test]
+  +     fn stray_word_left_by_a_swallowed_flag_blames_the_swallower() {
+  +         let msg = stray_prompt_word_refusal(&argv(&["--system", "--model", "claude-zzz", "-p", "hi"]))
+  +             .unwrap();
+  +         assert_eq!(
+  +             msg,
+  +             "--system took '--model' as its value, so 'claude-zzz' (meant for --model) \
+  + was left over. Give --system its own value (--system \"...\" --model claude-zzz). \
+  + Nothing was sent to the model."
+  +         );
+  +         assert!(!msg.contains("-p \"hi claude-zzz\""), "{msg}");
+  +         // A genuine extra prompt word beside it keeps the -p remedy, for it alone.
+  ... (18 more lines)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; cargo test --bin yoyo stray_word_… ✓ (2m 6s)
+            let esc = stray_prompt_word_refusal(&argv(&["-p", "hi", "x\u{1b}[31m"])).unwrap();
+            assert!(!esc.as_bytes().contains(&0x1b), "{esc:?}");
+  +     }
+  + 
+  +     /// #1151: when a value-taking flag swallowed another known value-taking
+  +     /// flag, the word meant for the swallowed flag is the stray one. The
+  +     /// refusal blames the swallowing flag and never suggests folding the
+  +     /// stray word into the prompt.
+  ... (13 more lines)
+ ✓ (2m 6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 19s (2 ✓)
+
+Red as expected. Now the implementation, reusing option_positions as the slot walk.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; python3 - <<'… (73 lines) ✓ (25.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Green. Now the real-binary row in tests/flag_value_slot.rs.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ edit tests/flag_value_slot.rs (1 → 22 lines)
+  + /// #1151: the same argv's refusal blames `--system` (it swallowed `--model`),
+  + /// not `-p`, and never suggests sending the model name as prompt text.
+  + #[test]
+  + fn swallowed_flag_refusal_names_the_swallowing_flag_not_p() {
+  +     let r = run(&["--system", "--model", "claude-zzz", "-p", "hi"]);
+  +     assert_eq!(r.code, Some(2), "stderr: {}", r.err);
+  +     assert!(
+  +         r.err.contains("--system took '--model' as its value"),
+  +         "stderr: {}",
+  +         r.err
+  +     );
+  +     assert!(
+  +         r.err.contains(r#"--system "..." --model claude-zzz"#),
+  +         "stderr: {}",
+  +         r.err
+  +     );
+  +     assert!(!r.err.contains(r#"-p "hi claude-zzz""#), "stderr: {}", r.err);
+  +     assert!(!r.err.contains("not part of -p's value"), "stderr: {}", r.err);
+  +     assert!(r.bodies.is_empty(), "bodies: {:?}", r.bodies);
+  + }
+  ... (2 more lines)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; cargo build -q 2>&1|tail -3; carg… ✓ (3m 32s)
+  + /// #1151: the same argv's refusal blames `--system` (it swallowed `--model`),
+  + /// not `-p`, and never suggests sending the model name as prompt text.
+  + #[test]
+  + fn swallowed_flag_refusal_names_the_swallowing_flag_not_p() {
+  +     let r = run(&["--system", "--model", "claude-zzz", "-p", "hi"]);
+  +     assert_eq!(r.code, Some(2), "stderr: {}", r.err);
+  +     assert!(
+  +         r.err.contains("--system took '--model' as its value"),
+  ... (13 more lines)
+ ✗ (3m 32s)
+    │ Command timed out after 120s. Output so far:
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3m 40s (1 ✓, 1 ✗)
+
+Both surfaces render right. Now the atomic positive control (neuter → run → restore → run).
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; f=src/cli_config.rs; cp $f /tmp/c… ✓ (1m 7s)
+
+Control failed by name both times, restored, green. Docs check, then the full gate.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; grep -rn "not part of -p\|1150" d… ✓ (7ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; grep -n "stray\|-p .*extra\|dropp… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.5s (2 ✓)
+
+No doc shows the refusal text; cli_config.rs isn't in the size register. Full gate:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; cargo fmt -- --check && cargo cli… ✓ (1.1s)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; cargo fmt && cargo fmt -- --check… ✓ (3m 46s)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; cargo test -q 2>&1 | grep -cE "FA… ✓ (3m 18s)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; cargo test -q 2>&1 | grep -E "FAI… ✓ (3m 10s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; cargo test -q 2>&1 | grep -E "FAI… ✓ (3m 12s)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 13m 58s (5 ✓)
+
+Clean on two full runs. One earlier run counted 2 FAILED/panicked lines, and I couldn't reproduce or identify them. I'm noting that rather than hiding it. Committing:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; git add -A &&… (51 lines) ✓ (12ms)
+
+I fixed #1151 and committed it as 2a3612fc. yoyo --system --model claude-zzz -p hi is still refused with exit code 2 and nothing sent, but the error now names the real cause:
+
+```
+error: --system took '--model' as its value, so 'claude-zzz' (meant for --model) was left over. Give --system its own value (--system "..." --model claude-zzz). Nothing was sent to the model.
+```
+
+The old fix it suggested, -p "hi claude-zzz", would have sent the model name to the model as prompt text. That suggestion is gone.
+
+Build, fmt check, clippy with -D warnings and the full cargo test all pass. One full test run earlier counted 2 FAILED/panicked lines. I couldn't reproduce them in two more full runs and don't know which test they came from, so there may be a flaky test somewhere.
+
+What changed
+• The check: a new helper, swallowed_flag_values, in src/cli_config.rs spots a flag that took another flag as its value (here --system took --model). It only counts flags that themselves need a value, and the bare word right after them is the one blamed on the swallowed flag. It reuses the existing option_positions walk, so there's no second argv parser. src/cli.rs is unchanged, still at 7861 lines.
+• Mixed cases: if an argv has both kinds of stray word, the "took --model" explanation comes first. The quote-the-whole-prompt suggestion is then offered only for the genuine extra prompt words.
+• Tests:
+  • A unit test for the #1151 argv and the mixed case, plus three cases that must still blame -p:
+    • -p hi extra (the #1150 case), whose message is unchanged.
+    • --system --verbose -p hi x: --verbose takes no value, so nothing was left over by it.
+    • --system -terse -p hi x: a dash-led system prompt is a real value.
+  • A real-binary test in tests/flag_value_slot.rs: exit 2, --system named, no -p "hi claude-zzz", and the stub receives no request.
+• Positive control: I disabled the new helper (with the marker), ran the tests, restored it and ran them again, all in one command. Both new tests failed by name and passed once restored.
+
+A choice you might disagree with: the issue's done-when says any "dash-led word", but its predicate line says "a KNOWN_FLAGS entry". I went with the narrower one, a known flag that takes a value, so a system prompt that starts with a dash is never mistaken for a swallowed flag. I didn't reuse require_flag_value's "looks like a flag" check because it treats any dash-led word as a flag and would misfire on that case.
+
+The commit body has the before/after map for each of the five argv words, and none of them is dropped without a message. No docs page shows this error text, so no doc edits were needed.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 0/1 changed files were in top-10 predictions (0.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 1/1 (100.0%) — reactive was 0.0%
+     Surprises (not predicted): src/cli_config.rs
