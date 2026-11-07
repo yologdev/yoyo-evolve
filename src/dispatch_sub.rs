@@ -985,8 +985,15 @@ pub(crate) fn try_dispatch_subcommand_in(
 /// pattern that's repeated ~16 times across `parse_args`. This is the
 /// follow-up to the Day 38 09:55 task that landed `try_dispatch_subcommand`
 /// (#261) — see `journals/JOURNAL.md` for the full premise correction.
+///
+/// #1114: the flag is found with `cli_config::option_position`, so a flag
+/// sitting in another flag's value slot is that flag's value, not a flag
+/// (`--system --model x` is a system prompt of `--model`, not a model switch),
+/// and nothing after a bare `--` is read. Every caller passes argv with the
+/// binary at index 0 (full argv, or `option_args` of it), which is the shape
+/// `option_position` walks.
 pub(crate) fn flag_value(args: &[String], flag_names: &[&str]) -> Option<String> {
-    let i = args.iter().position(|a| flag_names.contains(&a.as_str()))?;
+    let i = crate::cli_config::option_position(args, flag_names)?;
     // Day 183: consult the careful classifier that already exists one function
     // down. This WARNS and deliberately does not refuse — see
     // `flag_like_value_warning` for why the value is still returned.
@@ -1008,7 +1015,7 @@ pub(crate) fn flag_value_warning_for(
     flag_names: &[&str],
     plain: bool,
 ) -> Option<String> {
-    let i = args.iter().position(|a| flag_names.contains(&a.as_str()))?;
+    let i = crate::cli_config::option_position(args, flag_names)?; // same slot rule as flag_value
     match require_flag_value(args.get(i + 1)) {
         FlagValueCheck::FlagLike(token) => Some(flag_like_value_warning(&args[i], token, plain)),
         _ => None,

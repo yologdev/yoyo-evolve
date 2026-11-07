@@ -477,7 +477,8 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 252: 2663 -> 2670 (+7, #1127): the blame and ast shell arms pass `Shell` to their
     // status functions so usage names `yoyo <verb>`; rustfmt wrapped each call (+4) and the
     // blame dispatch test's assert (+3), pasted.
-    ("src/dispatch_sub.rs", 2670),
+    // Day 252: #1114 flag_value skips value slots via option_position, +7 (doc lines).
+    ("src/dispatch_sub.rs", 2677),
     // Day 209: 3439 -> 3455 (+16, within the drift band, pasted rather than left to absorb).
     // #937 option 1: nine lines of doc above `builtin_model_pricing` naming both ignored
     // audit commands (deliverable 4 — an alarm nobody can find is the #745/#767/#769

@@ -207,3 +207,69 @@ fn after_double_dash_it_is_prompt_text() {
         r.err
     );
 }
+
+/// `dispatch_sub::flag_value` (#1114, Day 252): `--model` written as
+/// `--system`'s value is the system prompt, so the run does not switch to the
+/// model named after it. Before, the request went out on `claude-zzz`.
+#[test]
+fn model_in_system_value_slot_does_not_switch_the_model() {
+    let r = run(&["--system", "--model", "claude-zzz", "-p", "hi"]);
+    assert!(
+        !r.bodies.is_empty(),
+        "anti-vacuous: a request must reach the stub; stderr: {}",
+        r.err
+    );
+    assert!(
+        r.bodies
+            .iter()
+            .all(|b| !b.contains(r#""model":"claude-zzz""#)),
+        "the model must not be claude-zzz; bodies: {:?}",
+        r.bodies
+    );
+    assert!(
+        !r.err.contains("Unknown model 'claude-zzz'"),
+        "no unknown-model warning for a word that was never a model; stderr: {}",
+        r.err
+    );
+    assert!(
+        r.bodies.iter().any(|b| b.contains("--model")),
+        "the system prompt is the literal `--model`; bodies: {:?}",
+        r.bodies
+    );
+}
+
+/// Near-miss: a real `--model` still selects the model.
+#[test]
+fn model_as_a_flag_still_switches_the_model() {
+    let r = run(&["--model", "claude-zzz", "-p", "hi"]);
+    assert!(
+        r.bodies
+            .iter()
+            .any(|b| b.contains(r#""model":"claude-zzz""#)),
+        "bodies: {:?}; stderr: {}",
+        r.bodies,
+        r.err
+    );
+    assert!(
+        r.err.contains("Unknown model 'claude-zzz'"),
+        "stderr: {}",
+        r.err
+    );
+}
+
+/// Subcommand caller (`version -v` reads `--model` through `flag_value` with
+/// the verb at argv[1]): unchanged, it still reports the flag's model.
+#[test]
+fn subcommand_flag_value_is_unchanged() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let home = tmp.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let out = scrubbed(&home)
+        .args(["version", "-v", "--model", "claude-zzz"])
+        .current_dir(tmp.path())
+        .output()
+        .expect("run yoyo");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "stdout: {stdout}");
+    assert!(stdout.contains("model: claude-zzz"), "stdout: {stdout}");
+}
