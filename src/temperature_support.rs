@@ -1,8 +1,10 @@
 //! Which models still accept a sampling `temperature` (#1145, #1122).
 //!
 //! Anthropic removed `temperature` (with `top_p` / `top_k`) for Claude 4.7
-//! and later: those models answer HTTP 400 "`temperature` is deprecated for
-//! this model" to every request that carries one. Since yoagent 0.27.3 the
+//! and later: Anthropic's own API answers HTTP 400 "`temperature` is
+//! deprecated for this model" to every request that carries one (measured
+//! with a real key, #1145). Bedrock's answer is uncaptured; OpenRouter's API
+//! reference says it ignores parameters a model doesn't support (#1122). Since yoagent 0.27.3 the
 //! rule lives in yoagent: [`ModelConfig::accepts_sampling_params`] is
 //! inferred off for those ids by its `anthropic` constructor and presets, and
 //! the loop then leaves the temperature out. yoyo no longer parses Claude
@@ -26,7 +28,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub fn temperature_dropped_note(model: &str) -> String {
     format!(
         "note: temperature was not sent to {model}: Anthropic removed temperature for \
-         Claude 4.7 and later, and the API rejects every request that sets it. \
+         Claude 4.7 and later, and Anthropic's API rejects every request that sets it. \
          Remove --temperature / `temperature` from your config to silence this note."
     )
 }
@@ -80,7 +82,11 @@ mod tests {
             ("bedrock", "us.anthropic.claude-opus-4-8"),
             ("bedrock", "global.anthropic.claude-sonnet-5-5"),
             ("bedrock", "anthropic.claude-haiku-5-5"),
-            // #1122: these sent a temperature (and got a 400) before.
+            // #1122: these sent a temperature before. No request was made, so
+            // whether OpenRouter answered 400 is unmeasured; its API reference
+            // says it ignores parameters a model doesn't support, and
+            // /api/v1/models omits `temperature` for these ids. Either way it
+            // was never applied, and now the user gets the stderr note.
             ("openrouter", "anthropic/claude-opus-5.5"),
             ("openrouter", "anthropic/claude-opus-5-5"),
             ("openrouter", "anthropic/claude-sonnet-5"),
@@ -129,6 +135,10 @@ mod tests {
         assert!(note.contains("claude-opus-5-5"), "{note}");
         assert!(note.contains("temperature was not sent"), "{note}");
         assert!(note.contains("Claude 4.7 and later"), "{note}");
+        // #1122: the note is also printed for Bedrock and OpenRouter, where a
+        // 400 is not measured, so the 400 claim must name whose API it is.
+        assert!(note.contains("Anthropic's API rejects"), "{note}");
+        assert!(!note.contains("the API rejects"), "{note}");
     }
 
     fn config(provider: &str, model: &str, temperature: Option<f32>) -> AgentConfig {
