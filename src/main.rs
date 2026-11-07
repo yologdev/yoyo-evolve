@@ -157,6 +157,8 @@ mod tools_child_bash_tests;
 #[cfg(test)]
 mod tools_group_kill_tests;
 #[cfg(test)]
+mod tools_read_log_tests;
+#[cfg(test)]
 mod tools_search_flag_tests;
 #[cfg(test)]
 mod tools_user_deny_tests;

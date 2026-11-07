@@ -39,10 +39,9 @@
 //! **Not in this slice, named rather than implied (all tracked in #1094):**
 //! - An existing file that was **never read** is not refused (Claude Code
 //!   requires a read before any overwrite; that is a broader product decision).
-//! - The store is **process-wide**: a sub-agent's read counts as coverage for
-//!   the parent and vice versa.
-//! - A file changed by `bash` (or another process) is judged only by its line
-//!   count: a shrink or a same-length rewrite is not detected.
+//! - This store is **process-wide** and judges a `bash`-changed file only by
+//!   line count. Day 252: yoagent's per-agent `ReadLog` (wired in `tools.rs`)
+//!   now refuses both cases (items 3, 4); this layer stays for truncation.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

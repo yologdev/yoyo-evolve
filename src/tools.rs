@@ -41,7 +41,7 @@ use yoagent::provider::{
 use yoagent::sub_agent::SubAgentTool;
 use yoagent::tools::bash::ConfirmFn;
 use yoagent::tools::edit::EditFileTool;
-use yoagent::tools::file::{ReadFileTool, WriteFileTool};
+use yoagent::tools::file::{ReadFileTool, ReadLog, WriteFileTool};
 use yoagent::tools::list::ListFilesTool;
 use yoagent::tools::search::SearchTool;
 use yoagent::types::AgentTool;
@@ -1316,6 +1316,14 @@ pub(crate) fn build_bash_tool(
         })
 }
 
+/// Stem of yoagent's `ReadLog` overwrite refusal (`tools/file.rs`, 0.27.2),
+/// matched by `prompt_retry::is_deterministic_tool_error` so the refusal does
+/// not trigger an auto-retry. A copy of a dependency's text: pinned against
+/// the real refusal in `tools_read_log_tests.rs`, so it fails there if yoagent
+/// rewords it.
+pub const READ_LOG_REFUSAL_STEM: &str =
+    " so writing the whole file would delete lines you have not seen";
+
 /// Build the tool set against a caller-owned hook registry.
 ///
 /// This is `build_tools`' body with the registry construction lifted out, so a
@@ -1341,12 +1349,21 @@ pub fn build_tools_with_hooks(
     // Build write_file and edit_file with optional confirmation prompts.
     // In auto_edit mode, file operations are auto-approved but bash still confirms.
     let auto_edit = is_auto_edit();
+    // One yoagent `ReadLog` per agent, shared by its read_file and write_file
+    // only: write_file refuses to overwrite a file THIS agent read in part, or
+    // one changed on disk since that partial read (#1094 items 3, 4). Children
+    // get their own (`sub_agent_child_tools_with`). yoyo's process-wide
+    // `partial_read_guard` still runs too: it sees truncation, this does not.
+    let read_log = ReadLog::new();
     let write_tool: Box<dyn AgentTool> = if auto_approve || auto_edit {
-        maybe_guard(Box::new(WriteFileTool::new()), dir_restrictions)
+        maybe_guard(
+            Box::new(WriteFileTool::new().with_read_log(read_log.clone())),
+            dir_restrictions,
+        )
     } else {
         maybe_guard(
             maybe_confirm(
-                Box::new(WriteFileTool::new()),
+                Box::new(WriteFileTool::new().with_read_log(read_log.clone())),
                 &always_approved,
                 permissions,
             ),
@@ -1388,7 +1405,10 @@ pub fn build_tools_with_hooks(
         maybe_hook(
             with_recovery_hints(
                 with_truncation(
-                    maybe_guard(Box::new(ReadFileTool::default()), dir_restrictions),
+                    maybe_guard(
+                        Box::new(ReadFileTool::default().with_read_log(read_log)),
+                        dir_restrictions,
+                    ),
                     max_tool_output,
                 ),
                 &failure_tracker,
@@ -1777,11 +1797,18 @@ pub(crate) fn sub_agent_child_tools_with(
         parent_confirms,
         pinned_cwd: pinned_cwd.map(str::to_string),
     });
+    // The child's own read record, never the parent's (yoagent: a shared one
+    // "would count the parent's reads as its own"). It lives as long as these
+    // tools, so it spans every dispatch of this sub_agent tool.
+    let read_log = ReadLog::new();
     let mut tools: Vec<Arc<dyn AgentTool>> = vec![
         with_read_guard_bash_arc(bash),
-        maybe_guard_arc(Arc::new(ReadFileTool::default()), restrictions),
+        maybe_guard_arc(
+            Arc::new(ReadFileTool::default().with_read_log(read_log.clone())),
+            restrictions,
+        ),
         with_read_guard_arc(maybe_guard_arc(
-            Arc::new(WriteFileTool::new()),
+            Arc::new(WriteFileTool::new().with_read_log(read_log)),
             restrictions,
         )),
         with_read_guard_arc(maybe_guard_arc(Arc::new(EditFileTool::new()), restrictions)),

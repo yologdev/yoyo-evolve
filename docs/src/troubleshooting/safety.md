@@ -192,8 +192,17 @@ write time, so a file that grew after being read whole is refused too.
 A page whose output yoyo truncated to save context (head and tail kept, the
 middle cut) does not count as read, since the model never saw its middle;
 the refusal says to re-read with a smaller `limit`. New files, files the
-model wrote itself, and files read completely are written as before. Not covered yet (#1094): an existing file that was
-never read at all is still overwritten without a read.
+model wrote itself, and files read completely are written as before.
+
+Each agent keeps its own record of what it has read: the main agent and
+every sub-agent separately. So a sub-agent reading a file whole does not
+let the main agent overwrite a file the main agent saw only part of. And if
+a file changes on disk after a partial read (for example `bash` rewrote or
+shrank it), `write_file` refuses until that agent reads it whole again,
+even when the new file is shorter than the part it saw. (These two checks
+come from yoagent's `ReadLog`; yoyo's own check above still runs too.)
+Not covered yet (#1094): an existing file that was never read at all is
+still overwritten without a read.
 
 ## Keeping provider keys out of subprocesses
 
