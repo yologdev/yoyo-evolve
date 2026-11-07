@@ -1,0 +1,24 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "fn option_position" -A30 … ✓ (23ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn 'flag_value(\|flag_value_… ✓ (21ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n 'flag_value(' src/dispatch… ✓ (33ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; mkdir -p sessi… (9 lines) ✓ (11ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 22.0s (4 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_2.md. I did not re-run the binary myself; the evidence is the diff, the callers, and the three new tests, which were in the passing run the harness reported.
+
+• The fix: flag_value and its warning twin flag_value_warning_for now find the flag with the existing cli_config::option_position instead of a plain position(). That function skips the value slot of any value-taking flag that comes earlier and stops at a bare --, so --system --model claude-zzz -p hi sets a system prompt of --model and no longer switches the model. The rule is reused, not copied, and the fix is at the one definition so every caller gets it.
+• Do all callers fit? option_position starts walking at index 1, so it only works if index 0 is the binary. I checked the call sites:
+  • In cli.rs, callers pass option_args of the full argv.
+  • In dispatch_sub.rs, callers pass the full argv with the verb at index 1. The verb isn't a value-taking flag, so the walk handles it correctly.
+  • The commit body has the census (39 of 39 callers from grep) and records the positive control: the first test failed by name with the old lookup and passed once it was restored.
+• Tests: three new real-binary tests cover the repro, the near-miss (--model claude-zzz still selects that model) and a subcommand caller (version -v --model).
+• Other checks: nothing new is defined without a consumer; only two lookup lines changed. The dispatch_sub.rs size cap moved from 2670 to 2677 with a reason. No docs needed updating because no documented behavior changed, and no defaults or flags were added.
+
+The commit notes one side effect: in the repro, the stray word claude-zzz is now dropped silently, because -p already supplies the prompt. That's acceptable.
+  watch: no files changed this turn — skipping

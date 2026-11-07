@@ -1,0 +1,80 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn 'flag_value(' src/ | grep… ✓ (14ms)
+ ✓ (16ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn 'flag_value(' src/ | grep… ✓ (16ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn '[^_]flag_value(' src/ | … ✓ (19ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; awk -F: '{print NR": "$2" | "$3}' … ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n 'cfg(test)\|^mod \|^fn \|^…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat tests/flag_value_slot.rs | hea… ✓ (8ms)
+ ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1,9p tests/flag_value_slot.… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n 'fn parse_args_with_config… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 2373,2400p src/cli.rs; grep… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn '[^_]flag_value(' src/ | … ✓ (23ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n 'try_dispatch_subcommand(\… ✓ (39ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 970,988p src/dispatch_sub.r… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 977,987p src/dispatch_sub.r… ✓ (3ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/dispatch_sub.rs:977..989 ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  15 tools completed in 1m 3s (15 ✓)
+
+Now the fix: both flag_value and its warning twin find the flag through option_position.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (29 lines) ✓ (19ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo build 2>&1 | tail -3; export… ✓ (13.0s)
+  ▶ $ cd $(mktemp -d); export HOME=$(mktemp -d); B=/home/runner/work/yoyo-evolve/yoyo-… ✓ (15.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat >> tests/f… (61 lines) ✓ (540ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 56.9s (4 ✓)
+
+Positive control, as one atomic mutate→run→restore command:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/dispatch_sub.rs /tmp/ds.bak… ✓ (26.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Red by name with the old lookup, green after restore. Now the module-size entry:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; wc -l src/dispatch_sub.rs; grep -n… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 470,481p tests/module_size.… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (9 lines) ✓ (4m 52s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test 2>&1 | grep -E 'test re… ✓ (3m 43s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n 'parse_model_config(\|pars… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat > /tmp/msg… (46 lines) ✓ (21ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat > /tmp/c.m… (17 lines) ✓ (1.0s)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 9m 21s (7 ✓)
+
+yoyo --system --model claude-zzz -p hi no longer runs on claude-zzz. --model is now taken as the system prompt, and the request goes out on the default model. Before this, the request was sent on claude-zzz. Committed as fb0c95bf, titled "Part of #1114".
+
+The fix: flag_value and flag_value_warning_for now find their flag with cli_config::option_position instead of args.iter().position(..). That function already skips the value of any earlier flag that takes one, and stops at a bare --. I reused it rather than writing a second copy, because every caller passes argv with the binary at index 0, which is what it expects. The fix sits at the one definition, so every caller gets it.
+
+Who calls it (39 of 39 call sites, found by grep):
+• 11 production calls in `cli.rs`: all pass option_args(full argv) from parse_args_with_config.
+• 10 production calls in `dispatch_sub.rs`: all pass the full argv, with the subcommand at index 1 (doctor, version -v, review, resolve_api_key, and one other arm).
+• 18 unit-test calls: every test argv starts with "yoyo".
+
+Tests (3 new in tests/flag_value_slot.rs; they run the real binary against a local stub):
+• The bug case: the request is not sent on claude-zzz, there's no unknown-model warning, and the system prompt is the literal --model.
+• A plain --model claude-zzz still selects that model.
+• The subcommand path is unchanged: yoyo version -v --model claude-zzz still prints model: claude-zzz.
+
+Positive control: in one command I put the old lookup back (with a NEUTERED marker), ran the tests, then restored the fix. The first test failed by name (7 passed, 1 failed). After the restore, 8 of 8 passed and no marker was left.
+
+Checks: cargo fmt, clippy -D warnings and the full cargo test run (7312 passed, 0 failed) are all clean. dispatch_sub.rs went from 2670 to 2677 lines, all doc comment, and its entry in tests/module_size.rs now carries the Day 252 reason.
+
+Still open on #1114: collect_repeatable_flag and resolve_numeric_setting. I posted a comment on #1114 that leads with that scope, followed by the census.
+
+One new problem I found and didn't fix: in that same command, the leftover word claude-zzz is now silently ignored, because -p already supplies the prompt. That's a different bug (an unused positional word gets no warning), so I noted it in the #1114 comment and didn't open a separate issue.
+  watch: no files changed this turn — skipping
