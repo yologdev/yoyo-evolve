@@ -1002,10 +1002,17 @@ pub fn create_model_config(provider: &str, model: &str, base_url: Option<&str>) 
             config.compat = Some(OpenAiCompat::openrouter());
             // #1037: `anthropic/<id>` (dotted or dashed) takes the anthropic preset.
             let preset_id = crate::providers::openrouter_anthropic_preset_id(model);
+            // #1122: a Claude id takes yoagent's sampling rule (4.7+ rejects
+            // `temperature`), read off `ModelConfig::anthropic` when there is no
+            // preset. `ModelConfig::openai` above leaves the flag on for every id.
+            if let Some(id) = &preset_id {
+                config.accepts_sampling_params = anthropic_model_config(id).accepts_sampling_params;
+            }
             if let Some(p) = preset_id.and_then(|id| anthropic_preset(&id)) {
                 (config.context_window, config.max_tokens) = (p.context_window, p.max_tokens);
                 (config.cost, config.reasoning) = (p.cost, p.reasoning);
             } else if let Some(p) = crate::providers::openrouter_routed_preset(model) {
+                config.accepts_sampling_params = p.accepts_sampling_params;
                 // #1122: other vendors' ids (google/, x-ai/, openai/...) take
                 // yoagent's vendor preset limits, not a 4096-token reply cap.
                 // Second, because yoagent refuses dashed claude ids and has no
@@ -1104,6 +1111,13 @@ pub fn create_model_config(provider: &str, model: &str, base_url: Option<&str>) 
             if let Some(p) = ModelConfig::preset("bedrock", model) {
                 (config.context_window, config.max_tokens) = (p.context_window, p.max_tokens);
                 config.reasoning = p.reasoning;
+            }
+            // #1122: `custom()` leaves the sampling flag on; a Claude id behind
+            // Bedrock takes yoagent's rule for the Anthropic id it maps to (an id
+            // outside yoagent's Bedrock map keeps it on: we can't tell).
+            if let Some(id) = ModelConfig::bedrock_anthropic_id(model) {
+                config.accepts_sampling_params =
+                    anthropic_model_config(&id).accepts_sampling_params;
             }
             config.cost = crate::format::bedrock_preset_cost(model);
             config
@@ -1401,6 +1415,7 @@ impl AgentConfig {
         mut agent: Agent,
         model_context_window: u32,
         model_output_ceiling: Option<u32>,
+        accepts_sampling_params: bool,
     ) -> Agent {
         // User override takes precedence; otherwise use the model's actual context window
         let effective_window = self.context_window.unwrap_or(model_context_window);
@@ -1650,7 +1665,9 @@ impl AgentConfig {
             }
             agent = agent.with_max_tokens(max);
         }
-        agent.temperature = effective_temperature(&self.provider, &self.model, self.temperature);
+        // #1122: read off the config this agent was built from, never re-derived.
+        agent.temperature =
+            effective_temperature(&self.model, accepts_sampling_params, self.temperature);
 
         // Checkpoint mode: register on_before_turn to stop when context gets high
         if self.context_strategy == cli::ContextStrategy::Checkpoint {
@@ -1702,8 +1719,9 @@ impl AgentConfig {
                 self.max_tokens,
                 self.context_window,
             );
+            let sampling = model_config.accepts_sampling_params;
             let agent = Agent::from_provider(AnthropicProvider, model_config);
-            self.configure_agent(agent, context_window, output_ceiling)
+            self.configure_agent(agent, context_window, output_ceiling, sampling)
         } else if self.provider == "google" {
             // Google uses its own provider
             let model_config = create_model_config(&self.provider, &self.model, base_url);
@@ -1718,8 +1736,9 @@ impl AgentConfig {
                 self.max_tokens,
                 self.context_window,
             );
+            let sampling = model_config.accepts_sampling_params;
             let agent = Agent::from_provider(GoogleProvider, model_config);
-            self.configure_agent(agent, context_window, output_ceiling)
+            self.configure_agent(agent, context_window, output_ceiling, sampling)
         } else if self.provider == "bedrock" {
             // Bedrock uses AWS SigV4 signing with ConverseStream protocol
             let model_config = create_model_config(&self.provider, &self.model, base_url);
@@ -1734,8 +1753,9 @@ impl AgentConfig {
                 self.max_tokens,
                 self.context_window,
             );
+            let sampling = model_config.accepts_sampling_params;
             let agent = Agent::from_provider(BedrockProvider, model_config);
-            self.configure_agent(agent, context_window, output_ceiling)
+            self.configure_agent(agent, context_window, output_ceiling, sampling)
         } else {
             // All other providers use OpenAI-compatible API
             let model_config = create_model_config(&self.provider, &self.model, base_url);
@@ -1752,8 +1772,9 @@ impl AgentConfig {
                 self.max_tokens,
                 self.context_window,
             );
+            let sampling = model_config.accepts_sampling_params;
             let agent = openai_family_agent(model_config);
-            self.configure_agent(agent, context_window, output_ceiling)
+            self.configure_agent(agent, context_window, output_ceiling, sampling)
         }
     }
 
@@ -1798,17 +1819,15 @@ impl AgentConfig {
         let side_prompt = "You are a helpful assistant answering a quick side question. \
             Be concise and direct. This is a one-shot question — answer it completely in one response.";
 
+        let model_config = create_model_config(&self.provider, &self.model, base_url);
+        let sampling = model_config.accepts_sampling_params;
         let agent = if self.provider == "anthropic" {
-            let model_config = create_model_config(&self.provider, &self.model, base_url);
             Agent::from_provider(AnthropicProvider, model_config)
         } else if self.provider == "google" {
-            let model_config = create_model_config(&self.provider, &self.model, base_url);
             Agent::from_provider(GoogleProvider, model_config)
         } else if self.provider == "bedrock" {
-            let model_config = create_model_config(&self.provider, &self.model, base_url);
             Agent::from_provider(BedrockProvider, model_config)
         } else {
-            let model_config = create_model_config(&self.provider, &self.model, base_url);
             openai_family_agent(model_config)
         };
 
@@ -1827,7 +1846,7 @@ impl AgentConfig {
             // out of so all three builders carry one policy, not two.
             .with_execution_limits(ExecutionLimits::default().with_max_turns(1));
 
-        agent.temperature = effective_temperature(&self.provider, &self.model, self.temperature);
+        agent.temperature = effective_temperature(&self.model, sampling, self.temperature);
 
         agent
     }
@@ -1838,17 +1857,15 @@ impl AgentConfig {
     pub fn build_architect_agent(&self, architect_model: &str) -> Agent {
         let base_url = self.base_url.as_deref();
 
+        let model_config = create_model_config(&self.provider, architect_model, base_url);
+        let sampling = model_config.accepts_sampling_params;
         let agent = if self.provider == "anthropic" {
-            let model_config = create_model_config(&self.provider, architect_model, base_url);
             Agent::from_provider(AnthropicProvider, model_config)
         } else if self.provider == "google" {
-            let model_config = create_model_config(&self.provider, architect_model, base_url);
             Agent::from_provider(GoogleProvider, model_config)
         } else if self.provider == "bedrock" {
-            let model_config = create_model_config(&self.provider, architect_model, base_url);
             Agent::from_provider(BedrockProvider, model_config)
         } else {
-            let model_config = create_model_config(&self.provider, architect_model, base_url);
             openai_family_agent(model_config)
         };
 
@@ -1870,8 +1887,7 @@ impl AgentConfig {
             // out of so all three builders carry one policy, not two.
             .with_execution_limits(ExecutionLimits::default().with_max_turns(1));
 
-        agent.temperature =
-            effective_temperature(&self.provider, architect_model, self.temperature);
+        agent.temperature = effective_temperature(architect_model, sampling, self.temperature);
 
         agent
     }
@@ -3152,6 +3168,7 @@ mod tests {
             ),
             200_000,
             Some(200_000),
+            true,
         );
         // Agent built successfully with context config
         let _ = agent;
@@ -3196,6 +3213,7 @@ mod tests {
             ),
             200_000,
             Some(200_000),
+            true,
         );
         let _ = agent;
 
@@ -3234,6 +3252,7 @@ mod tests {
             ),
             200_000,
             Some(200_000),
+            true,
         );
         let _ = agent;
     }

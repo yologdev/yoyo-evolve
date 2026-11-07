@@ -1,62 +1,26 @@
-//! Which models still accept a sampling `temperature` (#1145).
+//! Which models still accept a sampling `temperature` (#1145, #1122).
 //!
 //! Anthropic removed `temperature` (with `top_p` / `top_k`) for Claude 4.7
 //! and later: those models answer HTTP 400 "`temperature` is deprecated for
-//! this model" to every request that carries one. yoagent 0.27.2 forwards
-//! `config.temperature` unconditionally and has no per-model flag for it
-//! (asked upstream in #1146), so a user with `--temperature` or
-//! `temperature = ...` in `.yoyo.toml` on the default model failed 100% of
-//! calls. yoyo now drops the knob for those models and says so on stderr,
-//! once per process.
+//! this model" to every request that carries one. Since yoagent 0.27.3 the
+//! rule lives in yoagent: [`ModelConfig::accepts_sampling_params`] is
+//! inferred off for those ids by its `anthropic` constructor and presets, and
+//! the loop then leaves the temperature out. yoyo no longer parses Claude
+//! versions itself (#1145's copy covered only `anthropic` and `bedrock`); it
+//! reads the flag off the config each agent is built from, and adds what
+//! yoagent doesn't: a note on stderr, once per process, when the user set a
+//! temperature that won't be sent (yoagent only logs a `tracing` warning).
 //!
-//! Scope: the `anthropic` provider (bare ids) and `bedrock` ids that
-//! yoagent's own [`ModelConfig::bedrock_anthropic_id`] maps to an Anthropic
-//! id. A Bedrock id that mapper doesn't know is left alone (we can't tell
-//! which model it is). Other providers are untouched; OpenAI's reasoning
-//! models are #1060.
+//! Where the flag comes from in yoyo (`create_model_config`): the
+//! `anthropic` arm takes yoagent's own config; the `bedrock` and
+//! `openrouter` arms are built from `custom()` / `openai()`, which leave the
+//! flag on, so they copy it from yoagent's config for the Anthropic id behind
+//! the id. `ollama`, `custom` and unknown OpenAI-compatible providers keep
+//! yoagent's default (on): yoagent infers nothing for them and exports no
+//! id predicate (`takes_sampling_params` is `pub(crate)`), so a Claude id
+//! behind such a gateway still gets the temperature (asked upstream on #1122).
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use yoagent::provider::ModelConfig;
-
-/// First Claude version whose API rejects `temperature`.
-const FIRST_REJECTING_VERSION: (u32, u32) = (4, 7);
-
-/// `(major, minor)` of a bare Anthropic Claude id, parsed from its tokens:
-/// `claude-opus-5-5` → (5, 5), `claude-opus-5` → (5, 0),
-/// `claude-haiku-4-5-20251001` → (4, 5), `claude-opus-4-20250514` → (4, 0),
-/// `claude-3-5-haiku-20241022` → (3, 5). A date (more than two digits) is
-/// never a minor version. `None` when no version token is found.
-fn claude_version(model: &str) -> Option<(u32, u32)> {
-    let rest = model.strip_prefix("claude-")?;
-    let mut tokens = rest.split('-');
-    let major = tokens.by_ref().find_map(version_number)?;
-    let minor = tokens.next().and_then(version_number).unwrap_or(0);
-    Some((major, minor))
-}
-
-/// The leading digits of `token` as a version number, if there are one or
-/// two of them (so `5`, `7[1m]` parse; `20251001` and `opus` don't).
-fn version_number(token: &str) -> Option<u32> {
-    let digits: String = token.chars().take_while(|c| c.is_ascii_digit()).collect();
-    if digits.is_empty() || digits.len() > 2 {
-        return None;
-    }
-    digits.parse().ok()
-}
-
-/// True when `model` on `provider` is a Claude model at version 4.7 or
-/// later, whose API rejects a `temperature` field.
-pub fn rejects_temperature(provider: &str, model: &str) -> bool {
-    let anthropic_id = match provider {
-        "anthropic" => model.to_string(),
-        "bedrock" => match ModelConfig::bedrock_anthropic_id(model) {
-            Some(id) => id,
-            None => return false,
-        },
-        _ => return false,
-    };
-    claude_version(&anthropic_id).is_some_and(|v| v >= FIRST_REJECTING_VERSION)
-}
 
 /// The stderr note printed when a configured temperature is dropped.
 pub fn temperature_dropped_note(model: &str) -> String {
@@ -69,13 +33,17 @@ pub fn temperature_dropped_note(model: &str) -> String {
 
 static NOTE_PRINTED: AtomicBool = AtomicBool::new(false);
 
-/// The temperature an agent for `model` on `provider` should carry: the
-/// configured one, or `None` when the model rejects it, in which case the
-/// note is printed to stderr (once per process, so `/model` switches and
-/// side agents don't repeat it).
-pub fn effective_temperature(provider: &str, model: &str, configured: Option<f32>) -> Option<f32> {
+/// The temperature an agent for `model` should carry, given its built
+/// config's `accepts_sampling_params`: the configured one, or `None` when the
+/// model rejects it, in which case the note is printed to stderr (once per
+/// process, so `/model` switches and side agents don't repeat it).
+pub fn effective_temperature(
+    model: &str,
+    accepts_sampling_params: bool,
+    configured: Option<f32>,
+) -> Option<f32> {
     let temp = configured?;
-    if !rejects_temperature(provider, model) {
+    if accepts_sampling_params {
         return Some(temp);
     }
     if !NOTE_PRINTED.swap(true, Ordering::Relaxed) {
@@ -91,8 +59,14 @@ mod tests {
     use crate::AgentConfig;
     use yoagent::ThinkingLevel;
 
+    /// The flag on the config yoyo actually builds (`create_model_config`),
+    /// per provider x id: yoagent's rule, reached through each arm.
+    fn accepts(provider: &str, model: &str) -> bool {
+        crate::agent_builder::create_model_config(provider, model, None).accepts_sampling_params
+    }
+
     #[test]
-    fn rejects_temperature_table() {
+    fn built_config_sampling_flag_table() {
         let rejecting = [
             ("anthropic", "claude-opus-5-5"),
             ("anthropic", "claude-haiku-5-5"),
@@ -106,10 +80,14 @@ mod tests {
             ("bedrock", "us.anthropic.claude-opus-4-8"),
             ("bedrock", "global.anthropic.claude-sonnet-5-5"),
             ("bedrock", "anthropic.claude-haiku-5-5"),
+            // #1122: these sent a temperature (and got a 400) before.
+            ("openrouter", "anthropic/claude-opus-5.5"),
+            ("openrouter", "anthropic/claude-opus-5-5"),
+            ("openrouter", "anthropic/claude-sonnet-5"),
         ];
         for (provider, model) in rejecting {
             assert!(
-                rejects_temperature(provider, model),
+                !accepts(provider, model),
                 "{provider}/{model} should reject temperature"
             );
         }
@@ -127,13 +105,19 @@ mod tests {
             ("bedrock", "anthropic.claude-haiku-4-5-20251001-v1:0"),
             // Not in yoagent's Bedrock map: we can't tell, so we don't touch it.
             ("bedrock", "us.anthropic.claude-unknown-9-9"),
+            ("openrouter", "anthropic/claude-sonnet-4.6"),
+            ("openrouter", "google/gemini-3.1-pro-preview"),
+            ("openrouter", "openai/gpt-5"),
             ("openai", "gpt-5"),
             ("openai", "claude-opus-5-5"),
-            ("openrouter", "anthropic/claude-opus-5-5"),
+            // Known limit (#1122): yoagent infers nothing for a gateway and
+            // exports no id predicate, so these keep the flag on.
+            ("custom", "claude-opus-5-5"),
+            ("ollama", "llama3"),
         ];
         for (provider, model) in accepting {
             assert!(
-                !rejects_temperature(provider, model),
+                accepts(provider, model),
                 "{provider}/{model} should keep temperature"
             );
         }
@@ -207,6 +191,25 @@ mod tests {
 
         let bedrock = config("bedrock", "us.anthropic.claude-opus-5-5", Some(0.5));
         assert_eq!(bedrock.build_agent().temperature, None);
+
+        let openrouter = config("openrouter", "anthropic/claude-opus-5.5", Some(0.5));
+        assert_eq!(openrouter.build_agent().temperature, None);
+        assert_eq!(openrouter.build_side_agent().temperature, None);
+        let openrouter_gemini = config("openrouter", "google/gemini-3.1-pro-preview", Some(0.5));
+        assert_eq!(openrouter_gemini.build_agent().temperature, Some(0.5));
+        let bedrock_old = config("bedrock", "us.anthropic.claude-sonnet-4-6", Some(0.5));
+        assert_eq!(bedrock_old.build_agent().temperature, Some(0.5));
+
+        // The REPL's `/model` path: the flag comes from the rebuilt config.
+        let mut switching = config("openrouter", "anthropic/claude-sonnet-4.6", Some(0.5));
+        let mut agent = switching.build_agent();
+        assert_eq!(agent.temperature, Some(0.5));
+        switching.model = "anthropic/claude-opus-5.5".to_string();
+        switching.rebuild_preserving_messages(&mut agent);
+        assert_eq!(agent.temperature, None);
+
+        let unset_openrouter = config("openrouter", "anthropic/claude-opus-5.5", None);
+        assert_eq!(unset_openrouter.build_agent().temperature, None);
 
         let unset = config("anthropic", "claude-opus-5-5", None);
         assert_eq!(unset.build_agent().temperature, None);

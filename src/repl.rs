@@ -871,11 +871,14 @@ fn print_startup_info(agent_config: &AgentConfig, repl_config: &ReplConfig) {
         println!("{DIM}  thinking: {:?}{RESET}", agent_config.thinking);
     }
     if let Some(temp) = agent_config.temperature {
-        // #1145: the agent doesn't carry it for models that reject it.
-        let dropped = crate::temperature_support::rejects_temperature(
+        // #1145/#1122: the agent doesn't carry it when the config it is built
+        // from (yoagent's `accepts_sampling_params`) says the model rejects it.
+        let dropped = !crate::agent_builder::create_model_config(
             &agent_config.provider,
             &agent_config.model,
-        );
+            agent_config.base_url.as_deref(),
+        )
+        .accepts_sampling_params;
         let suffix = if dropped {
             " (not sent: Claude 4.7+)"
         } else {
