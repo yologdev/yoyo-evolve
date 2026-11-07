@@ -463,14 +463,46 @@ pub(crate) fn stray_prompt_words(args: &[String]) -> Vec<String> {
     pos
 }
 
+/// Value slots that swallowed a value-taking known flag and so left that
+/// flag's own value stray (#1151): `(swallower, swallowed, left-over word)`
+/// for `--system --model claude-zzz`. Same slot walk as every option lookup.
+fn swallowed_flag_values(args: &[String]) -> Vec<(&String, &String, &String)> {
+    use crate::cli::{FLAGS_NEEDING_VALUES, KNOWN_FLAGS};
+    let opts = option_args(args);
+    option_positions(args, FLAGS_NEEDING_VALUES)
+        .filter_map(|i| Some((opts.get(i)?, opts.get(i + 1)?, opts.get(i + 2)?)))
+        .filter(|(_, v, w)| {
+            KNOWN_FLAGS.contains(&v.as_str())
+                && FLAGS_NEEDING_VALUES.contains(&v.as_str())
+                && !w.starts_with('-')
+        })
+        .collect()
+}
+
 /// The exit-2 refusal for [`stray_prompt_words`], or None. Names each word
-/// and shows both ways to keep it, built from the user's own words.
+/// and shows both ways to keep it, built from the user's own words. A word
+/// left over because an earlier flag swallowed its flag (#1151) blames that
+/// flag instead, and is never offered as prompt text.
 pub(crate) fn stray_prompt_word_refusal(args: &[String]) -> Option<String> {
-    let stray = stray_prompt_words(args);
+    let mut stray = stray_prompt_words(args);
     if stray.is_empty() {
         return None;
     }
     let show = |w: &String| crate::cli::sanitize_for_display(w);
+    let mut lead = String::new();
+    for (flag, took, word) in swallowed_flag_values(args) {
+        if let Some(k) = stray.iter().position(|s| s == word) {
+            stray.remove(k);
+        }
+        let (f, t, w) = (show(flag), show(took), show(word));
+        lead.push_str(&format!(
+            "{f} took '{t}' as its value, so '{w}' (meant for {t}) was left over. \
+Give {f} its own value ({f} \"...\" {t} {w}). "
+        ));
+    }
+    if stray.is_empty() {
+        return Some(format!("{lead}Nothing was sent to the model."));
+    }
     let p = option_position(args, &["-p", "--prompt"])
         .and_then(|i| option_args(args).get(i + 1))
         .map(show)
@@ -482,7 +514,7 @@ pub(crate) fn stray_prompt_word_refusal(args: &[String]) -> Option<String> {
         _ => ("words", "are"),
     };
     Some(format!(
-        "{noun} {} {verb} not part of -p's value and would be dropped. \
+        "{lead}{noun} {} {verb} not part of -p's value and would be dropped. \
 Quote the whole prompt (-p \"{p} {all}\") or put the extra words after -- \
 (-p \"{p}\" -- {all}). Nothing was sent to the model.",
         quoted.join(", "),
@@ -796,6 +828,53 @@ Quote the whole prompt (-p \"hi extra\") or put the extra words after -- \
         );
         let esc = stray_prompt_word_refusal(&argv(&["-p", "hi", "x\u{1b}[31m"])).unwrap();
         assert!(!esc.as_bytes().contains(&0x1b), "{esc:?}");
+    }
+
+    /// #1151: when a value-taking flag swallowed another known value-taking
+    /// flag, the word meant for the swallowed flag is the stray one. The
+    /// refusal blames the swallowing flag and never suggests folding the
+    /// stray word into the prompt.
+    #[test]
+    fn stray_word_left_by_a_swallowed_flag_blames_the_swallower() {
+        let msg =
+            stray_prompt_word_refusal(&argv(&["--system", "--model", "claude-zzz", "-p", "hi"]))
+                .unwrap();
+        assert_eq!(
+            msg,
+            "--system took '--model' as its value, so 'claude-zzz' (meant for --model) \
+was left over. Give --system its own value (--system \"...\" --model claude-zzz). \
+Nothing was sent to the model."
+        );
+        assert!(!msg.contains("-p \"hi claude-zzz\""), "{msg}");
+        // A genuine extra prompt word beside it keeps the -p remedy, for it alone.
+        let both = stray_prompt_word_refusal(&argv(&[
+            "--system",
+            "--model",
+            "claude-zzz",
+            "-p",
+            "hi",
+            "extra",
+        ]))
+        .unwrap();
+        assert!(both.starts_with("--system took '--model'"), "{both}");
+        assert!(both.contains("-p \"hi extra\""), "{both}");
+        assert!(!both.contains("hi claude-zzz"), "{both}");
+        // Near-miss: a swallowed flag that takes no value leaves nothing
+        // stray, so the stray word is a prompt word and -p is blamed.
+        let bool_flag =
+            stray_prompt_word_refusal(&argv(&["--system", "--verbose", "-p", "hi", "x"])).unwrap();
+        assert!(
+            bool_flag.starts_with("word 'x' is not part of -p's value"),
+            "{bool_flag}"
+        );
+        // Near-miss: a dash-led value that is not a known flag is a real
+        // value (a system prompt may start with a dash).
+        let not_flag =
+            stray_prompt_word_refusal(&argv(&["--system", "-terse", "-p", "hi", "x"])).unwrap();
+        assert!(
+            not_flag.starts_with("word 'x' is not part of -p's value"),
+            "{not_flag}"
+        );
     }
 
     fn cfg(key: &str, value: &str) -> std::collections::HashMap<String, String> {

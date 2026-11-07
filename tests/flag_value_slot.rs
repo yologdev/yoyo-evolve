@@ -231,6 +231,35 @@ fn model_in_system_value_slot_names_the_stray_word_and_sends_nothing() {
     );
 }
 
+/// #1151: the same argv's refusal blames `--system` (it swallowed `--model`),
+/// not `-p`, and never suggests sending the model name as prompt text.
+#[test]
+fn swallowed_flag_refusal_names_the_swallowing_flag_not_p() {
+    let r = run(&["--system", "--model", "claude-zzz", "-p", "hi"]);
+    assert_eq!(r.code, Some(2), "stderr: {}", r.err);
+    assert!(
+        r.err.contains("--system took '--model' as its value"),
+        "stderr: {}",
+        r.err
+    );
+    assert!(
+        r.err.contains(r#"--system "..." --model claude-zzz"#),
+        "stderr: {}",
+        r.err
+    );
+    assert!(
+        !r.err.contains(r#"-p "hi claude-zzz""#),
+        "stderr: {}",
+        r.err
+    );
+    assert!(
+        !r.err.contains("not part of -p's value"),
+        "stderr: {}",
+        r.err
+    );
+    assert!(r.bodies.is_empty(), "bodies: {:?}", r.bodies);
+}
+
 /// The #1114 property without the stray word: `--model` in `--system`'s value
 /// slot is the system prompt and does not take `-p` as the model.
 #[test]
