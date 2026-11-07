@@ -267,9 +267,7 @@ pub(crate) fn resolve_numeric_setting<T: std::str::FromStr>(
     config_key: &str,
 ) -> (Option<T>, Vec<String>) {
     let mut warnings = Vec::new();
-    let from_flag = args
-        .iter()
-        .position(|a| a == flag_name)
+    let from_flag = option_position(args, &[flag_name]) // #1114: not a value slot
         .and_then(|i| args.get(i + 1))
         .and_then(|s| {
             let parsed = s.parse::<T>().ok();
@@ -302,7 +300,7 @@ fn numeric_flag_refusal<T: std::str::FromStr>(
     flag_name: &str,
     expected: &str,
 ) -> Option<String> {
-    let i = args.iter().position(|a| a == flag_name)?;
+    let i = option_position(args, &[flag_name])?; // #1114
     let value = args.get(i + 1)?;
     if value.parse::<T>().is_ok() {
         return None;
@@ -400,16 +398,29 @@ pub(crate) fn has_option(args: &[String], names: &[&str]) -> bool {
 /// `yoyo --system --thinking high` gives `None`: `--thinking` is the system
 /// prompt there, not a flag.
 pub(crate) fn option_position(args: &[String], names: &[&str]) -> Option<usize> {
+    option_positions(args, names).next()
+}
+
+/// Every index of `names` written as an option, in order: the same walk as
+/// `option_position`, for the repeatable flags (`--deny a --deny b`) and the
+/// numeric lookups. `yoyo --system --deny -p hi` yields nothing.
+pub(crate) fn option_positions<'a>(
+    args: &'a [String],
+    names: &'a [&str],
+) -> impl Iterator<Item = usize> + 'a {
     let opts = option_args(args);
     let mut i = 1;
-    while let Some(a) = opts.get(i) {
-        if names.contains(&a.as_str()) {
-            return Some(i);
+    std::iter::from_fn(move || {
+        while let Some(a) = opts.get(i) {
+            let at = i;
+            let takes_value = crate::cli::FLAGS_NEEDING_VALUES.contains(&a.as_str());
+            i += if takes_value { 2 } else { 1 };
+            if names.contains(&a.as_str()) {
+                return Some(at);
+            }
         }
-        let takes_value = crate::cli::FLAGS_NEEDING_VALUES.contains(&a.as_str());
-        i += if takes_value { 2 } else { 1 };
-    }
-    None
+        None
+    })
 }
 
 /// The words after `--`: prompt text, verbatim, never parsed as flags.

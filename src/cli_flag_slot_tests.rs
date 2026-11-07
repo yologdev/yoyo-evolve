@@ -55,3 +55,52 @@ fn other_booleans_and_value_lookups_skip_the_value_slot() {
     let c = parsed(&["--thinking", "high", "-p", "hi"]); // near-miss
     assert_ne!(c.thinking, yoagent::ThinkingLevel::Off);
 }
+
+/// #1114, the last two readers: a repeatable flag in a value slot is not
+/// collected, and every genuine occurrence still is.
+#[test]
+#[serial]
+fn repeatable_flags_in_a_value_slot_are_not_collected() {
+    let c = parsed(&["--system", "--deny", "-p", "hi"]);
+    assert!(c.permissions.deny.is_empty(), "{:?}", c.permissions.deny);
+    let c = parsed(&["--model", "--allow-dir", "-p", "hi"]);
+    assert!(c.dir_restrictions.allow.is_empty());
+    let c = parsed(&["-p", "hi", "--", "--deny", "x"]); // #1110: prompt text
+    assert!(c.permissions.deny.is_empty(), "{:?}", c.permissions.deny);
+    // Near-miss: every genuine occurrence is still collected.
+    let c = parsed(&["--deny", "a", "--deny", "b", "-p", "hi"]);
+    assert_eq!(c.permissions.deny, ["a", "b"]);
+    // A genuine --deny whose value looks like a flag keeps that value (and
+    // the flag-like-value warning); the word it swallowed is not a flag.
+    let c = parsed(&["--deny", "--deny", "-p", "hi"]);
+    assert_eq!(c.permissions.deny, ["--deny"]);
+}
+
+/// #1114: a numeric flag in a value slot is neither applied nor refused.
+#[test]
+#[serial]
+fn numeric_flags_in_a_value_slot_are_not_applied() {
+    let c = parsed(&["--system", "--max-turns", "3"]); // `3` is the bare prompt
+    assert_eq!(c.max_turns, None);
+    assert_eq!(c.prompt_arg.as_deref(), Some("3"));
+    assert_eq!(
+        parsed(&["--system", "--temperature", "0.5"]).temperature,
+        None
+    );
+    // Near-miss: a genuine one still applies.
+    assert_eq!(parsed(&["--max-turns", "3", "-p", "hi"]).max_turns, Some(3));
+    // The startup refusal reads the same occurrence: no refusal for a flag
+    // that is really --system's value, still one for a genuine bad value.
+    let argv = |r: &[&str]| -> Vec<String> {
+        std::iter::once("yoyo")
+            .chain(r.iter().copied())
+            .map(String::from)
+            .collect()
+    };
+    let refusal = crate::cli_config::bad_numeric_flag_refusal;
+    assert_eq!(
+        refusal(&argv(&["--system", "--max-turns", "-p", "hi"])),
+        None
+    );
+    assert!(refusal(&argv(&["--max-turns", "-p", "hi"])).is_some());
+}

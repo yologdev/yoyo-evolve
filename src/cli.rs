@@ -1104,10 +1104,8 @@ fn parse_numeric_flag<T: std::str::FromStr>(
 
 /// Collect all values for a repeatable flag (e.g. `--allow pat1 --allow pat2`).
 pub(crate) fn collect_repeatable_flag(args: &[String], flag: &str) -> Vec<String> {
-    args.iter()
-        .enumerate()
-        .filter(|(_, a)| a.as_str() == flag)
-        .filter_map(|(i, _)| args.get(i + 1).cloned())
+    crate::cli_config::option_positions(args, &[flag]) // #1114: skips value slots
+        .filter_map(|i| args.get(i + 1).cloned())
         .collect()
 }
 
