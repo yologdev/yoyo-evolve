@@ -39,6 +39,16 @@ cargo test 2>&1 | yoyo --system "Explain these test failures and suggest fixes."
 
 yoyo detects piped mode automatically by checking if stdin is a terminal. If it is not, piped mode activates. If stdin is a terminal, interactive REPL mode starts instead.
 
+## Tool approval
+
+A piped run approves every tool call without asking, with or without `-y`/`--yes`: stdin is the
+prompt, so there is no one to answer a `[y/N]` prompt, and every bash command and file write the
+model asks for runs. What still applies is your deny list (`--deny`, or `[permissions] deny` in
+`.yoyo.toml`), the built-in refusals no approval can override (such as `rm -rf /`), and
+`--allow-dir`/`--deny-dir` on the file tools. Before piping a prompt into yoyo on a repository
+you don't trust, set a deny list or run it in a sandbox. See
+[Permissions & Safety](../configuration/permissions.md).
+
 If piped input is empty, yoyo exits with an error: `No input on stdin.`
 
 ## Structured output (`--output-format`)

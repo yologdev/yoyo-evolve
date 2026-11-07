@@ -20,6 +20,16 @@ yoyo -p "find all TODO comments"
 
 Both forms are equivalent. The bare prompt form is shorter and matches how most CLI tools work.
 
+## Tool approval
+
+A single-prompt run approves every tool call without asking, with or without `-y`/`--yes`:
+there is no one to answer a `[y/N]` prompt, so every bash command and file write the model asks
+for runs. This holds for `-p`, `--prompt`, a bare `yoyo "..."` and `--print`. What still applies
+is your deny list (`--deny`, or `[permissions] deny` in `.yoyo.toml`), the built-in refusals no
+approval can override (such as `rm -rf /`), and `--allow-dir`/`--deny-dir` on the file tools.
+Before running it on a repository you don't trust, set a deny list or run it in a sandbox. See
+[Permissions & Safety](../configuration/permissions.md).
+
 `--` ends option parsing; everything after it is prompt text, sent verbatim even when it starts
 with a dash: `yoyo -- --explain this` and `yoyo -p -- --explain this` both send `--explain this`,
 and `yoyo -p hi -- --x` sends `hi --x`. Unknown flags *before* `--` are still refused.

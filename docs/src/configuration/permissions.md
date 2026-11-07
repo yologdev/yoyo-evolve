@@ -4,7 +4,7 @@ yoyo asks for confirmation before running tools that modify your system. This pa
 
 ## Interactive Permission Prompts
 
-By default, yoyo prompts you before executing any potentially dangerous tool:
+In the interactive REPL, yoyo by default prompts you before executing any potentially dangerous tool (non-interactive runs don't prompt; see the `--yes` section below):
 
 - **`bash`** — every shell command asks for `[y/N]` confirmation
 - **`write_file`** — creating or overwriting files asks for approval
@@ -24,13 +24,28 @@ Type `y` to approve, or `n` (or just press Enter) to deny.
 
 ## Auto-Approve Everything: `--yes` / `-y`
 
-If you trust the agent fully (e.g., in a sandboxed environment or CI pipeline), skip all prompts:
+If you trust the agent fully (e.g., in a sandboxed environment), skip all prompts in the interactive REPL:
 
 ```bash
-yoyo -y -p "refactor the auth module"
+yoyo -y
 ```
 
 This auto-approves every tool call — bash commands, file writes, everything.
+
+**Non-interactive runs already approve every tool call, with or without `-y`.** That is any run
+with a prompt on the command line (`yoyo -p "..."`, `yoyo --prompt "..."`, or a bare
+`yoyo "..."`), any run with input on piped stdin (`echo "..." | yoyo`), and `--print`. There is
+no one to answer a `[y/N]` prompt there, so yoyo does not ask: `yoyo -p "refactor the auth module"`
+runs every bash command and file write the model asks for, exactly as `yoyo -y -p` would. `-y`
+only changes anything in the interactive REPL.
+
+What still applies in those runs is the same fence that applies under `-y`: your deny list
+(`--deny`, or `[permissions] deny` in `.yoyo.toml`), the built-in refusals that no approval can
+override (`rm -rf /`, `rm -rf /*`, `mkfs`, `dd` onto a device, the fork bomb), and the directory
+restrictions (`--allow-dir`, `--deny-dir`) on the file tools. An `--allow` list does not narrow
+anything there, because nothing is waiting for a prompt. Before running `yoyo -p` or piped yoyo
+on a repository you don't trust, set a deny list or run it in a sandbox (a container or a
+throwaway VM).
 
 The one exception is your own `deny` list: a bash command matching a `--deny` pattern (or `.yoyo.toml` `[permissions] deny`) is still blocked under `--yes`, and still blocked after you answer `a` (always) at a prompt. It also applies to bash run by `sub_agent` and `explore_agent` children.
 
@@ -398,8 +413,11 @@ deny = ["rm -rf *", "sudo *"]
 ### Sandboxed CI — trust everything
 
 ```bash
-yoyo -y -p "run the test suite and fix any failures"
+yoyo -p "run the test suite and fix any failures"
 ```
+
+`-p` already approves every tool call (see the `--yes` section above), so
+no `-y` is needed. Only do this inside a sandbox.
 
 ### Paranoid mode — restrict to source files only
 
