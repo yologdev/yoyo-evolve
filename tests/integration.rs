@@ -3534,14 +3534,15 @@ fn changelog_evolution_tree_inside_a_git_repository_still_exit_zero() {
 #[test]
 fn risk_unknown_subcommand_exits_two_and_known_verb_exits_zero() {
     // #982 residue: `yoyo risk zz` printed its refusal and exited 0, so a
-    // script could not tell a typo from a run. The printed bytes are unchanged.
+    // script could not tell a typo from a run. #1127: the shell line names
+    // `yoyo risk`, the form a shell reader can type, not `/risk`.
     let dir = tempfile::tempdir().expect("tempdir");
     let out = yoyo_in_dir(dir.path(), &["risk", "zz"]);
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert_eq!(out.status.code(), Some(2), "stdout={stdout:?}");
     assert_eq!(
         stdout,
-        "Unknown /risk subcommand: zz\nAvailable: snapshot | validate | history | predict | \
+        "Unknown yoyo risk subcommand: zz\nAvailable: snapshot | validate | history | predict | \
          accuracy | effectiveness | epistemic | harvest | --all\n"
     );
     // Near miss: a known read-only verb in the same empty dir is success.
@@ -4569,7 +4570,9 @@ fn docs_lint_skill_take_one_spaced_argv_element_whole() {
     // An empty crate argument is usage too (2), not an invalid name (1).
     let (code, stdout, _) = yoyo_plain_in(dir.path(), &["docs", ""]);
     assert_eq!(code, Some(2), "{stdout:?}");
-    assert!(stdout.contains("usage: /docs"), "{stdout:?}");
+    // #1127: and the usage names the shell form, not the REPL's `/docs`.
+    assert!(stdout.contains("usage: yoyo docs"), "{stdout:?}");
+    assert!(!stdout.contains("/docs"), "{stdout:?}");
 }
 
 #[test]

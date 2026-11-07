@@ -1,0 +1,73 @@
+//! Part of #1127: the usage and hint lines `docs`, `risk` and `memories`
+//! print name a form the reader can type where they are reading. The REPL
+//! keeps `/<verb>`; the shell prints `yoyo <verb>`, and for `/remember` and
+//! `/forget`, which have no shell verb, it says they are REPL commands
+//! rather than inventing a `yoyo remember` that would fail.
+
+use crate::commands_dev::DoctorSurface::{Repl, Shell};
+use crate::commands_memory::{add_memory_hint, forget_memory_hint};
+use crate::commands_project::docs_usage;
+use crate::commands_risk::unknown_risk_subcommand_line;
+use crate::format::{DIM, RESET};
+
+#[test]
+fn docs_usage_names_yoyo_docs_on_the_shell_and_slash_docs_in_the_repl() {
+    let shell = docs_usage(Shell, true);
+    assert!(shell.contains("usage: yoyo docs <crate> [item]"), "{shell}");
+    assert!(shell.contains("Examples: yoyo docs serde, yoyo docs tokio task"));
+    assert!(!shell.contains("/docs"), "shell usage leaks /docs: {shell}");
+    assert!(docs_usage(Shell, false).contains("usage: yoyo docs <crate> [item]"));
+    assert!(!docs_usage(Shell, false).contains("/docs"));
+
+    // The REPL reads exactly what it printed before this change.
+    assert_eq!(
+        docs_usage(Repl, true),
+        format!(
+            "{DIM}  usage: /docs <crate> [item]\n  Look up docs.rs documentation for a Rust crate.\n  Examples: /docs serde, /docs tokio task{RESET}\n"
+        )
+    );
+    assert_eq!(
+        docs_usage(Repl, false),
+        format!("{DIM}  usage: /docs <crate> [item]{RESET}\n")
+    );
+}
+
+#[test]
+fn unknown_risk_subcommand_names_yoyo_risk_on_the_shell() {
+    assert_eq!(
+        unknown_risk_subcommand_line(Shell, "zz1"),
+        "Unknown yoyo risk subcommand: zz1"
+    );
+    assert_eq!(
+        unknown_risk_subcommand_line(Repl, "zz1"),
+        "Unknown /risk subcommand: zz1"
+    );
+}
+
+#[test]
+fn memory_hints_never_print_a_nonexistent_shell_verb() {
+    // There is no `yoyo remember` / `yoyo forget` (KNOWN_SUBCOMMANDS), so the
+    // shell hint must not invent one, and must not read as if `/remember`
+    // could be typed at the shell prompt.
+    for verb in ["remember", "forget"] {
+        assert!(
+            !crate::cli::KNOWN_SUBCOMMANDS.contains(&verb),
+            "`yoyo {verb}` now exists: the shell hint should name it"
+        );
+    }
+    let add = add_memory_hint(Shell);
+    let forget = forget_memory_hint(Shell);
+    for hint in [add, forget] {
+        assert!(!hint.contains("yoyo remember"), "{hint}");
+        assert!(!hint.contains("yoyo forget"), "{hint}");
+        assert!(hint.contains("REPL"), "shell hint must say where: {hint}");
+    }
+    assert!(add.contains("/remember <note>"));
+    assert!(forget.contains("/forget <n>"));
+
+    assert_eq!(add_memory_hint(Repl), "Use /remember <note> to add one.");
+    assert_eq!(
+        forget_memory_hint(Repl),
+        "Use /forget <n> to remove a memory."
+    );
+}

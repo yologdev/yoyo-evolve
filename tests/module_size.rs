@@ -306,7 +306,9 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 211 (#962): 3640 -> 3645 (+5): `handle_init_in(dir)` seam.
     // Day 228 (#869): /cd deny wired into auto_context; 3653 -> 3709 (+56: pure
     // select_auto_context_paths extracted + its emission-point test).
-    ("src/commands_project.rs", 3709),
+    // Day 252 (#1127): 3709 -> 3790; +10 is docs_usage(surface) so `yoyo docs`
+    // says `yoyo docs`, the other +71 was drift already present at HEAD (3780).
+    ("src/commands_project.rs", 3790),
     // Day 162 (#708): +40 lines — classify_broke_files now filters to `src/`
     // (the risk model's whole universe), plus its unit test and the updated
     // end-to-end fixture assertions.
@@ -345,7 +347,8 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 250: #1137 — `risk snapshot` / `validate` / `harvest` exit 1 on a
     // runtime failure: the RISK_FAILED flag (+6) plus one store per failure
     // arm (+7); the other +1 was drift already present at HEAD (6602). Pasted.
-    ("src/commands_risk.rs", 6615),
+    // Day 252 (#1127): +9, unknown_risk_subcommand_line(surface) + its import.
+    ("src/commands_risk.rs", 6624),
     // Day 162 (#707): +68 lines — format_project_index no longer byte-slices a
     // path tail (live panic on any non-ASCII path >50 bytes) and measures its
     // column in chars; 62 of the 68 lines are the two regression tests, one of

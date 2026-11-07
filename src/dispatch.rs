@@ -481,7 +481,7 @@ async fn dispatch_info_command(
             Some(CommandResult::Continue)
         }
         CommandRoute::Risk => {
-            commands::handle_risk(ctx.input);
+            commands::handle_risk(ctx.input, crate::commands_dev::DoctorSurface::Repl);
             Some(CommandResult::Continue)
         }
         _ => None,
@@ -1053,7 +1053,7 @@ async fn dispatch_utility_command(
             Some(CommandResult::Continue)
         }
         CommandRoute::Memories => {
-            commands::handle_memories(ctx.input);
+            commands::handle_memories(ctx.input, crate::commands_dev::DoctorSurface::Repl);
             Some(CommandResult::Continue)
         }
         CommandRoute::Forget => {

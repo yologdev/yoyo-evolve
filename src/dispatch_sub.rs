@@ -627,7 +627,7 @@ pub(crate) fn try_dispatch_subcommand_in(
                 // for the harness (or a human) to record daily risk snapshots
                 // where the DREAM measurement data actually accumulates.
                 let input = build_risk_input(&args[2..]);
-                crate::commands_risk::handle_risk(&input);
+                crate::commands_risk::handle_risk(&input, Shell);
                 exit_if_nonzero(risk_status(&input));
                 return Some(None);
             }
@@ -741,11 +741,11 @@ pub(crate) fn try_dispatch_subcommand_in(
                 // #1111: refused before the docs.rs call for crate `--bogus`.
                 let ops = verb_operands(args);
                 exit_if_nonzero(match ops.as_slice() {
-                    [] => crate::commands_project::handle_docs_status("/docs"),
+                    [] => crate::commands_project::handle_docs_status("/docs", Shell),
                     // An empty/blank crate is still usage (exit 2), as before.
                     [krate, ..] if krate.trim().is_empty() => {
                         let input = join_args_as_command(&verb_with(args, &ops));
-                        crate::commands_project::handle_docs_status(&input)
+                        crate::commands_project::handle_docs_status(&input, Shell)
                     }
                     [krate, item @ ..] => {
                         crate::commands_project::docs_lookup_status(krate, &item.join(" "))
@@ -941,7 +941,7 @@ pub(crate) fn try_dispatch_subcommand_in(
                 // re-quoting a multi-word query would search for literal `"`s.
                 // #1111: an unknown flag refuses; `-- -x` searches for `-x`.
                 let input = join_args_as_command(&verb_with(args, &verb_operands(args)));
-                crate::commands_memory::handle_memories(&input);
+                crate::commands_memory::handle_memories(&input, Shell);
                 return Some(None);
             }
             "extended" => {
@@ -2062,7 +2062,10 @@ mod tests {
         let args: Vec<String> = vec!["yoyo".into(), "docs".into()];
         let input = quote_args_as_command(&args);
         assert_eq!(input, "/docs");
-        assert_eq!(crate::commands_project::handle_docs_status(&input), 2);
+        assert_eq!(
+            crate::commands_project::handle_docs_status(&input, Shell),
+            2
+        );
     }
 
     #[test]

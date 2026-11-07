@@ -4,6 +4,7 @@
 //! Extracted from `commands_info.rs` — the risk scorer subsystem built
 //! over Days 111-113 as the dream milestone infrastructure.
 
+use crate::commands_dev::{command_form, DoctorSurface};
 use crate::format::*;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -646,12 +647,20 @@ pub(crate) fn is_unknown_risk_subcommand(sub: &str) -> bool {
 /// Human-readable list of `/risk` subcommands, derived from
 /// [`RISK_SUBCOMMANDS`] so the unknown-subcommand error can never drift out
 /// of sync with the actual dispatch table (single source of truth).
+/// `Unknown <risk> subcommand` in the form `surface` types (#1127).
+pub(crate) fn unknown_risk_subcommand_line(surface: DoctorSurface, sub: &str) -> String {
+    format!(
+        "Unknown {} subcommand: {sub}",
+        command_form(surface, "risk")
+    )
+}
+
 pub(crate) fn risk_subcommand_list() -> String {
     RISK_SUBCOMMANDS.join(" | ")
 }
 
 /// Handle the `/risk` command — display per-file risk scores.
-pub(crate) fn handle_risk(input: &str) {
+pub(crate) fn handle_risk(input: &str, surface: DoctorSurface) {
     let sub = input.strip_prefix("/risk").unwrap_or(input).trim();
 
     if sub == "snapshot" {
@@ -698,7 +707,7 @@ pub(crate) fn handle_risk(input: &str) {
     // default report. A typo like `yoyo risk snapshoot` used to fall through
     // here — the user believed a snapshot was recorded when nothing was.
     if is_unknown_risk_subcommand(sub) {
-        println!("Unknown /risk subcommand: {sub}");
+        println!("{}", unknown_risk_subcommand_line(surface, sub));
         println!("Available: {}", risk_subcommand_list());
         return;
     }
@@ -3606,8 +3615,8 @@ mod tests {
     #[test]
     fn test_handle_risk_does_not_panic() {
         // Smoke test — just verify it doesn't crash
-        handle_risk("/risk");
-        handle_risk("/risk --all");
+        handle_risk("/risk", DoctorSurface::Repl);
+        handle_risk("/risk --all", DoctorSurface::Repl);
     }
 
     #[test]
@@ -5376,15 +5385,15 @@ src/plain rs file.rs
     #[test]
     fn test_risk_predict_dispatches_without_panic() {
         // Smoke test: `/risk predict` should not panic
-        handle_risk("/risk predict");
+        handle_risk("/risk predict", DoctorSurface::Repl);
     }
 
     #[test]
     fn test_risk_predict_routing_distinct_from_default() {
         // `/risk predict` and `/risk` should both work without panic
         // (they exercise different code paths)
-        handle_risk("/risk");
-        handle_risk("/risk predict");
+        handle_risk("/risk", DoctorSurface::Repl);
+        handle_risk("/risk predict", DoctorSurface::Repl);
     }
 
     #[test]
@@ -5445,7 +5454,7 @@ src/plain rs file.rs
     #[test]
     fn test_risk_accuracy_dispatches_without_panic() {
         // Smoke test: `/risk accuracy` should not panic
-        handle_risk("/risk accuracy");
+        handle_risk("/risk accuracy", DoctorSurface::Repl);
     }
 
     // ── /risk effectiveness tests ──

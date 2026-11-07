@@ -145,6 +145,8 @@ mod outside_read;
 mod partial_read_guard;
 #[cfg(test)]
 mod provider_presets_tests;
+#[cfg(test)]
+mod shell_form_tests;
 mod spawn_worktree;
 mod spawn_write_tap;
 mod subprocess_env;

@@ -6,6 +6,7 @@
 //! `memory::ProjectMemory` through helpers already living in `src/memory.rs`,
 //! so the move is purely mechanical and carries no behavioral risk.
 
+use crate::commands_dev::DoctorSurface;
 use crate::format::*;
 use crate::memory::{
     add_memory_with_category, format_relative_time, is_valid_category, load_memories,
@@ -101,13 +102,30 @@ pub fn handle_remember(input: &str) {
 
 // ── /memories ────────────────────────────────────────────────────────────
 
-pub fn handle_memories(input: &str) {
+/// How to add a memory, as `surface` can do it (#1127). There is no
+/// `yoyo remember`, so the shell line says it is a REPL command.
+pub(crate) fn add_memory_hint(surface: DoctorSurface) -> &'static str {
+    match surface {
+        DoctorSurface::Repl => "Use /remember <note> to add one.",
+        DoctorSurface::Shell => "Add one in the REPL: run `yoyo`, then /remember <note>.",
+    }
+}
+
+/// How to remove a memory, as `surface` can do it; no `yoyo forget` either.
+pub(crate) fn forget_memory_hint(surface: DoctorSurface) -> &'static str {
+    match surface {
+        DoctorSurface::Repl => "Use /forget <n> to remove a memory.",
+        DoctorSurface::Shell => "Remove one in the REPL: run `yoyo`, then /forget <n>.",
+    }
+}
+
+pub fn handle_memories(input: &str, surface: DoctorSurface) {
     let query = input.strip_prefix("/memories").unwrap_or("").trim();
 
     let memory = load_memories();
     if memory.entries.is_empty() {
         println!("{DIM}  No project memories yet.");
-        println!("  Use /remember <note> to add one.{RESET}\n");
+        println!("  {}{RESET}\n", add_memory_hint(surface));
         return;
     }
 
@@ -122,7 +140,7 @@ pub fn handle_memories(input: &str) {
                 format_relative_time(&entry.timestamp)
             );
         }
-        println!("  Use /forget <n> to remove a memory.{RESET}\n");
+        println!("  {}{RESET}\n", forget_memory_hint(surface));
     } else {
         // Search memories
         let results = search_memories(&memory, query);
@@ -146,7 +164,7 @@ pub fn handle_memories(input: &str) {
                     format_relative_time(&entry.timestamp)
                 );
             }
-            println!("  Use /forget <n> to remove a memory.{RESET}\n");
+            println!("  {}{RESET}\n", forget_memory_hint(surface));
         }
     }
 }

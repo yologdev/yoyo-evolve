@@ -1,6 +1,7 @@
 //! Project-related command handlers: /context, /init, /docs.
 
 use crate::cli;
+use crate::commands_dev::{command_form, DoctorSurface};
 use crate::commands_map::build_repo_map;
 use crate::commands_search::is_binary_extension;
 use crate::config::DirectoryRestrictions;
@@ -712,7 +713,17 @@ pub(crate) fn handle_init_in(dir: &std::path::Path) -> i32 {
 
 pub fn handle_docs(input: &str) {
     // REPL caller: the code is the shell's business, never the REPL's (#982).
-    let _ = handle_docs_status(input);
+    let _ = handle_docs_status(input, DoctorSurface::Repl);
+}
+
+/// `docs` usage in the form `surface` can type (#1127): `yoyo docs` on the
+/// shell, `/docs` in the REPL; `examples` adds the description and examples.
+pub(crate) fn docs_usage(surface: DoctorSurface, examples: bool) -> String {
+    let d = command_form(surface, "docs");
+    if !examples {
+        return format!("{DIM}  usage: {d} <crate> [item]{RESET}\n");
+    }
+    format!("{DIM}  usage: {d} <crate> [item]\n  Look up docs.rs documentation for a Rust crate.\n  Examples: {d} serde, {d} tokio task{RESET}\n")
 }
 
 /// Exit status of `yoyo docs` with no crate name (#982): a usage failure,
@@ -723,16 +734,14 @@ pub(crate) const DOCS_USAGE_EXIT: i32 = 2;
 /// [`handle_docs`] plus the shell exit code (#982): 0 when the crate/item was
 /// found, [`DOCS_USAGE_EXIT`] when no crate was given (only usage was
 /// printed), 1 otherwise ([`docs::docs_exit_code`]).
-pub fn handle_docs_status(input: &str) -> i32 {
+pub fn handle_docs_status(input: &str, surface: DoctorSurface) -> i32 {
     if input == "/docs" {
-        println!("{DIM}  usage: /docs <crate> [item]");
-        println!("  Look up docs.rs documentation for a Rust crate.");
-        println!("  Examples: /docs serde, /docs tokio task{RESET}\n");
+        println!("{}", docs_usage(surface, true));
         return DOCS_USAGE_EXIT;
     }
     let args = input.trim_start_matches("/docs ").trim();
     if args.is_empty() {
-        println!("{DIM}  usage: /docs <crate> [item]{RESET}\n");
+        println!("{}", docs_usage(surface, false));
         return DOCS_USAGE_EXIT;
     }
     let parts: Vec<&str> = args.splitn(2, char::is_whitespace).collect();
@@ -2662,10 +2671,11 @@ mod tests {
     /// branches; neither touches the network (they return before any fetch).
     #[test]
     fn test_docs_status_without_crate_is_usage_exit() {
+        use crate::commands_dev::DoctorSurface::Repl;
         assert_eq!(DOCS_USAGE_EXIT, 2);
-        assert_eq!(handle_docs_status("/docs"), DOCS_USAGE_EXIT);
-        assert_eq!(handle_docs_status("/docs "), DOCS_USAGE_EXIT);
-        assert_eq!(handle_docs_status("/docs   "), DOCS_USAGE_EXIT);
+        assert_eq!(handle_docs_status("/docs", Repl), DOCS_USAGE_EXIT);
+        assert_eq!(handle_docs_status("/docs ", Repl), DOCS_USAGE_EXIT);
+        assert_eq!(handle_docs_status("/docs   ", Repl), DOCS_USAGE_EXIT);
     }
 
     #[test]
