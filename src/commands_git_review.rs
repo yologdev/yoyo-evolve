@@ -1,5 +1,6 @@
 //! Code review command handlers: /review, /blame, and non-interactive review.
 
+use crate::commands_dev::{command_form, DoctorSurface};
 use crate::commands_session::auto_compact_if_needed;
 use crate::format::*;
 use crate::git::*;
@@ -385,12 +386,26 @@ pub struct BlameArgs {
     pub range: Option<(usize, usize)>,
 }
 
-/// Parse `/blame <file>` or `/blame <file>:<start>-<end>`.
+/// `/blame`'s usage line, with the verb as typed on `surface` (#1127): a shell
+/// reader cannot run `/blame`.
+pub(crate) fn blame_usage(surface: DoctorSurface) -> String {
+    let b = command_form(surface, "blame");
+    format!("Usage: {b} <file> or {b} <file>:<start>-<end>")
+}
+
+/// Parse `/blame <file>` or `/blame <file>:<start>-<end>` (REPL wording; the
+/// handlers call [`parse_blame_args_on`] with their surface).
+#[cfg(test)]
 pub fn parse_blame_args(input: &str) -> Result<BlameArgs, String> {
+    parse_blame_args_on(input, DoctorSurface::Repl)
+}
+
+/// [`parse_blame_args`], with errors naming the verb as typed on `surface`.
+pub fn parse_blame_args_on(input: &str, surface: DoctorSurface) -> Result<BlameArgs, String> {
     let arg = input.strip_prefix("/blame").unwrap_or(input).trim();
 
     if arg.is_empty() {
-        return Err("Usage: /blame <file> or /blame <file>:<start>-<end>".to_string());
+        return Err(blame_usage(surface));
     }
 
     // Check for <file>:<start>-<end> pattern
@@ -526,7 +541,7 @@ pub fn colorize_blame(output: &str) -> String {
 
 /// Handle the `/blame` command.
 pub fn handle_blame(input: &str) {
-    let _ = handle_blame_status(input);
+    let _ = handle_blame_status(input, DoctorSurface::Repl);
 }
 
 /// `/blame` with an exit status for the shell door (`yoyo blame`, #982):
@@ -534,8 +549,8 @@ pub fn handle_blame(input: &str) {
 /// git error), 0 when blame ran (including an empty blame) or for the usage
 /// line. The printed text is unchanged on every branch. The REPL calls
 /// `handle_blame`, which discards the code.
-pub fn handle_blame_status(input: &str) -> i32 {
-    let args = match parse_blame_args(input) {
+pub fn handle_blame_status(input: &str, surface: DoctorSurface) -> i32 {
+    let args = match parse_blame_args_on(input, surface) {
         Ok(a) => a,
         Err(e) => {
             println!("  {RED}✗{RESET} {e}");

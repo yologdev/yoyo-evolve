@@ -613,7 +613,9 @@ pub(crate) fn try_dispatch_subcommand_in(
                 // look up a name containing quote characters and report a
                 // committed file as missing. Unspaced args join identically.
                 let input = join_args_as_command(&verb_with(args, &verb_operands(args)));
-                exit_if_nonzero(crate::commands_git_review::handle_blame_status(&input));
+                exit_if_nonzero(crate::commands_git_review::handle_blame_status(
+                    &input, Shell,
+                ));
                 return Some(None);
             }
             "risk" => {
@@ -670,7 +672,9 @@ pub(crate) fn try_dispatch_subcommand_in(
                 // correction the REPL path earned — #767's bare-path refusal,
                 // `cap_ast_output`'s 200-line bound — applies here too.
                 let input = join_args_as_command(&verb_with(args, &verb_operands(args)));
-                exit_if_nonzero(crate::commands_ast_grep::handle_ast_grep_status(&input));
+                exit_if_nonzero(crate::commands_ast_grep::handle_ast_grep_status(
+                    &input, Shell,
+                ));
                 return Some(None);
             }
             "def" => {
@@ -1818,7 +1822,10 @@ mod tests {
         // #982: test the status core the arm calls (see the `diff` test).
         // A usage error now exits 2 (#982: it used to stay 0, which this test
         // pinned); the binary-level pin is `bare_blame_is_a_usage_error_and_exits_two`.
-        assert_eq!(crate::commands_git_review::handle_blame_status("/blame"), 2);
+        assert_eq!(
+            crate::commands_git_review::handle_blame_status("/blame", Shell),
+            2
+        );
     }
 
     #[test]
@@ -2324,7 +2331,7 @@ mod tests {
         }
 
         // The usage rows return before sg is looked for, so they are hermetic.
-        let ast_status = crate::commands_ast_grep::handle_ast_grep_status;
+        let ast_status = |i: &str| crate::commands_ast_grep::handle_ast_grep_status(i, Shell);
         assert_eq!(ast_status("/ast"), 2);
         assert_eq!(ast_status("/ast --lang"), 2);
         // The #767 bare positional path (needs `src/` to exist; tests run at the

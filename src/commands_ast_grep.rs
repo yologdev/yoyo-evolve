@@ -1,5 +1,6 @@
 //! Ast-grep structural search command handler: /ast.
 
+use crate::commands_dev::{command_form, DoctorSurface};
 use crate::format::*;
 
 /// Subcommand completions for `/ast <Tab>`.
@@ -78,7 +79,7 @@ pub fn cap_ast_output(out: &str) -> String {
     }
     let kept: Vec<&str> = out.lines().take(AST_MAX_OUTPUT_LINES).collect();
     format!(
-        "{}\n… {} more line(s) elided — /ast shows the first {} (narrow the pattern, or scope it with --in)",
+        "{}\n… {} more line(s) elided — showing the first {} (narrow the pattern, or scope it with --in)",
         kept.join("\n"),
         total - AST_MAX_OUTPUT_LINES,
         AST_MAX_OUTPUT_LINES
@@ -187,20 +188,39 @@ fn bare_path_argument<'a>(
 
 /// The error shown when a bare positional path is detected (#767). Pure so the
 /// wording is pinned by a test at the emission point, not one layer below it.
-fn bare_path_error(token: &str) -> String {
+/// #1127: names the verb as typed on `surface` (`yoyo ast` in the shell).
+fn bare_path_error(token: &str, surface: DoctorSurface) -> String {
+    let a = command_form(surface, "ast");
     format!(
-        "/ast takes its path via --in, so `{token}` would be searched for as part of the pattern.\n\
-         Did you mean: /ast <pattern> --in {token}"
+        "{a} takes its path via --in, so `{token}` would be searched for as part of the pattern.\n\
+         Did you mean: {a} <pattern> --in {token}"
     )
 }
 
+/// `/ast`'s usage line, with the verb as typed on `surface` (#1127): a shell
+/// reader cannot run `/ast`.
+pub(crate) fn ast_usage(surface: DoctorSurface) -> String {
+    let a = command_form(surface, "ast");
+    format!("Usage: {a} <pattern> [--lang <lang>] [--in <path>]")
+}
+
+/// [`parse_ast_grep_args_on`] with the REPL's wording (test convenience; the
+/// handler passes its surface).
+#[cfg(test)]
 pub fn parse_ast_grep_args(
     input: &str,
+) -> Result<(String, Option<String>, Option<String>), String> {
+    parse_ast_grep_args_on(input, DoctorSurface::Repl)
+}
+
+pub fn parse_ast_grep_args_on(
+    input: &str,
+    surface: DoctorSurface,
 ) -> Result<(String, Option<String>, Option<String>), String> {
     let rest = input.strip_prefix("/ast").unwrap_or("").trim();
 
     if rest.is_empty() {
-        return Err("Usage: /ast <pattern> [--lang <lang>] [--in <path>]".into());
+        return Err(ast_usage(surface));
     }
 
     let parts: Vec<&str> = rest.split_whitespace().collect();
@@ -235,7 +255,7 @@ pub fn parse_ast_grep_args(
     }
 
     if pattern_parts.is_empty() {
-        return Err("Usage: /ast <pattern> [--lang <lang>] [--in <path>]".into());
+        return Err(ast_usage(surface));
     }
 
     // Only when no `--in` was given: with an explicit path the trailing token is
@@ -244,7 +264,7 @@ pub fn parse_ast_grep_args(
         if let Some(token) =
             bare_path_argument(&pattern_parts, &|p| std::path::Path::new(p).exists())
         {
-            return Err(bare_path_error(token));
+            return Err(bare_path_error(token, surface));
         }
     }
 
@@ -253,14 +273,14 @@ pub fn parse_ast_grep_args(
 
 /// Handle the `/ast` REPL command.
 pub fn handle_ast_grep(input: &str) {
-    let _ = handle_ast_grep_status(input);
+    let _ = handle_ast_grep_status(input, DoctorSurface::Repl);
 }
 
 /// `/ast` core returning the shell exit status (the REPL door drops it): 2 for
 /// a usage error (#982), then [`ast_outcome_status`] for the search. The
-/// printed text is the same on both doors.
-pub fn handle_ast_grep_status(input: &str) -> i32 {
-    match parse_ast_grep_args(input) {
+/// usage and bare-path hints name the verb as typed on `surface` (#1127).
+pub fn handle_ast_grep_status(input: &str, surface: DoctorSurface) -> i32 {
+    match parse_ast_grep_args_on(input, surface) {
         Err(msg) => {
             println!("{YELLOW}  {msg}{RESET}\n");
             2

@@ -59,7 +59,11 @@ fn classify_sg_output_keeps_the_old_rendering_rules() {
 #[test]
 fn usage_errors_exit_two_before_sg_is_looked_for() {
     for input in ["/ast", "/ast --lang", "/ast --in"] {
-        assert_eq!(handle_ast_grep_status(input), 2, "{input:?}");
+        assert_eq!(
+            handle_ast_grep_status(input, DoctorSurface::Shell),
+            2,
+            "{input:?}"
+        );
     }
 }
 
@@ -114,4 +118,57 @@ fn resolver_prefers_ast_grep_and_accepts_sg_only_when_it_is_ast_grep() {
         Some((false, "ast-grep 0.39.5".to_string()))
     });
     assert_eq!(got, None);
+}
+
+/// #1127: `yoyo blame` / `yoyo ast` printed `Usage: /blame ...` and
+/// `Usage: /ast ...`, slash forms a shell cannot run. Each surface's text names
+/// the verb as typed there; the REPL keeps `/blame` and `/ast`, which is what a
+/// REPL user types.
+#[test]
+fn blame_and_ast_usage_names_the_verb_as_typed_on_each_surface() {
+    use crate::commands_git_review::{blame_usage, parse_blame_args_on};
+    use DoctorSurface::{Repl, Shell};
+
+    let shell = blame_usage(Shell);
+    assert_eq!(
+        shell,
+        "Usage: yoyo blame <file> or yoyo blame <file>:<start>-<end>"
+    );
+    assert!(!shell.contains("/blame"), "{shell}");
+    assert_eq!(
+        blame_usage(Repl),
+        "Usage: /blame <file> or /blame <file>:<start>-<end>"
+    );
+    // The emission point, not just the helper: the parser hands back the
+    // surface's line for an empty operand.
+    assert_eq!(parse_blame_args_on("/blame", Shell), Err(shell));
+
+    let shell = ast_usage(Shell);
+    assert_eq!(
+        shell,
+        "Usage: yoyo ast <pattern> [--lang <lang>] [--in <path>]"
+    );
+    assert!(!shell.contains("/ast"), "{shell}");
+    assert_eq!(
+        ast_usage(Repl),
+        "Usage: /ast <pattern> [--lang <lang>] [--in <path>]"
+    );
+    // Both usage branches (no operand; only flags) use the surface's line.
+    for input in ["/ast", "/ast --lang rust"] {
+        assert_eq!(parse_ast_grep_args_on(input, Shell), Err(shell.clone()));
+        assert_eq!(parse_ast_grep_args_on(input, Repl), Err(ast_usage(Repl)));
+    }
+    // The #767 bare-path hint is shell-reachable too (`src/` exists at the
+    // crate root, where tests run).
+    let hint = parse_ast_grep_args_on("/ast $X.unwrap() src/", Shell).unwrap_err();
+    assert!(
+        hint.contains("Did you mean: yoyo ast <pattern> --in src/"),
+        "{hint}"
+    );
+    assert!(!hint.contains("/ast"), "{hint}");
+    let hint = parse_ast_grep_args_on("/ast $X.unwrap() src/", Repl).unwrap_err();
+    assert!(
+        hint.contains("Did you mean: /ast <pattern> --in src/"),
+        "{hint}"
+    );
 }

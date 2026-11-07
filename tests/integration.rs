@@ -3941,15 +3941,32 @@ fn yoyo_plain_in(dir: &std::path::Path, args: &[&str]) -> (Option<i32>, String, 
 fn bare_blame_is_a_usage_error_and_exits_two() {
     // #982: bare `yoyo blame` printed its usage line and exited 0, so a
     // script read success. Usage errors exit 2 (the def/outline/grep/map/
-    // index/risk precedent). The text and its channel (stdout) are unchanged.
+    // index/risk precedent). Its channel (stdout) is unchanged; #1127 made the
+    // text name `yoyo blame`, the form a shell can run, not the REPL's `/blame`.
     let dir = blame_fixture_repo();
     let (code, stdout, stderr) = yoyo_plain_in(dir.path(), &["blame"]);
     assert_eq!(code, Some(2), "stdout={stdout} stderr={stderr}");
     assert_eq!(
         stdout,
-        "  ✗ Usage: /blame <file> or /blame <file>:<start>-<end>\n"
+        "  ✗ Usage: yoyo blame <file> or yoyo blame <file>:<start>-<end>\n"
     );
     assert_eq!(stderr, "");
+}
+
+#[test]
+fn bare_ast_usage_names_yoyo_ast_not_the_repl_slash_form() {
+    // #1127: shell `yoyo ast` printed `Usage: /ast ...`, a form the shell
+    // cannot run. Both usage branches (no operand; a flag with no value
+    // pattern) return before ast-grep is looked for, so this is hermetic.
+    let dir = tempfile::tempdir().unwrap();
+    for args in [&["ast"][..], &["ast", "--lang", "rust"][..]] {
+        let (code, stdout, stderr) = yoyo_plain_in(dir.path(), args);
+        assert_eq!(code, Some(2), "{args:?}: stdout={stdout} stderr={stderr}");
+        assert_eq!(
+            stdout, "  Usage: yoyo ast <pattern> [--lang <lang>] [--in <path>]\n\n",
+            "{args:?}"
+        );
+    }
 }
 
 #[test]
