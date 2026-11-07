@@ -1,0 +1,22 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "WriteFileTool::new\|Re… ✓ (20ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2215,2250p src/tools.rs; … ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "cfg(test)\|mod tests" s… ✓ (11ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.27.2/src/tools && grep -n "Refusing to over… ✓ (5ms)
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 26.3s (5 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_1.md.
+
+• What the diff does: the main agent and every sub-agent now get their own yoagent ReadLog, shared by that agent's read_file and write_file. Explore-agent uses the same sub-agent builder, so it is covered too. yoyo's own guard in partial_read_guard.rs still runs, because it is the only one that sees truncated pages.
+• Other places these tools are built: I searched src/ for every other construction of ReadFileTool and WriteFileTool. They are all test-only: a name-only helper in tools.rs, plus outside_read.rs and non_regular_read.rs, where they sit inside test modules. smart_edit builds neither, so no production site was missed.
+• The new refusal stem: READ_LOG_REFUSAL_STEM is used by is_deterministic_tool_error in the same diff, so the refusal is not auto-retried. In yoagent's file.rs both refusals (partial read, and file changed on disk) come from one format string, so the stem matches both.
+• Tests: the six new tests use the real builders on temp dirs and cover the sub-agent case (item 3), the file shrunk on disk (item 4), the refusal wording, both allowed whole-read writes, and the never-read write (item 1, still undecided). I didn't re-run the positive control (dropping the log on the main agent's write tool); "exactly the item-3, item-4 and stem tests go red" is what the implementer recorded in ARCHITECTURE.md.
+• Docs and size limits: docs/src/troubleshooting/safety.md now describes the per-agent record and the changed-on-disk refusal, and still says item 1 is open. The size entries for tools.rs and prompt_retry.rs are updated.
+• Product surface: this only adds overwrite refusals. Config defaults, CLI flags and startup are unchanged.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
