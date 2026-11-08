@@ -1,0 +1,75 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh…  ▶ read src/temperature_support.rs ✓ (2ms)
+ ✓ (20ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.0s (2 ✓)
+
+Someone (likely an earlier attempt at this task) has already left uncommitted work here. Let me see what's in it before touching anything.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git status --short; git diff --sta… ✓ (21ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ Y=~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.27.4; sed -n … ✓ (8ms)
+  ▶ $ Y=~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.27.4; grep -n… ✓ (7ms)
+  ▶ $ Y=~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.27.4; for l i… ✓ (9ms)
+  ▶ $ Y=~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.27.4; sed -n … ✓ (6ms)
+  ▶ read src/temperature_support.rs:97..232 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (28 lines) ✓ (19ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 40.3s (7 ✓)
+
+The skills.md paragraph is accurate. The installation.md comment says GPT-6 "reject[s] it", which is the same overclaim, so I'm fixing it. Then I'll check the help text for related wording.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/on Claude 4.7+ and GPT… ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -i "temperature" ARCHITE… ✓ (631ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn gpt_6_sol_thinking_… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 150,215p tests/openai_res… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 88,150p tests/openai_resp… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> tests… (31 lines) ✓ (48.2s)
+  ▶ $ cd /tmp && OPENAI_API_KEY=sk-dummy timeout 60 /home/runner/work/yoyo-evolve/yoyo… ✓ (6.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (4m 16s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (7m 33s)
+
+────────────────────────────────────────────────────────────────────────────────
+  9 tools completed in 13m 29s (9 ✓)
+
+Everything is green: fmt, clippy, 35/35 test binaries, and harness_logic at 336/0. Committing:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (40 lines) ✓ (19ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Committed. Now the #1060 comment, scope first so the planner sees it in the first 200 characters:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue com… (5 lines) ✓ (756ms)
+
+Done. yoyo now runs on yoagent 0.27.4, and the dropped-temperature note gives the real reason for each model family instead of blaming Anthropic for every model. Committed as 7c1e83d2 ("Fixes #1152"). Build, all tests, clippy, fmt and tests/harness_logic.sh pass. The module-size test passed as part of cargo test.
+
+Starting point: the tree already held an uncommitted, half-done attempt at this task: the lock on 0.27.4, an updated test table, a three-way note, and docs edits. I checked it against yoagent's source rather than trusting it.
+
+The sampling-flag table: yoagent 0.27.4 now turns temperature off for any gpt-6… id (after any vendor/ prefix) and for Claude 4.7+, under the openai and openai_responses providers too. Every row in the table now matches that rule:
+• openai/claude-opus-5-5 moved to the "rejects temperature" list, and GPT-6 rows were added, including openai/gpt-6-sol under OpenRouter.
+• custom/claude-opus-5-5 still keeps temperature, because yoagent's custom() and openai_compat() still hardcode the flag on.
+• openai/o3 still keeps it; yoagent's changelog says other OpenAI reasoning models stay on.
+
+One change to the earlier attempt: its GPT-6 note said "OpenAI's API rejects a request that sets it". Nobody has captured a GPT-6 rejection; OpenAI's guide only says to remove the field. I cut the note down to that stated rule and added a test that it never claims a rejection. I made the same fix in installation.md, where a comment said GPT-6 "reject[s] it". Claude ids keep Anthropic's wording, since that rejection was measured (#1145), and any other model gets a neutral line. With the built binary (--provider openai --model gpt-6 --temperature 0.5, dead base URL) the note reads:
+
+│ note: temperature was not sent to gpt-6: OpenAI's guide says to remove temperature from GPT-6 requests unless reasoning effort is none, and no GPT-6 model defaults to none. Remove --temperature / temperature from your config to silence this note.
+
+What reaches the server: I added two tests to tests/openai_responses_wire.rs that run the real binary against the existing request-capturing stub:
+• gpt-6-sol --thinking high --temperature 0.3 now sends effort "high" and no temperature. #1060 had captured "temperature":0.30000001192092896 in that same request before.
+• A near-miss, gpt-4o --temperature 0.3, still sends 0.3, so the first test's check for a missing field can actually fail.
+
+#1060: I commented that row 3 is fixed for GPT-6 ids only and left the issue open. Rows 1–2 are untouched. Other OpenAI reasoning ids (e.g. o3 with --thinking high --temperature 0.3) would still send both settings; that is yoagent's stated choice, and I haven't probed it.
+
+The commit title still says "the vendor that actually rejects it", because it is the planner's title. The commit body states that the GPT-6 rule is quoted from OpenAI's guide, not a measured rejection.
+  watch: no files changed this turn — skipping

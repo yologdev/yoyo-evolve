@@ -1,0 +1,82 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git log --oneline -3; git … ✓ (24ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 20,50p src/commands_dev.rs; grep -n "p… ✓ (15ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 540,560p src/commands_map.rs; sed -n 6…  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 1,80p src/shell_form_tests.rs; wc -l s… ✓ (9ms)
+ ✓ (20ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 740,760p src/dispatch_sub.rs; grep -n … ✓ (7ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; python3 - <<'EOF' (29 lines) ✓ (21ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -i '3i use crate::commands_dev::DoctorSur… ✓ (10.9s)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 45.3s (7 ✓)
+
+Map compiles. Now skill: handle_skill_status stays the shell door (dispatch_sub untouched), REPL `handle_skill` passes Repl.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 8,24p src/commands_skill.rs ✓ (3ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; python3 - <<'EOF' (32 lines) ✓ (10.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -rln "CARGO_BIN_EXE\|target/debug/yoyo" … ✓ (20ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -n "CARGO_BIN_EXE\|target/debug/yoyo" sr… ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 43.4s (4 ✓)
+
+Unit tests can't capture stderr here, so I'll make the try: line a pure helper (with its one consumer) and test map through the pure parsers.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; python3 - <<'EOF' (71 lines) ✓ (43.4s)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; cargo test --bin yoyo shell_form 2>&1 | grep … ✓ (115ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 50.0s (2 ✓)
+
+Positive control (atomic mutate → run → restore): swap the shell door back to Repl.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; cp src/commands_map.rs /t… (2 lines) ✓ (1m 3s)
+
+Both fail by name under sabotage and pass restored. Now the full gate, then the binary probe.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; cargo fmt -- --check && cargo clippy --all-ta… ✓ (2m 29s)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 1185,1225p src/commands_map.rs ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; python3 - <<'EOF' (28 lines) ✓ (37.4s)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; cargo fmt -- --check && cargo clippy --all-ta… ✓ (4m 28s)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 7m 51s (4 ✓)
+
+All green. Now the built-binary probe (empty temp dir, fresh HOME, </dev/null), including each try: alternative:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; B=$PWD/target/debug/yoyo; D=$(mktemp -d); H=$… ✓ (42ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; git add -A && git commit … (46 lines) ✓ (15ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; gh issue view 1127 --json… (20 lines) ✓ (1.2s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 30.4s (3 ✓)
+
+yoyo map a b and yoyo skill zzz now print yoyo map … / yoyo skill … on the shell. The REPL still shows /map and /skill, and exit codes didn't change. Build, the full test suite, clippy with -D warnings and the fmt check all pass. Committed as 2843f256, titled "Part of #1127".
+
+What changed
+• src/commands_map.rs: both argument errors (two paths, unknown flag) now take their command spelling from the existing command_form helper. The shell and REPL parsers each pass their own surface, so I didn't need to touch either dispatch file.
+• src/commands_skill.rs: the shell entry point now passes the shell surface and the REPL one passes the REPL surface. Every usage line and the try: line follow that. I pulled the try: line out into a small function so tests can check its text without capturing stderr.
+• src/shell_form_tests.rs: two new tests. They check the map errors on both surfaces, and that every try: alternative is yoyo skill <sub> for a subcommand that really exists, so it never suggests a verb that isn't there.
+• Checking the tests: I put the REPL spelling back on both shell entry points, ran the tests and restored the code, all in one command. Both new tests failed by name, and passed again once restored.
+• One existing test changed. parse_map_argv_keeps_one_spaced_element_as_one_path asserted that shell and REPL parses are identical, error text included. What it protects (#1009) is that both split arguments the same way, and the error text now differs only in the command word. So it swaps /map for yoyo map before comparing, and the rest still has to match exactly.
+
+Built-binary check (empty temp dir, fresh HOME, </dev/null): map a b and map --al print usage: yoyo map … and exit 2. skill zzz lists six yoyo skill … alternatives and exits 2. skill list and skill path run fine from the shell, and show, install and init reach the handler. lint zz1 still prints Unknown /lint subcommand, which is outside this task.
+
+The #1127 comment starts with "Scope: still open = lint only (1 of 11)", then the probe table. I added a clause to that first line, because I found three things this slice didn't fix:
+• yoyo skill search output still ends with install with: /skill install gh:….
+• The skill_install error still says /skill install expects….
+• yoyo skill show, install and init with no argument print usage but exit 0.
+
+All three are listed on #1127.
+  watch: no files changed this turn — skipping
