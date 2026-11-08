@@ -1,0 +1,31 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; wc -l src/commands_skill.rs src/co… ✓ (29ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git grep -n '"[^"]*/lint\|/skill [… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git grep -n '"[^"]*/lint\|/skill [… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; D=$(mktemp -d); cd $D; HOME=$D NO_… ✓ (17ms)
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 25.3s (5 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_1.md.
+
+I ran the built binary in an empty temp dir with a fresh HOME, and all three strings the task listed now print the shell form:
+
+| Command | Output | Exit |
+|---|---|---|
+| yoyo lint zz1 | Unknown yoyo lint subcommand: zz1 | 2 |
+| yoyo skill install <file> | yoyo skill install expects a skill directory containing SKILL.md | 1 |
+| yoyo skill search (last line) | install with: yoyo skill install gh:<owner>/<repo> | not run (needs gh and network); checked by the formatter test |
+
+• Approach: the diff reuses the existing command_form helper rather than adding a second one, and the REPL still prints /lint and /skill.
+• Tests: two of the new tests run the real binary and assert the whole output line.
+• Loose ends: every new function has a caller and every changed signature has its call sites updated. src/commands_skill.rs is at 1978 lines, under the 2000 warning.
+• Size-gate chore: src/commands_risk_unhittable.rs was registered at 2036, which matches wc -l.
+• Docs: nothing in docs/ quotes the old lint message.
+
+Follow-up: one shell-visible slash form is still there, and this commit is titled "Fixes #1127". In a non-Rust directory, yoyo lint unsafe prints /lint unsafe is only available for Rust projects (src/commands_lint.rs:553). It wasn't one of the three strings in the task, and the grep the task specified can't find it because the string doesn't start with "/lint. It should be noted on #1127.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
