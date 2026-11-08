@@ -48,6 +48,7 @@ pub(crate) fn handle_skill_on(
     } else if sub == "show" {
         eprintln!("{YELLOW}  usage: {skill} show <name>{RESET}");
         eprintln!("{DIM}  try {skill} list to see available skills{RESET}\n");
+        return 2; // #1153: a missing argument is a usage error, like `skill zzz`
     } else if let Some(source) = sub.strip_prefix("install ") {
         let source = source.trim();
         if source.is_empty() {
@@ -55,12 +56,14 @@ pub(crate) fn handle_skill_on(
             eprintln!(
                 "{DIM}  install a skill from a local directory or GitHub repository{RESET}\n"
             );
+            return 2;
         } else {
             return skill_install(source, &skill);
         }
     } else if sub == "install" {
         eprintln!("{YELLOW}  usage: {skill} install <path|gh:user/repo>{RESET}");
         eprintln!("{DIM}  install a skill from a local directory or GitHub repository{RESET}\n");
+        return 2;
     } else if let Some(query) = sub.strip_prefix("search ") {
         let query = query.trim();
         if query.is_empty() {
@@ -75,12 +78,14 @@ pub(crate) fn handle_skill_on(
         if name.is_empty() {
             eprintln!("{YELLOW}  usage: {skill} init <name>{RESET}");
             eprintln!("{DIM}  scaffold a new skill in .yoyo/skills/<name>/SKILL.md{RESET}\n");
+            return 2;
         } else {
             return skill_init(name);
         }
     } else if sub == "init" {
         eprintln!("{YELLOW}  usage: {skill} init <name>{RESET}");
         eprintln!("{DIM}  scaffold a new skill in .yoyo/skills/<name>/SKILL.md{RESET}\n");
+        return 2;
     } else {
         eprintln!("{RED}  unknown subcommand: {sub}{RESET}");
         eprintln!("{DIM}  {}{RESET}\n", skill_try_line(surface));
@@ -1961,7 +1966,7 @@ mod tests {
         assert_eq!(handle_skill_status("/skill show demo", &skills), 0);
         assert_eq!(handle_skill_status("/skill show nosuch", &skills), 1);
         assert_eq!(handle_skill_status("/skill list", &skills), 0);
-        assert_eq!(handle_skill_status("/skill show", &skills), 0);
+        assert_eq!(handle_skill_status("/skill show", &skills), 2); // #1153: usage error
     }
 
     #[test]

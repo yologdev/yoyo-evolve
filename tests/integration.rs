@@ -4224,6 +4224,30 @@ fn unknown_skill_goal_todo_and_bare_ast_exit_two_through_the_binary() {
 }
 
 #[test]
+fn skill_show_install_init_without_an_argument_exit_two_with_usage() {
+    // #1153: `yoyo skill show|install|init` with nothing after them printed
+    // their usage line and exited 0, so `yoyo skill init && next` carried on.
+    // A missing argument is a usage error, 2, like `yoyo skill nosuch`; the
+    // usage line must still be printed (a silent refusal would be a new bug).
+    let dir = tempfile::tempdir().expect("tempdir");
+    for (sub, usage) in [
+        ("show", "usage: yoyo skill show <name>"),
+        ("install", "usage: yoyo skill install <path|gh:user/repo>"),
+        ("init", "usage: yoyo skill init <name>"),
+    ] {
+        let (code, stdout, stderr) = yoyo_plain_in(dir.path(), &["skill", sub]);
+        assert_eq!(code, Some(2), "{sub}: stdout={stdout} stderr={stderr}");
+        assert_eq!(stderr.lines().next().map(str::trim), Some(usage), "{sub}");
+        assert!(!stderr.contains("/skill "), "{sub}: {stderr}"); // REPL form
+    }
+    // Near-miss: `list` takes no argument and still succeeds.
+    let (code, stdout, stderr) = yoyo_plain_in(dir.path(), &["skill", "list"]);
+    assert_eq!(code, Some(0), "stdout={stdout} stderr={stderr}");
+    // Bare `init` scaffolded nothing.
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+}
+
+#[test]
 fn config_set_and_edit_refusals_exit_two() {
     // `set` and `edit` share the unknown-subcommand arm: from the shell they
     // are refused (they need agent state), so `yoyo config set ... && next`
