@@ -1,0 +1,100 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | head; sed -…  ▶ search 'skipped_config_sources|shadowed_write_warning|config_search_…' (*.rs) ✓ (19ms)
+ ✓ (106ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "skipped_config_sources… ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "config_get_report\|skip… ✓ (14ms)
+  ▶ read src/commands_config.rs:850..900  ▶ read src/commands_config.rs:470..510 ✓ (1ms)
+ ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub.*fn " src/non_regul… ✓ (17ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2075,2220p src/config.rs;… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "shadowed_write_warning"… ✓ (17ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 425,482p src/dispatch_sub… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 140,150p src/config_paths… ✓ (15ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  11 tools completed in 1m 25s (11 ✓)
+
+Write the tests first (config get note), then the helper.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/c… (75 lines) ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (63 lines) ✓ (22ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 16.4s (2 ✓)
+
+Now wire it into handle_config_get_status.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/commands_config.rs (3 → 6 lines)
+        let (code, text) = config_get_report(key, &config, &source);
+        print!("{text}");
+  +     if code == 0 {
+  +         print!("{}", crate::commands_config_get::shadowed_key_note_on_disk(key, &config, path.as_deref()));
+  +     }
+        code
+  ▶ read src/config_paths.rs:726..738 ✓ (1ms)
+ ✓ (5m 34s)
+        let (code, text) = config_get_report(key, &config, &source);
+        print!("{text}");
+  +     if code == 0 {
+  +         print!("{}", crate::commands_config_get::shadowed_key_note_on_disk(key, &config, path.as_deref()));
+  +     }
+        code
+  2 tools completed in 5m 58s (2 ✓)
+
+Now the startup predicate + once-per-process emitter in config_paths.rs, with its table test.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (121 lines) ✓ (14.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now probe the built binary under the assessment's setup, plus the before state via git stash later.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp && rm -rf fakehome proj && mkdir -p fakehome/.config… (5 lines) ✓ (14.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Works. Now the real-binary test — find the existing env-scrubbing helper.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rln "fn scrubbed\|fn herme… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,60p tests/config_fifo.r… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "tempfile\|TempDir\|temp… ✓ (25ms)
+  ▶ write tests/home_config_shadow.rs (89 lines) ✓ (5m 26s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test --test h… ✓ (1.9s)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 6m 15s (5 ✓)
+
+Positive control, atomic mutate→run→restore: remove the startup call and confirm the binary test goes red by name.
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/config.rs /tmp/config.rs.… ✓ (25.5s)
+
+Red by name, restored, green. Now docs, then the full gate.
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "config.toml" docs/src … ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 92,115p docs/src/getting-… ✓ (3ms)
+  ▶ edit docs/src/getting-started/installation.md (1 → 3 lines)
+    3. `~/.config/yoyo/config.toml` (XDG user-level)
+  + 
+  + yoyo reads exactly one of these files; they are never merged. A project `.yoyo.toml` shadowing your home config is the intended layering and is silent, but if both `~/.yoyo.toml` and `~/.config/yoyo/config.toml` exist, every run warns once on stderr that the second is ignored, and `yoyo config get <key>` names a skipped file that sets the key.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (1ms)
+    3. `~/.config/yoyo/config.toml` (XDG user-level)
+  + 
+  + yoyo reads exactly one of these files; they are never merged. A project `.yoyo.toml` shadowing your home config is the intended layering and is silent, but if both `~/.yoyo.toml` and `~/.config/yoyo/config.toml` exist, every run warns once on stderr that the second is ignored, and `yoyo config get <key>` names a skipped file that sets the key.
+ ✓ (5m 25s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -cE "FAIL… ✓ (8m 15s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "FAILE…
+  (interrupted)
+
