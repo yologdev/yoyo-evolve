@@ -111,31 +111,104 @@ const MAX_NESTING: usize = 3;
 /// The hard-deny predicate and refusal text, shared by parent and child bash.
 /// `patterns` selects which rule labels are active (the default is all of
 /// [`HARD_DENY_PATTERNS`]).
+///
+/// The text names the rule in words true of every spelling it catches, and
+/// quotes the segment that tripped it (#1102). Superseded, recorded rather
+/// than erased: until Day 253 it said "contains '<label>'", which was false
+/// for every spelling but the label's own (`rm -rf ~` was told it "contains
+/// 'rm -rf /'"), so a user searching their command for it found nothing,
+/// and a multi-line command gave no hint which line had tripped it.
 pub(crate) fn hard_deny_refusal<S: AsRef<str>>(patterns: &[S], command: &str) -> Option<String> {
-    let label = hard_deny_match(command)?;
-    let pattern = patterns.iter().find(|p| p.as_ref() == label)?;
-    Some(format!(
-        "Command blocked by safety policy: contains '{}'. This pattern is denied for safety.",
-        pattern.as_ref()
-    ))
+    let hit = hard_deny_match(command)?;
+    patterns.iter().find(|p| p.as_ref() == hit.label)?;
+    let shown = quote_for_refusal(&hit.text);
+    Some(if hit.unparsed {
+        format!(
+            "Command blocked by safety policy: `{shown}` contains '{}' inside shell nesting \
+             deeper than {MAX_NESTING} levels, which is not parsed. This is denied for safety.",
+            hit.label
+        )
+    } else {
+        format!(
+            "Command blocked by safety policy: `{shown}` reads as {}. This is denied for safety.",
+            rule_description(hit.label)
+        )
+    })
 }
 
-/// Returns the label of the hard-deny rule `command` matches, if any.
-pub(crate) fn hard_deny_match(command: &str) -> Option<&'static str> {
+/// Longest quoted segment in a refusal, in bytes, after escaping.
+const REFUSAL_QUOTE_MAX_BYTES: usize = 120;
+
+/// Sanitize first, then cut on a char boundary (escaping lengthens the text;
+/// the same order as `cli::hook_command_for_display`), marking a cut with `…`.
+fn quote_for_refusal(text: &str) -> String {
+    let safe = crate::cli::sanitize_for_display(text.trim());
+    let head = crate::format::safe_truncate(&safe, REFUSAL_QUOTE_MAX_BYTES);
+    if head.len() < safe.len() {
+        format!("{head}…")
+    } else {
+        safe
+    }
+}
+
+/// Each rule in words true of every spelling [`match_segment`] catches for
+/// it (see the module doc's "How it matches").
+fn rule_description(label: &str) -> &'static str {
+    match label {
+        RULE_RM_ROOT => {
+            "a recursive delete of the filesystem root or the home directory \
+             (/, ~ or $HOME, or any rm given --no-preserve-root)"
+        }
+        RULE_RM_ROOT_GLOB => "a recursive delete of everything under the filesystem root (/*)",
+        RULE_MKFS => "formatting a filesystem (mkfs)",
+        RULE_DD => "dd writing onto a device (of=/dev/...)",
+        RULE_FORK_BOMB => "a fork bomb",
+        _ => "a hard-denied command",
+    }
+}
+
+/// What [`hard_deny_match`] found: the rule's label, the text that tripped
+/// it (the shell segment as written; for `bash -c`/`eval`, the inner
+/// script's segment), and whether it came from the unparsed scan past
+/// [`MAX_NESTING`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct HardDenyHit {
+    pub label: &'static str,
+    pub text: String,
+    pub unparsed: bool,
+}
+
+/// Returns the hard-deny rule `command` matches, if any, with the matched text.
+pub(crate) fn hard_deny_match(command: &str) -> Option<HardDenyHit> {
     match_at_depth(command, 0)
 }
 
-fn match_at_depth(command: &str, depth: usize) -> Option<&'static str> {
-    let squeezed: String = command.chars().filter(|c| !c.is_whitespace()).collect();
-    if squeezed.contains(RULE_FORK_BOMB) {
-        return Some(RULE_FORK_BOMB);
+fn match_at_depth(command: &str, depth: usize) -> Option<HardDenyHit> {
+    let squeeze = |t: &str| -> String { t.chars().filter(|c| !c.is_whitespace()).collect() };
+    if squeeze(command).contains(RULE_FORK_BOMB) {
+        // The first physical line that carries it, or the whole command when
+        // the bomb itself spans lines.
+        let text = command
+            .lines()
+            .find(|l| squeeze(l).contains(RULE_FORK_BOMB))
+            .unwrap_or(command);
+        return Some(HardDenyHit {
+            label: RULE_FORK_BOMB,
+            text: text.to_string(),
+            unparsed: false,
+        });
     }
     if depth > MAX_NESTING {
         // Fail closed: past the nesting cap, fall back to the old scan.
         let spaced = command.split_whitespace().collect::<Vec<_>>().join(" ");
         return [RULE_RM_ROOT, RULE_MKFS, RULE_DD]
             .into_iter()
-            .find(|p| spaced.contains(p));
+            .find(|p| spaced.contains(p))
+            .map(|label| HardDenyHit {
+                label,
+                text: command.to_string(),
+                unparsed: true,
+            });
     }
     let joined = command.replace("\\\r\n", " ").replace("\\\n", " ");
     let mut needs_desugar = joined.contains("$(") || joined.contains('`');
@@ -144,8 +217,8 @@ fn match_at_depth(command: &str, depth: usize) -> Option<&'static str> {
         let (segments, balanced) = split_line(line);
         needs_desugar |= !balanced;
         for seg in &segments {
-            if let Some(label) = match_segment(seg, depth) {
-                return Some(label);
+            if let Some(hit) = match_segment(seg, line, depth) {
+                return Some(hit);
             }
         }
     }
@@ -170,8 +243,8 @@ fn match_at_depth(command: &str, depth: usize) -> Option<&'static str> {
             .chain(logical.iter().map(|l| desugar(l)));
         for line in scans {
             for seg in &split_line(&line).0 {
-                if let Some(label) = match_segment(seg, depth) {
-                    return Some(label);
+                if let Some(hit) = match_segment(seg, &line, depth) {
+                    return Some(hit);
                 }
             }
         }
@@ -303,27 +376,38 @@ fn logical_lines(text: &str) -> Vec<String> {
     lines
 }
 
+/// One shell segment: its words (quote removal applied) and the byte span
+/// of the line they were read from, so a refusal can quote it as written.
+struct Segment {
+    words: Vec<String>,
+    span: std::ops::Range<usize>,
+}
+
 /// Splits one line into segments of shell words (quote removal applied).
 /// The bool is false when the line ends inside an open quote.
-fn split_line(line: &str) -> (Vec<Vec<String>>, bool) {
-    let mut segments: Vec<Vec<String>> = Vec::new();
+fn split_line(line: &str) -> (Vec<Segment>, bool) {
+    let mut segments: Vec<Segment> = Vec::new();
     let mut words: Vec<String> = Vec::new();
     let mut word = String::new();
     let mut in_word = false;
-    let mut chars = line.chars().peekable();
+    let mut chars = line.char_indices().peekable();
     let mut balanced = true;
+    // Byte span of the current segment: where its first word began, and
+    // just past the last char any of its words consumed.
+    let mut start: Option<usize> = None;
+    let mut end = 0;
     let flush_word = |words: &mut Vec<String>, word: &mut String, in_word: &mut bool| {
         if *in_word {
             words.push(std::mem::take(word));
             *in_word = false;
         }
     };
-    while let Some(c) = chars.next() {
+    while let Some((at, c)) = chars.next() {
         match c {
             '\'' => {
                 in_word = true;
                 let mut closed = false;
-                for q in chars.by_ref() {
+                for (_, q) in chars.by_ref() {
                     if q == '\'' {
                         closed = true;
                         break;
@@ -335,14 +419,14 @@ fn split_line(line: &str) -> (Vec<Vec<String>>, bool) {
             '"' => {
                 in_word = true;
                 let mut closed = false;
-                while let Some(q) = chars.next() {
+                while let Some((_, q)) = chars.next() {
                     match q {
                         '"' => {
                             closed = true;
                             break;
                         }
-                        '\\' if matches!(chars.peek(), Some('"' | '\\' | '$' | '`')) => {
-                            word.push(chars.next().unwrap_or('\\'));
+                        '\\' if matches!(chars.peek(), Some((_, '"' | '\\' | '$' | '`'))) => {
+                            word.push(chars.next().map_or('\\', |(_, e)| e));
                         }
                         _ => word.push(q),
                     }
@@ -351,26 +435,40 @@ fn split_line(line: &str) -> (Vec<Vec<String>>, bool) {
             }
             '\\' => {
                 in_word = true;
-                if let Some(n) = chars.next() {
+                if let Some((_, n)) = chars.next() {
                     word.push(n);
                 }
             }
             ';' | '&' | '|' | '(' | ')' => {
                 flush_word(&mut words, &mut word, &mut in_word);
                 if !words.is_empty() {
-                    segments.push(std::mem::take(&mut words));
+                    let span = start.take().unwrap_or(at)..end;
+                    segments.push(Segment {
+                        words: std::mem::take(&mut words),
+                        span,
+                    });
                 }
+                continue;
             }
-            c if c.is_whitespace() => flush_word(&mut words, &mut word, &mut in_word),
+            c if c.is_whitespace() => {
+                flush_word(&mut words, &mut word, &mut in_word);
+                continue;
+            }
             c => {
                 in_word = true;
                 word.push(c);
             }
         }
+        // Every arm that reaches here consumed word text from `at` onwards.
+        start.get_or_insert(at);
+        end = chars.peek().map_or(line.len(), |(i, _)| *i);
     }
     flush_word(&mut words, &mut word, &mut in_word);
     if !words.is_empty() {
-        segments.push(words);
+        segments.push(Segment {
+            words,
+            span: start.unwrap_or(0)..end,
+        });
     }
     (segments, balanced)
 }
@@ -398,36 +496,45 @@ fn command_index(seg: &[String]) -> Option<usize> {
     })
 }
 
-fn match_segment(seg: &[String], depth: usize) -> Option<&'static str> {
+/// Matches one segment of `line`. A direct match quotes the segment as
+/// written (`line[segment.span]`); a nested `bash -c`/`eval` match carries
+/// the inner script's own hit.
+fn match_segment(segment: &Segment, line: &str, depth: usize) -> Option<HardDenyHit> {
+    let seg = &segment.words;
+    let direct = |label: &'static str| HardDenyHit {
+        label,
+        text: line.get(segment.span.clone()).unwrap_or(line).to_string(),
+        unparsed: false,
+    };
     let cmd_at = command_index(seg);
     for (i, w) in seg.iter().enumerate() {
         let b = basename(w);
         let rest = &seg[i + 1..];
         if b == "rm" {
             if let Some(label) = rm_root(rest) {
-                return Some(label);
+                return Some(direct(label));
             }
         }
         if b == "dd" && rest.iter().any(|a| dd_writes_device(a)) {
-            return Some(RULE_DD);
+            return Some(direct(RULE_DD));
         }
         if (b == "mkfs" || b.starts_with("mkfs."))
             && (cmd_at == Some(i) || rest.iter().any(|a| a.starts_with("/dev/")))
         {
-            return Some(RULE_MKFS);
+            return Some(direct(RULE_MKFS));
         }
         if SHELLS.contains(&b) {
             let script = rest
                 .iter()
                 .position(|a| a.starts_with('-') && !a.starts_with("--") && a.contains('c'))
                 .and_then(|f| rest.get(f + 1));
-            if let Some(label) = script.and_then(|s| match_at_depth(s, depth + 1)) {
-                return Some(label);
+            if let Some(hit) = script.and_then(|s| match_at_depth(s, depth + 1)) {
+                return Some(hit);
             }
         }
         if b == "eval" {
-            if let Some(label) = match_at_depth(&rest.join(" "), depth + 1) {
-                return Some(label);
+            if let Some(hit) = match_at_depth(&rest.join(" "), depth + 1) {
+                return Some(hit);
             }
         }
     }
@@ -482,6 +589,12 @@ fn dd_writes_device(arg: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The rule label a command matches: the verdict half of
+    /// [`hard_deny_match`], which every verdict table below reads.
+    fn label_of(cmd: &str) -> Option<&'static str> {
+        hard_deny_match(cmd).map(|hit| hit.label)
+    }
 
     /// (command, expected label). Every row must refuse with exactly this label.
     const MUST_REFUSE: &[(&str, &str)] = &[
@@ -558,14 +671,14 @@ mod tests {
     #[test]
     fn must_refuse_rows_match_their_exact_label() {
         for (cmd, label) in MUST_REFUSE {
-            assert_eq!(hard_deny_match(cmd), Some(*label), "should refuse: {cmd:?}");
+            assert_eq!(label_of(cmd), Some(*label), "should refuse: {cmd:?}");
         }
     }
 
     #[test]
     fn near_miss_rows_pass() {
         for cmd in MUST_PASS {
-            assert_eq!(hard_deny_match(cmd), None, "should pass: {cmd:?}");
+            assert_eq!(label_of(cmd), None, "should pass: {cmd:?}");
         }
     }
 
@@ -583,20 +696,126 @@ mod tests {
         assert_eq!(canonical.len(), HARD_DENY_PATTERNS.len());
         for (label, cmd) in canonical {
             assert!(HARD_DENY_PATTERNS.contains(&label), "{label}");
-            assert_eq!(hard_deny_match(cmd), Some(label), "{cmd}");
+            assert_eq!(label_of(cmd), Some(label), "{cmd}");
+        }
+    }
+
+    /// #1102: the refusal quotes the segment that tripped it, as written, and
+    /// names the rule in words true of that spelling. Superseded, recorded
+    /// rather than erased: this was `refusal_text_is_byte_identical_to_the_old_format`,
+    /// pinning "contains 'rm -rf /'" for every rm-root spelling.
+    #[test]
+    fn refusal_quotes_the_tilde_segment_not_the_rule_label() {
+        let got = hard_deny_refusal(HARD_DENY_PATTERNS, "rm -rf ~").expect("refuses");
+        assert_eq!(
+            got,
+            "Command blocked by safety policy: `rm -rf ~` reads as a recursive delete of the \
+             filesystem root or the home directory (/, ~ or $HOME, or any rm given \
+             --no-preserve-root). This is denied for safety."
+        );
+        assert!(!got.contains("rm -rf /"), "{got}");
+        assert!(!got.contains("contains '"), "{got}");
+        assert_eq!(hard_deny_refusal(HARD_DENY_PATTERNS, "rm -rf /tmp/x"), None);
+    }
+
+    #[test]
+    fn refusal_quotes_the_root_segment_as_written() {
+        let got = hard_deny_refusal(HARD_DENY_PATTERNS, "rm -fr /").expect("refuses");
+        assert!(got.starts_with("Command blocked by safety policy: `rm -fr /` reads as "));
+        // Only the segment that tripped it, with its wrapper, not the chain.
+        let got = hard_deny_refusal(HARD_DENY_PATTERNS, "cd x && sudo rm -rf \"$HOME\"/*")
+            .expect("refuses");
+        assert!(got.contains("`sudo rm -rf \"$HOME\"/*` reads as"), "{got}");
+        // The glob rule and the other rules are named by what they do.
+        let cases = [
+            (
+                "rm -rf /*",
+                "`rm -rf /*` reads as a recursive delete of everything under",
+            ),
+            (
+                "mkfs.ext4 /dev/sda1",
+                "`mkfs.ext4 /dev/sda1` reads as formatting a filesystem",
+            ),
+            (
+                "dd if=/dev/zero of=/dev/sda",
+                "`dd if=/dev/zero of=/dev/sda` reads as dd writing onto a device",
+            ),
+            (":(){ :|:& };:", "`:(){ :|:& };:` reads as a fork bomb"),
+        ];
+        for (cmd, want) in cases {
+            let got = hard_deny_refusal(HARD_DENY_PATTERNS, cmd).expect("refuses");
+            assert!(got.contains(want), "{cmd:?}: {got}");
         }
     }
 
     #[test]
-    fn refusal_text_is_byte_identical_to_the_old_format() {
-        assert_eq!(
-            hard_deny_refusal(HARD_DENY_PATTERNS, "rm -fr /").as_deref(),
-            Some(
-                "Command blocked by safety policy: contains 'rm -rf /'. \
-                 This pattern is denied for safety."
-            )
+    fn refusal_quotes_only_the_matching_line_of_a_multi_line_command() {
+        let cmd = "cat <<EOF > notes.md\nfirst line\nrm -rf ~/\nlast line\nEOF";
+        let got = hard_deny_refusal(HARD_DENY_PATTERNS, cmd).expect("refuses");
+        assert!(got.contains("`rm -rf ~/` reads as"), "{got}");
+        for other in ["first line", "last line", "notes.md", "EOF"] {
+            assert!(!got.contains(other), "quoted more than the line: {got}");
+        }
+        // A nested shell quotes the inner script's segment.
+        let got = hard_deny_refusal(HARD_DENY_PATTERNS, "bash -c \"echo hi; rm -r $HOME\"")
+            .expect("refuses");
+        assert!(got.contains("`rm -r $HOME` reads as"), "{got}");
+        // The desugar path (`$(`) quotes the segment, not the whole line.
+        let got =
+            hard_deny_refusal(HARD_DENY_PATTERNS, "echo \"$(rm -rf ~)\" done").expect("refuses");
+        assert!(got.contains("`rm -rf ~` reads as"), "{got}");
+    }
+
+    #[test]
+    fn refusal_quote_is_capped_char_safely_and_escaped() {
+        // A multi-byte char straddles the 120-byte cap: no panic, cut marked.
+        let target = format!("rm -rf / {}", "é".repeat(80));
+        let got = hard_deny_refusal(HARD_DENY_PATTERNS, &target).expect("refuses");
+        assert!(got.contains("…` reads as"), "{got}");
+        let quoted = got
+            .split('`')
+            .nth(1)
+            .expect("quoted segment")
+            .trim_end_matches('…');
+        assert!(quoted.len() <= REFUSAL_QUOTE_MAX_BYTES, "{}", quoted.len());
+        for cap_shift in 0..4 {
+            let cmd = format!("rm -rf / {}{}", "a".repeat(cap_shift), "é".repeat(80));
+            assert!(hard_deny_refusal(HARD_DENY_PATTERNS, &cmd).is_some());
+        }
+        // Control bytes cannot reach the terminal.
+        let got = hard_deny_refusal(HARD_DENY_PATTERNS, "rm -rf / \u{1b}[2J").expect("refuses");
+        assert!(!got.contains('\u{1b}'), "{got:?}");
+        assert!(got.contains("\\x1b"), "{got:?}");
+    }
+
+    /// The message changed, the verdict did not: every refuse row still
+    /// refuses through the real door, and every pass row still passes.
+    #[test]
+    fn refusal_verdicts_are_unchanged_by_the_new_message() {
+        for (cmd, _) in MUST_REFUSE {
+            let got = hard_deny_refusal(HARD_DENY_PATTERNS, cmd);
+            assert!(
+                got.as_deref()
+                    .is_some_and(|m| m.starts_with("Command blocked by safety policy: `")),
+                "should refuse: {cmd:?} -> {got:?}"
+            );
+        }
+        for cmd in MUST_PASS {
+            assert_eq!(hard_deny_refusal(HARD_DENY_PATTERNS, cmd), None, "{cmd:?}");
+        }
+    }
+
+    #[test]
+    fn nesting_past_the_cap_says_it_was_not_parsed() {
+        let mut cmd = String::from("rm -rf /");
+        for _ in 0..6 {
+            cmd = format!("eval {cmd:?}");
+        }
+        let got = hard_deny_refusal(HARD_DENY_PATTERNS, &cmd).expect("refuses");
+        assert!(
+            got.contains("inside shell nesting deeper than 3 levels"),
+            "{got}"
         );
-        assert_eq!(hard_deny_refusal(HARD_DENY_PATTERNS, "rm -rf /tmp/x"), None);
     }
 
     #[test]
@@ -621,16 +840,16 @@ mod tests {
         // pattern on an interior line of its own.
         assert!(cmd.contains('\n'), "fixture must span lines: {cmd:?}");
         assert_eq!(cmd.lines().nth(1), Some("rm -rf /"), "{cmd:?}");
-        assert_eq!(hard_deny_match(cmd), None, "{cmd:?}");
+        assert_eq!(label_of(cmd), None, "{cmd:?}");
         // The same text through the real refusal door.
         assert_eq!(hard_deny_refusal(HARD_DENY_PATTERNS, cmd), None);
         // Its one-line form gets the same verdict.
         let one_line = "python3 -c \"print(1); rm -rf /; print(2)\"";
-        assert_eq!(hard_deny_match(one_line), None, "{one_line:?}");
+        assert_eq!(label_of(one_line), None, "{one_line:?}");
 
         // A commit body is the same shape and now passes.
         let commit = "git commit -m \"subject\n\nrm -rf / is now guarded\"";
-        assert_eq!(hard_deny_match(commit), None, "{commit:?}");
+        assert_eq!(label_of(commit), None, "{commit:?}");
     }
 
     /// Near miss for the above: on ONE line the quoted string is one word,
@@ -639,12 +858,12 @@ mod tests {
     fn single_line_quoted_mention_still_passes() {
         let cmd = "echo \"rm -rf /\"";
         assert!(!cmd.contains('\n'));
-        assert_eq!(hard_deny_match(cmd), None, "{cmd:?}");
+        assert_eq!(label_of(cmd), None, "{cmd:?}");
         assert_eq!(hard_deny_refusal(HARD_DENY_PATTERNS, cmd), None);
         // A multi-line quoted argument that never mentions the pattern
         // passes: the fail-closed reach is the mention, not the shape.
         let benign = "python3 -c \"print(1)\nprint(2)\"";
-        assert_eq!(hard_deny_match(benign), None, "{benign:?}");
+        assert_eq!(label_of(benign), None, "{benign:?}");
     }
 
     /// #1101: (multi-line command, the same command with each QUOTED newline
@@ -768,7 +987,7 @@ mod tests {
         for (multi, single, expected) in QUOTED_NEWLINE_ROWS {
             // Anti-vacuous: every multi-line row really spans lines.
             assert!(multi.contains('\n'), "fixture must span lines: {multi:?}");
-            let (m, s) = (hard_deny_match(multi), hard_deny_match(single));
+            let (m, s) = (label_of(multi), label_of(single));
             if m != *expected || s != *expected {
                 wrong.push(format!(
                     "{multi:?}: multi={m:?} single={s:?} expected={expected:?}"
@@ -791,7 +1010,7 @@ mod tests {
             "git commit -m \"subject\"\r\nrm -rf /",
         ];
         for cmd in twins {
-            assert!(hard_deny_match(cmd).is_some(), "should refuse: {cmd:?}");
+            assert!(label_of(cmd).is_some(), "should refuse: {cmd:?}");
         }
     }
 
@@ -801,6 +1020,6 @@ mod tests {
         for _ in 0..6 {
             cmd = format!("eval {cmd:?}");
         }
-        assert_eq!(hard_deny_match(&cmd), Some(RULE_RM_ROOT), "{cmd}");
+        assert_eq!(label_of(&cmd), Some(RULE_RM_ROOT), "{cmd}");
     }
 }
