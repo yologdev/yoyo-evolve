@@ -41,7 +41,8 @@ evolve.yml: 4 success (Nov 7 15:44, 19:50, 22:54; Nov 8 01:01) + current run in 
 1. #1154 `yoyo config get` exits 0 with REPL-syntax usage (reproduced).
 2. #1155 five second-level shell lines name slash commands (3 reproduced: lint unsafe, risk history, risk validate).
 3. Size-gate traps on context.rs (+15 fatal, unlisted) and help.rs (+10 fatal).
-4. `CLAUDE_CODE_GAP.md` header verified day-74, 179 days stale — any gap claim from it must be re-read.
+4. **hard_deny's refusal text names the rule, not the input.** `src/hard_deny.rs:118` prints `contains '{pattern}'`, where pattern is the rule label `RULE_RM_ROOT = "rm -rf /"`. So an input using the home-directory (tilde) form is told it "contains 'rm -rf /'", which is false. I hit this **three times** this assessment: two heredoc bodies and one `gh issue comment --body` that only *quoted* test fixtures were refused (the #1102 mention class). The first two hits are recorded on #1102 (comment 6720041992). Candidate small fix: make the wording say the input matched the rm-root rule.
+5. `CLAUDE_CODE_GAP.md` header verified day-74, 179 days stale — any gap claim from it must be re-read.
 
 ## Open Issues Summary
 - **#1149 — CLOSED this assessment.** @yuanhao answered 09:42Z: "A — keep non-interactive auto-approve, keep it disclosed. No change to the default." The disclosure shipped Day 252; I commented and closed it (completed). No code task follows.
@@ -53,4 +54,17 @@ evolve.yml: 4 success (Nov 7 15:44, 19:50, 22:54; Nov 8 01:01) + current run in 
 - Parked: #1070, #1060, #1040, #1018, #1014, #854, #341, #215, #156.
 
 ## Research Findings
-(pending)
+Recall: yopedia already has delta scans through Claude Code 2.1.317 / Codex 0.166 (note `claude-code-and-codex-cli-changelog-delta-2026-11`). New this session: Claude Code **2.1.318 (Nov 4) and 2.1.319 (Nov 6)**, mapped against yoyo and ingested to yopedia as "Claude Code 2.1.319 delta vs yoyo (Day 253)":
+- `permissions.denyInsteadOfPrompting`: a yoyo gap (Capability Gaps, first bullet).
+- "Bash permission bypass via a crafted environment prefix": **yoyo already covers this.** `user_deny_refusal` strips leading assignments and `export` chains (pinned in `src/tools_user_deny_tests.rs` ~225), and `safety.rs` has the `a_leading_assignment_never_changes_the_*_verdict` tests. I checked this by reading the tests, not with a new run.
+- Deny wins over a narrower ask/allow rule: yoyo `PermissionConfig::check` (src/config.rs:19) checks deny first, so this is covered.
+- `claude remote-control` used to exit 0 silently on an unanswered question and now exits 1; `/rename` used to report plain success when the save failed. Both are the exit-code / false-success class yoyo is draining (#1153 done, #1154 open).
+- MCP tasks (long MCP calls run in the background, result delivered later): yoyo has nothing like this. Related to #1134, but a new capability.
+- `-p` now warns on stderr before stored credentials expire, and `-p` JSON carries `credential_expires_at`. yoyo has no analogue; it uses API keys, so this matters little.
+
+## Suggested priorities for the planner (my read, not a plan)
+1. #1154 + #1155: reproduced, small, and on the same seam as #1127/#1153. Check the help.rs/context.rs size traps before touching either file. Take the census from the `*_SUBCOMMANDS` consts; the unit is verb × subcommand (d250/d253).
+2. The hard_deny refusal label: one string, and it states something false to users. Or fold it into #1102.
+3. A new ticket for the opt-in unattended-run lockdown, if the planner wants a product-feature slot.
+
+Non-diff action already done this phase: #1149 closed after @yuanhao chose A (comment 6720020797).
