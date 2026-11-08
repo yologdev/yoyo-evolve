@@ -1,0 +1,235 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; S=/home/runner/.cargo/registry/src… ✓ (17ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 124,142p src/providers.rs; …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; S=/home/runner/.cargo/registry/src… ✓ (6ms)
+ ✓ (11ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 8.3s (3 ✓)
+
+The output's "... (N more similar lines)" is hiding the list. Let me read it raw.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; awk 'NR>=126 && NR<=140' src/provi… ✓ (12ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n '"gemini' src/providers.rs… ✓ (9ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7.3s (2 ✓)
+
+Six offered ids lack a preset. Now let me read each Google page.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp; for id in gemini-3.5-flash-lite gemini-3.1-flash-li… (9 lines) ✓ (2.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /tmp; for id in gemini-3.5-flash-lite gemini-3.1-flash-lite gemini-3-flash-pr… ✓ (38ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "fn handle_model_info" -A6… ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1410,1470p src/agent_builde… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1630,1660p src/agent_builde… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "providers\|const.*LIMIT\|… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "1500\|2000\|limit\b\|cons… ✓ (8ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 38.8s (7 ✓)
+
+Now write the production table in providers.rs (before #[cfg(test)] mod tests).
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/providers.rs (6 → 28 lines)
+        msg.push_str("\nfor an OpenAI-compatible server use: --provider custom --base-url <url>");
+        Some(msg)
+  + }
+  + 
+  + /// #1157: limits for offered `google` ids yoagent has no preset for, each
+  + /// read from that id's own page (2026-11-08): `(id, input token limit,
+  + /// output token limit, source)`. Without a row the run path would use
+  + /// `ModelConfig::google`'s 1,000,000 / 8192 guess, cutting replies at 8192.
+  + /// A row must never shadow a yoagent preset (a test checks both ways).
+  + pub(crate) const GOOGLE_PUBLISHED_LIMITS: &[(&str, u32, u32, &str)] = &[
+  +     ("gemini-3.5-flash-lite", 1_048_576, 65_536, "https://ai.google.dev/gemini-api/docs/models/gemini-3.5-flash-lite"),
+  +     ("gemini-3.1-flash-lite", 1_048_576, 65_536, "https://ai.google.dev/gemini-api/docs/models/gemini-3.1-flash-lite"),
+  +     ("gemini-3-flash-preview", 1_048_576, 65_536, "https://ai.google.dev/gemini-api/docs/models/gemini-3-flash-preview"),
+  +     ("gemini-2.5-flash-lite", 1_048_576, 65_536, "https://ai.google.dev/gemini-api/docs/models/gemini-2.5-flash-lite"),
+  +     ("gemini-2.5-pro", 1_048_576, 65_536, "https://ai.google.dev/gemini-api/docs/models/gemini-2.5-pro"),
+  +     ("gemini-2.5-flash", 1_048_576, 65_536, "https://ai.google.dev/gemini-api/docs/models/gemini-2.5-flash"),
+  + ];
+  + 
+  + /// `(context_window, max_output)` from [`GOOGLE_PUBLISHED_LIMITS`].
+  + pub(crate) fn google_published_limits(id: &str) -> Option<(u32, u32)> {
+  ... (7 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "GEMINI_IDS_SOURCED_FROM_G… ✓ (25.7s)
+        msg.push_str("\nfor an OpenAI-compatible server use: --provider custom --base-url <url>");
+        Some(msg)
+  + }
+  + 
+  + /// #1157: limits for offered `google` ids yoagent has no preset for, each
+  + /// read from that id's own page (2026-11-08): `(id, input token limit,
+  + /// output token limit, source)`. Without a row the run path would use
+  + /// `ModelConfig::google`'s 1,000,000 / 8192 guess, cutting replies at 8192.
+  ... (13 more lines)
+ ✓ (25.7s)
+  2 tools completed in 31.8s (2 ✓)
+
+Expected — consumers next. Wire the agent_builder google arm and declared_output_ceiling.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (30 lines) ✓ (20ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (40 lines) ✓ (15.2s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 29.3s (2 ✓)
+
+Now the tests: fold the test-only sourced list into the production table, and add run-path / override / parity rows.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "GEMINI_IDS_SOURCED_FROM_G… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 518,575p src/providers.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1648,1680p src/agent_builde… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1660,1700p src/agent_builde… ✓ (8ms)
+  ▶ $ cd ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.27.4/src; gr… ✓ (6ms)
+  ▶ $ cd ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.27.4/src; gr… ✓ (11ms)
+  ▶ $ cd ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.27.4/src; gr… ✓ (7ms)
+  ▶ $ cd ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.27.4/src; se… ✓ (7ms)
+  ▶ $ cd ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.27.4/src; gr… ✓ (6ms)
+  ▶ $ cd ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.27.4/src; gr… ✓ (8ms)
+  ▶ $ cd ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.27.4/src; gr… ✓ (3ms)
+  ▶ $ cd ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.27.4/src; gr… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "fn .*-> AgentConfig\|fn … ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 200,240p src/temperature_su… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  14 tools completed in 1m 24s (14 ✓)
+
+Now write the sibling test file and update the existing #1118 test to read the production table.
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat > src/goog… (135 lines) ✓ (43.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test --bin yoyo google_limit… ✓ (261ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 50.2s (2 ✓)
+
+Positive control: delete one row, expect the first test to fail by name, restore — in one command.
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/providers.rs /tmp/prov.bak … ✓ (1m 19s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The sabotage didn't land (fmt reflowed the rows). Let me look and redo it with Python.
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n -A5 '"gemini-2.5-pro",$' s… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 436,446… (3 lines) ✓ (1m 21s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 28s (2 ✓)
+
+Control fired by name and was restored. Full gates:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt -- --check && cargo clip… ✓ (3m 8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test --bin yoyo 2>&1 | grep … ✓ (2m 13s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5m 30s (2 ✓)
+
+Five old tests used gemini-2.5-* as their "runs on the guess" example — that premise is what this task changes. Let me look at each.
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 245,300p src/model_limits_n… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; awk 'NR>=246 && NR<=256' src/model… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; awk 'NR>=245 &… (3 lines) ✓ (19ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 -c " (3 lines) ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (52 lines) ✓ (40.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 -c " (3 lines) ✓ (15ms)
+  ▶ edit src/output_ceiling_tests.rs (1 → 3 lines)
+  -     // bedrock id still on the 16K guess stands in for it here.
+  +     // bedrock id still on the 16K guess stands in for it here. Likewise
+  +     // gemini-2.5-flash took Google's published 65,536 (#1157); an id Google
+  +     // does not list stays on the 8192 guess.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n -i "gemini" docs/src/confi… ✓ (5m 34s)
+  -     // bedrock id still on the 16K guess stands in for it here.
+  +     // bedrock id still on the 16K guess stands in for it here. Likewise
+  +     // gemini-2.5-flash took Google's published 65,536 (#1157); an id Google
+  +     // does not list stays on the 8192 guess.
+ ✗ (5m 34s)
+    │ Command timed out after 120s. Output so far:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 135,165p docs/src/configura… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (23 lines) ✓ (16ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  10 tools completed in 6m 59s (9 ✓, 1 ✗)
+
+Now the binary probe (step 5) and full gates.
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo build 2>&1 | tail -1; mkdir … ✓ (2m 0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Run the full gates.
+  ╭─ Turn 46 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt -- --check && cargo clip… ✓ (5m 11s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All green. Check sizes, the ticket, and git state before committing.
+  ╭─ Turn 47 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; wc -l src/agent_builder.rs src/pro… ✓ (212ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The ticket counted 7, but gemini-3.1-pro-preview is a yoagent 0.27.4 preset (my test asserts each id is preset XOR row), so the real count was 6. Commit now:
+  ╭─ Turn 48 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add -A && … (56 lines) ✓ (25ms)
+
+Now file the sibling finding as its own issue (this push closes #1157, so a comment there would get buried).
+  ╭─ Turn 49 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 30 gh … (5 lines) ✓ (1.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+#1157 is fixed and committed as eda208f2. Build, the full test suite, clippy with -D warnings and the fmt check all pass. Along the way I found that one of the ticket's premises is wrong (details below).
+
+What changed
+• One table of limits (GOOGLE_PUBLISHED_LIMITS in src/providers.rs): six rows, each with the URL of that model's own Google page, which I read today. All six say 1,048,576 input and 65,536 output tokens. The ticket counted seven ids, but gemini-3.1-pro-preview is already a yoagent 0.27.4 preset, so it needs no row. None of the offered ids is left on a guess. A test-only copy of the same id list is gone, and its test now reads this table.
+• Run path (agent_builder.rs): the google branch uses the row whenever yoagent has no preset. The output-ceiling check reads the row too, so max_tokens above 65,536 now gets the "exceeds the declared ceiling" warning.
+• `/model info` (commands_info.rs): it reads the same table, and the separately typed Gemini window is deleted. It now also prints Output: from the same source. A Gemini id Google doesn't list now shows the window as "unknown" instead of a guessed 1M.
+• Docs: docs/src/configuration/models.md lists the six ids and their published limits.
+
+Tests
+• New tests in src/google_limits_tests.rs check that:
+  • every offered google id has either a preset or a row, never both;
+  • the run path and /model info give the same numbers;
+  • gemini-zzz still gets the guess;
+  • a user's max_tokens still wins.
+• I updated five older tests: they used gemini-2.5-* as their example of a model with no known limits, which is no longer true. They now use ids Google doesn't list.
+• Check that the new test catches a missing row: I deleted the gemini-2.5-pro row and the test failed by name ("google offers gemini-2.5-pro: no yoagent preset and no GOOGLE_PUBLISHED_LIMITS row"). I restored the row in the same command and it went green again.
+• Binary probe:
+  • --model gemini-2.5-pro -p hi: no guessed-limits warning.
+  • --model gemini-zzz -p hi: the warning still fires.
+  • model info gemini-2.5-pro: shows 1.0M context and 65k output.
+
+The premise that's wrong: the ticket said the 8192 default "silently truncates long answers". From reading yoagent's code (I haven't sent a real request), the Google provider only sends an output limit when the user has set max_tokens (google.rs:733, agent.rs:1632). If they haven't, nothing is sent and Google uses its own default. So the old guess changed yoyo's context budget, its warnings and /model info, but it didn't cut off replies. The commit message gives the code citations.
+
+Follow-up: that means the warning still shown for unknown Gemini ids, "every reply is capped at 8192 output tokens", is also likely false. I filed it as #1158 rather than commenting on #1157, because this push closes #1157. #1158 includes a cheap check: a stub server that captures the request and confirms whether the limit is sent.
+
+agent_builder.rs is now 5011 lines against 4977 recorded, which is within the size test's 100-line allowance, so I didn't update the recorded count.
+
+  (interrupted)

@@ -1,0 +1,35 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build -q 2>&1 | tail -3; B… ✓ (1m 0s)
+  ▶ $ cd /tmp/probe && B=/home/runner/work/yoyo-evolve/yoyo-evolve/target/debug/yoyo; … ✓ (1m 0s)
+  ▶ $ cd /tmp/probe && B=/home/runner/work/yoyo-evolve/yoyo-evolve/target/debug/yoyo; … ✓ (26ms)
+  ▶ $ cd /tmp/probe && B=/home/runner/work/yoyo-evolve/yoyo-evolve/target/debug/yoyo; … ✓ (36ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p ses… (9 lines) ✓ (13ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 2m 31s (5 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_1.md, with all four checks marked PASS.
+
+What I ran: the built binary from a clean directory (/tmp/probe, GEMINI_API_KEY=x, a dead base URL).
+• `--provider google --model gemini-2.5-pro -p hi`: no guessed-limits warning.
+• `--model gemini-zzz`: still prints the warning about a 1,000,000-token window and max_tokens = 8192.
+• `yoyo model info gemini-2.5-pro`: shows Context 1.0M and Output 65k.
+• `yoyo model info gemini-zzz`: shows Context unknown.
+
+My first probe ran inside the repo, so it picked up the repo's .yoyo.toml. That max_tokens = 128000 now triggers the new over-ceiling warning (65,536) for gemini-2.5-pro, which is the intended behaviour.
+
+How the diff meets the task:
+• One table: GOOGLE_PUBLISHED_LIMITS in src/providers.rs has six rows, each citing that id's own Google page. The same rows now feed the google run path, the output-ceiling check and /model info. The separately typed Gemini window in commands_info.rs is deleted.
+• Preset first: a row only applies when yoagent has no preset for the id, so it builds on yoagent's ModelConfig::google rather than replacing it.
+• Tests: they loop over known_models_for_provider("google") and fail if an offered id has neither a preset nor a row, or if a row duplicates a preset. They also check that the run path and /model info give the same numbers, and that a user's max_tokens still wins.
+• Loose ends: every new definition is used in this diff. Older tests that relied on gemini-2.5-flash guessing now use gemini-3.0-flash, which Google doesn't list.
+• Docs: docs/src/configuration/models.md is updated.
+
+Things I didn't check:
+• Context-window override: the test pins the user max_tokens override but not a user context_window override.
+• Real output cap: the implementer says Google's provider only sends maxOutputTokens when the user sets max_tokens. If so, the old 8192 figure may not have truncated answers the way the issue assumed. The fix is still correct for the warnings and /model info.
+• Lost fallback: removing the old typed rule means a gemini-3*/2.5 id that isn't in the table now shows "unknown" in /model info. I didn't check whether OpenRouter-routed Gemini ids depended on that rule.
+  watch: no files changed this turn — skipping

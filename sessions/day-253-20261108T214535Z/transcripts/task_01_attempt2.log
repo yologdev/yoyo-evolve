@@ -1,0 +1,30 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | head && git… ✓ (21ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+The work is committed. Now I'll verify the whole gate.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo FMT… ✓ (9m 4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Nothing was left to do. The previous attempt had already committed the whole task as eda208f2, and I found no uncommitted changes. I re-ran the checks on that commit: cargo fmt --check, cargo clippy --all-targets -- -D warnings and cargo test all pass (36 test result blocks, no failures). I didn't make a new commit.
+
+What eda208f2 does:
+• One table for Gemini limits. GOOGLE_PUBLISHED_LIMITS in src/providers.rs has a row for each of the 6 offered Gemini ids that have no yoagent preset. Each row is a 1,048,576-token window and 65,536-token output, read on 2026-11-08 from that model's own Google page, with the page's URL in the row. The ticket said 7 ids, but gemini-3.1-pro-preview already has a yoagent preset, so it needs no row. No offered id is still running on guessed limits.
+• The run uses the table. The Google path in src/agent_builder.rs applies the row only when yoagent has no preset. A user's own max_tokens still wins, and a test pins that.
+• `/model info` uses the same table. It now reads its window and an Output: line from the same place, and the old hand-typed number is gone. An unlisted Gemini id now shows "unknown" instead of a guessed 1M.
+• Tests and probe. The new tests are in src/google_limits_tests.rs. They walk the offered Google list, so every id must have either a preset or a row, never both. The positive control worked: deleting the gemini-2.5-pro row made the first test fail by name, and it passed again once the row was back. In the built-binary probe, gemini-2.5-pro printed no guessed-limits warning and gemini-zzz still did.
+
+One correction to the ticket, checked only by reading yoagent 0.27.4's code, not with a real request: the 8192 guess never actually capped Google replies. yoagent's Google provider sends the output limit only from the user's own --max-tokens. What the guess really affected was yoyo's context budget, the warning, the max-tokens ceiling check and /model info.
+
+One thing remains wrong. The warning for unknown Gemini ids still says replies are "capped at 8192", which by that reading is false for Google. It's filed separately as #1158, because this push closes #1157.
+
+src/agent_builder.rs is now 5011 lines against 4977 recorded, which is inside the size limit's allowed drift.
+  watch: no files changed this turn — skipping
