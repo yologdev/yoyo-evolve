@@ -71,3 +71,61 @@ fn memory_hints_never_print_a_nonexistent_shell_verb() {
         "Use /forget <n> to remove a memory."
     );
 }
+
+#[test]
+fn map_argument_errors_name_yoyo_map_on_the_shell_and_slash_map_in_the_repl() {
+    use crate::commands_map::{parse_map_args, parse_map_argv, MapArgs};
+    let err = |parsed: MapArgs| match parsed {
+        MapArgs::Error(msg) => msg,
+        MapArgs::Ok { .. } => panic!("expected an argument error"),
+    };
+    let argv = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+
+    let two = err(parse_map_argv(&argv(&["a", "b"])));
+    assert_eq!(
+        two,
+        "two paths given ('a' and 'b') — yoyo map takes at most one path\n  usage: yoyo map [--all] [--regex] [path]"
+    );
+    let flag = err(parse_map_argv(&argv(&["--al"])));
+    assert!(
+        flag.contains("usage: yoyo map [--all] [--regex] [path]"),
+        "{flag}"
+    );
+    for msg in [&two, &flag] {
+        assert!(!msg.contains("/map"), "shell text leaks /map: {msg}");
+    }
+
+    // The REPL reads exactly what it printed before this change.
+    assert_eq!(
+        err(parse_map_args("a b")),
+        "two paths given ('a' and 'b') — /map takes at most one path\n  usage: /map [--all] [--regex] [path]"
+    );
+    assert!(err(parse_map_args("--al")).ends_with("\n  usage: /map [--all] [--regex] [path]"));
+}
+
+#[test]
+fn skill_try_line_offers_only_real_yoyo_skill_forms_on_the_shell() {
+    use crate::commands_skill::{skill_try_line, SKILL_SUBCOMMANDS};
+    let shell = skill_try_line(Shell);
+    assert!(
+        !shell.contains("/skill"),
+        "shell text leaks /skill: {shell}"
+    );
+    // Every alternative is `yoyo skill <sub>` for a sub the handler accepts,
+    // so none of them is an invented shell verb.
+    let alternatives: Vec<&str> = shell.trim_start_matches("try: ").split(", ").collect();
+    assert_eq!(alternatives.len(), SKILL_SUBCOMMANDS.len(), "{shell}");
+    for alt in alternatives {
+        let rest = alt
+            .strip_prefix("yoyo skill ")
+            .unwrap_or_else(|| panic!("not a shell form: {alt}"));
+        let sub = rest.split_whitespace().next().unwrap_or("");
+        assert!(SKILL_SUBCOMMANDS.contains(&sub), "{alt}");
+    }
+    assert!(crate::cli::KNOWN_SUBCOMMANDS.contains(&"skill"));
+
+    assert_eq!(
+        skill_try_line(Repl),
+        "try: /skill list, /skill show <name>, /skill path, /skill install <path>, /skill search <query>, /skill init <name>"
+    );
+}

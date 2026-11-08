@@ -1,6 +1,7 @@
 //! Map command handler: /map — structural codebase understanding.
 
 use crate::commands_ast_grep::is_ast_grep_available;
+use crate::commands_dev::DoctorSurface;
 use crate::commands_search::{is_binary_extension, list_project_files};
 use crate::format::*;
 use crate::git::run_git;
@@ -545,7 +546,7 @@ pub(crate) enum MapArgs {
 /// Pure — no I/O, no printing. Unknown flags and a second positional path are
 /// honest errors rather than a path filter that silently matches nothing.
 pub(crate) fn parse_map_args(rest: &str) -> MapArgs {
-    parse_map_tokens(rest.split_whitespace())
+    parse_map_tokens(rest.split_whitespace(), DoctorSurface::Repl)
 }
 
 /// Parse `yoyo map <argv…>` (#1009): each argv element is ONE token, so
@@ -557,11 +558,18 @@ pub(crate) fn parse_map_argv(argv: &[String]) -> MapArgs {
         argv.iter()
             .map(String::as_str)
             .filter(|a| !a.trim().is_empty()),
+        DoctorSurface::Shell,
     )
 }
 
-/// Shared token loop for both doors (REPL string, shell argv).
-fn parse_map_tokens<'a>(parts: impl IntoIterator<Item = &'a str>) -> MapArgs {
+/// Shared token loop for both doors (REPL string, shell argv). `surface`
+/// spells the command in error text (#1127): a shell reader is told
+/// `yoyo map`, never a `/map` they cannot type.
+fn parse_map_tokens<'a>(
+    parts: impl IntoIterator<Item = &'a str>,
+    surface: DoctorSurface,
+) -> MapArgs {
+    let map = crate::commands_dev::command_form(surface, "map");
     let mut show_all = false;
     let mut force_regex = false;
     let mut path_filter: Option<String> = None;
@@ -577,13 +585,13 @@ fn parse_map_tokens<'a>(parts: impl IntoIterator<Item = &'a str>) -> MapArgs {
                 if let Some(suggestion) = crate::commands::closest_match(part, MAP_FLAGS, 2) {
                     msg.push_str(&format!(" — did you mean {suggestion}?"));
                 }
-                msg.push_str("\n  usage: /map [--all] [--regex] [path]");
+                msg.push_str(&format!("\n  usage: {map} [--all] [--regex] [path]"));
                 return MapArgs::Error(msg);
             }
             _ => {
                 if let Some(first) = &path_filter {
                     return MapArgs::Error(format!(
-                        "two paths given ('{first}' and '{part}') — /map takes at most one path\n  usage: /map [--all] [--regex] [path]"
+                        "two paths given ('{first}' and '{part}') — {map} takes at most one path\n  usage: {map} [--all] [--regex] [path]"
                     ));
                 }
                 // `./src` should behave like `src`: the filter is a plain
@@ -1195,7 +1203,14 @@ mod tests {
             parse_map_argv(&argv(&["--all", "./dir sp"])),
             ok(true, Some("dir sp"))
         );
-        // Near misses, identical to the REPL string parser on the same input.
+        // Near misses: the same parse as the REPL string parser on the same
+        // input. Errors differ only in how the command is spelled (#1127:
+        // `yoyo map` on the shell, `/map` in the REPL), so that one word is
+        // normalised and everything else must match.
+        let respelled = |parsed: MapArgs| match parsed {
+            MapArgs::Error(m) => MapArgs::Error(m.replace("/map", "yoyo map")),
+            other => other,
+        };
         for (elems, line) in [
             (&["a", "b"][..], "a b"),
             (&["--bogus"][..], "--bogus"),
@@ -1206,7 +1221,7 @@ mod tests {
         ] {
             assert_eq!(
                 parse_map_argv(&argv(elems)),
-                parse_map_args(line),
+                respelled(parse_map_args(line)),
                 "{elems:?}"
             );
         }

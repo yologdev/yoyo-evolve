@@ -1,5 +1,6 @@
 //! Skill-related command handlers: /skill list, show, path, install, search.
 
+use crate::commands_dev::DoctorSurface;
 use crate::format::*;
 
 /// Subcommand names for `/skill <Tab>` completion.
@@ -11,7 +12,7 @@ pub const SKILL_SUBCOMMANDS: &[&str] = &["list", "show", "path", "install", "sea
 /// to the loaded `SkillSet`. If no skills directory is configured, prints a
 /// helpful message about the `--skills` flag.
 pub fn handle_skill(input: &str, skills: &yoagent::skills::SkillSet) {
-    handle_skill_status(input, skills);
+    handle_skill_on(input, skills, DoctorSurface::Repl);
 }
 
 /// [`handle_skill`], returning the process exit code the shell `yoyo skill`
@@ -22,6 +23,17 @@ pub fn handle_skill(input: &str, skills: &yoagent::skills::SkillSet) {
 /// clone or fetch fails (2 for an invalid `init` name); an existing skill
 /// left alone and an empty search result stay 0, like `yoyo init`.
 pub fn handle_skill_status(input: &str, skills: &yoagent::skills::SkillSet) -> i32 {
+    handle_skill_on(input, skills, DoctorSurface::Shell)
+}
+
+/// Shared body of both doors; `surface` spells every usage and `try:` line
+/// (#1127), so a shell reader is told `yoyo skill list`, never `/skill list`.
+pub(crate) fn handle_skill_on(
+    input: &str,
+    skills: &yoagent::skills::SkillSet,
+    surface: DoctorSurface,
+) -> i32 {
+    let skill = crate::commands_dev::command_form(surface, "skill");
     let sub = input.strip_prefix("/skill").unwrap_or(input).trim();
 
     if sub.is_empty() || sub == "list" {
@@ -34,12 +46,12 @@ pub fn handle_skill_status(input: &str, skills: &yoagent::skills::SkillSet) -> i
         eprint!("{}", report.stderr);
         return report.code;
     } else if sub == "show" {
-        eprintln!("{YELLOW}  usage: /skill show <name>{RESET}");
-        eprintln!("{DIM}  try /skill list to see available skills{RESET}\n");
+        eprintln!("{YELLOW}  usage: {skill} show <name>{RESET}");
+        eprintln!("{DIM}  try {skill} list to see available skills{RESET}\n");
     } else if let Some(source) = sub.strip_prefix("install ") {
         let source = source.trim();
         if source.is_empty() {
-            eprintln!("{YELLOW}  usage: /skill install <path|gh:user/repo>{RESET}");
+            eprintln!("{YELLOW}  usage: {skill} install <path|gh:user/repo>{RESET}");
             eprintln!(
                 "{DIM}  install a skill from a local directory or GitHub repository{RESET}\n"
             );
@@ -47,7 +59,7 @@ pub fn handle_skill_status(input: &str, skills: &yoagent::skills::SkillSet) -> i
             return skill_install(source);
         }
     } else if sub == "install" {
-        eprintln!("{YELLOW}  usage: /skill install <path|gh:user/repo>{RESET}");
+        eprintln!("{YELLOW}  usage: {skill} install <path|gh:user/repo>{RESET}");
         eprintln!("{DIM}  install a skill from a local directory or GitHub repository{RESET}\n");
     } else if let Some(query) = sub.strip_prefix("search ") {
         let query = query.trim();
@@ -61,20 +73,29 @@ pub fn handle_skill_status(input: &str, skills: &yoagent::skills::SkillSet) -> i
     } else if let Some(name) = sub.strip_prefix("init ") {
         let name = name.trim();
         if name.is_empty() {
-            eprintln!("{YELLOW}  usage: /skill init <name>{RESET}");
+            eprintln!("{YELLOW}  usage: {skill} init <name>{RESET}");
             eprintln!("{DIM}  scaffold a new skill in .yoyo/skills/<name>/SKILL.md{RESET}\n");
         } else {
             return skill_init(name);
         }
     } else if sub == "init" {
-        eprintln!("{YELLOW}  usage: /skill init <name>{RESET}");
+        eprintln!("{YELLOW}  usage: {skill} init <name>{RESET}");
         eprintln!("{DIM}  scaffold a new skill in .yoyo/skills/<name>/SKILL.md{RESET}\n");
     } else {
         eprintln!("{RED}  unknown subcommand: {sub}{RESET}");
-        eprintln!("{DIM}  try: /skill list, /skill show <name>, /skill path, /skill install <path>, /skill search <query>, /skill init <name>{RESET}\n");
+        eprintln!("{DIM}  {}{RESET}\n", skill_try_line(surface));
         return 2;
     }
     0
+}
+
+/// The `try:` line after an unknown `/skill` subcommand, one alternative per
+/// [`SKILL_SUBCOMMANDS`] entry, spelled for `surface` (#1127).
+pub(crate) fn skill_try_line(surface: DoctorSurface) -> String {
+    let skill = crate::commands_dev::command_form(surface, "skill");
+    format!(
+        "try: {skill} list, {skill} show <name>, {skill} path, {skill} install <path>, {skill} search <query>, {skill} init <name>"
+    )
 }
 
 /// Validate a skill name: must be kebab-case (a-z, 0-9, hyphens).
