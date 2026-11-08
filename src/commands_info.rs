@@ -759,6 +759,10 @@ pub fn model_context_window(model: &str) -> Option<u64> {
     {
         return Some(u64::from(preset.context_window));
     }
+    // #1157: the run path's table for Gemini ids with no preset.
+    if let Some((window, _)) = crate::agent_builder::google_limits_beyond_preset(model) {
+        return Some(u64::from(window));
+    }
     if model.contains("claude") {
         let config = ["bedrock", "openrouter"]
             .iter()
@@ -790,12 +794,6 @@ fn model_context_window_table(model: &str) -> Option<u64> {
     // OpenAI o-series reasoning models
     if model.starts_with("o3") || model.starts_with("o4") {
         return Some(200_000);
-    }
-    // Gemini 3.x / 2.5 with no preset — 1,048,576 input tokens per each id's
-    // page under ai.google.dev/gemini-api/docs/models/ (read 2026-11-08, #1118).
-    // 2.0 is shut down there, so it gets no pinned window.
-    if model.contains("gemini-3") || model.contains("gemini-2.5") {
-        return Some(1_048_576);
     }
     // xAI Grok — 131k
     if model.contains("grok") {
@@ -879,6 +877,13 @@ pub fn handle_model_info(model_name: &str, current_model: &str) {
     match model_context_window(model_name) {
         Some(ctx) => println!("  {DIM}Context:{RESET}   {}", format_context_size(ctx)),
         None => println!("  {DIM}Context:{RESET}   {YELLOW}unknown{RESET}"),
+    }
+    // Gemini's published output cap: the same authority the run path reads.
+    if let Some(out) = crate::agent_builder::declared_output_ceiling("google", model_name, 0) {
+        println!(
+            "  {DIM}Output:{RESET}    {}",
+            format_context_size(u64::from(out))
+        );
     }
 
     // Pricing — use estimate_cost with synthetic Usage to extract per-MTok rates

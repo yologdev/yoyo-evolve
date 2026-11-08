@@ -25,10 +25,12 @@ fn bedrock_and_google_do_not_quote_their_request_default_as_a_ceiling() {
     // The two live repros from #1020. The bedrock default
     // (anthropic.claude-sonnet-4-6) took the anthropic preset's 64000 on Day
     // 247 (#1116), so it can no longer hold the "under 32000" premise; a
-    // bedrock id still on the 16K guess stands in for it here.
+    // bedrock id still on the 16K guess stands in for it here. Likewise
+    // gemini-2.5-flash took Google's published 65,536 (#1157); an id Google
+    // does not list stays on the 8192 guess.
     for (provider, model) in [
         ("bedrock", "amazon.nova-pro-v1:0"),
-        ("google", "gemini-2.5-flash"),
+        ("google", "gemini-3.0-flash"),
     ] {
         // Anti-vacuous: the resolved default really is below 32000, so the old
         // `Some(max_tokens)` would have warned here.

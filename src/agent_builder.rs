@@ -853,6 +853,14 @@ pub(crate) fn vendor_preset_by_id(model: &str) -> Option<ModelConfig> {
         .find_map(|p| vendor_preset(p, model))
 }
 
+/// [`crate::providers::google_published_limits`] for an id yoagent has no preset for.
+pub(crate) fn google_limits_beyond_preset(model: &str) -> Option<(u32, u32)> {
+    vendor_preset("google", model).map_or_else(
+        || crate::providers::google_published_limits(model),
+        |_| None,
+    )
+}
+
 /// Copy a preset's limits, price and reasoning onto an arm's config, keeping
 /// the arm's own wire fields (base URL, compat, headers).
 fn apply_vendor_preset(config: &mut ModelConfig, provider: &str, model: &str) {
@@ -890,7 +898,9 @@ pub(crate) fn declared_output_ceiling(p: &str, model: &str, max_tokens: u32) -> 
     match p {
         "anthropic" => anthropic_output_maximum(model),
         // Gemini's 65,536 is a published cap; xAI/Mistral publish none.
-        "google" => vendor_preset(p, model).map(|c| c.max_tokens),
+        "google" => vendor_preset(p, model)
+            .map(|c| c.max_tokens)
+            .or(google_limits_beyond_preset(model).map(|(_, out)| out)),
         "bedrock" => None,
         _ => openai_compat_output_ceiling(p, model, max_tokens),
     }
@@ -984,6 +994,10 @@ pub fn create_model_config(provider: &str, model: &str, base_url: Option<&str>) 
         "google" => {
             let mut config = ModelConfig::google(model, model);
             apply_vendor_preset(&mut config, provider, model);
+            // #1157: no preset, but Google's own page publishes the limits.
+            if let Some((w, out)) = google_limits_beyond_preset(model) {
+                (config.context_window, config.max_tokens) = (w, out);
+            }
             if let Some(url) = base_url {
                 config.base_url = url.to_string();
             }
@@ -1729,7 +1743,7 @@ impl AgentConfig {
             let context_window = model_config.context_window;
             let output_ceiling =
                 declared_output_ceiling(&self.provider, &self.model, model_config.max_tokens);
-            // #1021: gemini ids with no preset run on google's 1M / 8192 guess.
+            // #1021/#1157: gemini ids with no preset and no published row guess.
             crate::model_limits_note::warn_once_if_guessing(
                 &self.provider,
                 &self.model,

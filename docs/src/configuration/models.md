@@ -147,14 +147,23 @@ Gemini 4 Argon and Gemini 3.8 Flash bill Google's introductory rate until its st
 the regular rate after (since Day 242; see [Cost Tracking](../features/cost-tracking.md)). Near-miss ids (`gemini-3.8-flash-lite`, `grok-4.7-mini`, `mistral-large-latest`,
 `glm-5.4`) keep the generic defaults.
 
+The other Gemini ids yoyo offers with no yoagent preset (`gemini-3.5-flash-lite`,
+`gemini-3.1-flash-lite`, `gemini-3-flash-preview`, `gemini-2.5-flash-lite`, `gemini-2.5-pro`,
+`gemini-2.5-flash`) take the limits each id's own page under
+[ai.google.dev/gemini-api/docs/models](https://ai.google.dev/gemini-api/docs/models) publishes:
+1,048,576 input tokens and 65,536 output tokens (read 2026-11-08). `/model info` prints the same
+window and output cap, a `max_tokens` above 65,536 gets the declared-ceiling warning, and your own
+`max_tokens` / `context_window` still win. yoyo's Google provider sends `maxOutputTokens` only
+when you set `max_tokens`; otherwise Google applies its own default.
+
 ### Models with no preset run on guessed limits
 
 A model id yoyo has no preset for runs on its provider's guess: the limits that provider hands
 every id it does not know. On the OpenAI-compatible providers `openai`, `openrouter`, `xai`, `groq`,
 `mistral`, `cerebras`, `github` and `zai` that is a 128,000-token context window and
 `max_tokens = 4096`; on `minimax` a 1M window and `max_tokens = 4096`; on `google` a 1M window and
-`max_tokens = 8192` (this is what `gemini-3.5-flash-lite`, `gemini-3.1-flash-lite`,
-`gemini-3-flash-preview` and the 2.5 models run on today). That cap covers reasoning plus answer on every turn, so a newer
+`max_tokens = 8192` (for a `gemini-*` id that is neither a preset nor one of the offered ids
+below). That cap covers reasoning plus answer on every turn, so a newer
 model (for example a GPT release newer than yoyo's presets) can be cut short. yoyo now says so once per model on stderr, even in
 quiet or piped runs (stdout is unchanged):
 

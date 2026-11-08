@@ -244,19 +244,15 @@ context_window in .yoyo.toml (or pass --max-tokens / --context-window)."
         assert!(out.contains(&format!("max_tokens = {max}")), "{out}");
     }
 
-    /// #1021, Day 238: the four gemini-2.x ids on google's known list have no
-    /// preset, so `ModelConfig::google` hands them its per-id-agnostic guess
-    /// (1M window, max_tokens 8192). They warn with the numbers they really run
-    /// on, read from the resolver, never typed here.
+    /// #1021, Day 238: a gemini id with no preset gets `ModelConfig::google`'s
+    /// per-id-agnostic guess (1M window, max_tokens 8192) and warns with the
+    /// numbers it really runs on, read from the resolver, never typed here.
+    /// #1157: the offered 2.5 ids now carry Google's published limits, so the
+    /// guessing rows are ids Google does not list.
     #[test]
     fn google_ids_on_the_guess_warn_and_preset_ids_stay_silent() {
         let probe = create_model_config("google", PROBE_IDS[0], None);
-        for id in [
-            "gemini-2.5-pro",
-            "gemini-2.5-flash",
-            "gemini-2.5-flash-lite",
-            "gemini-2.0-flash",
-        ] {
+        for id in ["gemini-zzz", "gemini-3.0-pro", "gemini-2.0-flash"] {
             let out = note_for("google", id, true).unwrap_or_else(|| panic!("{id} must warn"));
             assert_eq!(
                 out,
@@ -273,6 +269,8 @@ context_window in .yoyo.toml (or pass --max-tokens / --context-window).",
         // Near-miss: the current google default has a vendor preset.
         assert_eq!(note_for("google", "gemini-3.8-flash", true), None);
         assert_eq!(note_for("google", "gemini-4-argon", true), None);
+        // #1157: a published-limits row is not a guess either.
+        assert_eq!(note_for("google", "gemini-2.5-pro", true), None);
         // Anthropic default (fleet preset) stays silent.
         assert_eq!(note_for("anthropic", "claude-opus-5-5", true), None);
     }
@@ -292,7 +290,7 @@ context_window in .yoyo.toml (or pass --max-tokens / --context-window).",
             );
         }
         let g = create_model_config("google", PROBE_IDS[0], None);
-        let flash = create_model_config("google", "gemini-2.5-flash", None);
+        let flash = create_model_config("google", "gemini-3.0-flash", None);
         assert_eq!(
             (g.context_window, g.max_tokens),
             (flash.context_window, flash.max_tokens)

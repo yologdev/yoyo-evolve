@@ -408,6 +408,58 @@ pub fn unknown_provider_refusal(provider: &str, base_url_given: bool) -> Option<
     Some(msg)
 }
 
+/// #1157: limits for offered `google` ids yoagent has no preset for, each
+/// read from that id's own page (2026-11-08): `(id, input token limit,
+/// output token limit, source)`. Without a row the run path would use
+/// `ModelConfig::google`'s 1,000,000 / 8192 guess, cutting replies at 8192.
+/// A row must never shadow a yoagent preset (a test checks both ways).
+pub(crate) const GOOGLE_PUBLISHED_LIMITS: &[(&str, u32, u32, &str)] = &[
+    (
+        "gemini-3.5-flash-lite",
+        1_048_576,
+        65_536,
+        "https://ai.google.dev/gemini-api/docs/models/gemini-3.5-flash-lite",
+    ),
+    (
+        "gemini-3.1-flash-lite",
+        1_048_576,
+        65_536,
+        "https://ai.google.dev/gemini-api/docs/models/gemini-3.1-flash-lite",
+    ),
+    (
+        "gemini-3-flash-preview",
+        1_048_576,
+        65_536,
+        "https://ai.google.dev/gemini-api/docs/models/gemini-3-flash-preview",
+    ),
+    (
+        "gemini-2.5-flash-lite",
+        1_048_576,
+        65_536,
+        "https://ai.google.dev/gemini-api/docs/models/gemini-2.5-flash-lite",
+    ),
+    (
+        "gemini-2.5-pro",
+        1_048_576,
+        65_536,
+        "https://ai.google.dev/gemini-api/docs/models/gemini-2.5-pro",
+    ),
+    (
+        "gemini-2.5-flash",
+        1_048_576,
+        65_536,
+        "https://ai.google.dev/gemini-api/docs/models/gemini-2.5-flash",
+    ),
+];
+
+/// `(context_window, max_output)` from [`GOOGLE_PUBLISHED_LIMITS`].
+pub(crate) fn google_published_limits(id: &str) -> Option<(u32, u32)> {
+    GOOGLE_PUBLISHED_LIMITS
+        .iter()
+        .find(|(row, ..)| *row == id)
+        .map(|&(_, window, out, _)| (window, out))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -465,17 +517,6 @@ mod tests {
         ),
     ];
 
-    /// #1118: Google ids offered with no yoagent preset or price row, each
-    /// with the page that lists it as a chat model (all read 2026-11-08).
-    const GEMINI_IDS_SOURCED_FROM_GOOGLE_PAGE: &[(&str, &str)] = &[
-        ("gemini-3.5-flash-lite", "ai.google.dev/gemini-api/docs/models/gemini-3.5-flash-lite (Stable)"),
-        ("gemini-3.1-flash-lite", "ai.google.dev/gemini-api/docs/models/gemini-3.1-flash-lite (Stable)"),
-        ("gemini-3-flash-preview", "ai.google.dev/gemini-api/docs/models/gemini-3-flash-preview (Preview)"),
-        ("gemini-2.5-flash-lite", "ai.google.dev/gemini-api/docs/models: 'not deprecated and will continue to be served'"),
-        ("gemini-2.5-pro", "ai.google.dev/gemini-api/docs/models: deprecated, served to existing users; routes to gemini-3.8-flash from 2026-12-01"),
-        ("gemini-2.5-flash", "ai.google.dev/gemini-api/docs/models: deprecated, served to existing users; routes to gemini-3.5-flash-lite from 2026-12-01"),
-    ];
-
     /// A yoagent preset or bundled price row for `google`/`id`.
     fn yoagent_knows_gemini(id: &str) -> bool {
         yoagent::provider::ModelConfig::preset("google", id).is_some()
@@ -494,16 +535,15 @@ mod tests {
             .iter()
             .filter(|id| id.starts_with("gemini-"));
         for id in known_models_for_provider("google").iter().chain(picker) {
-            let sourced = GEMINI_IDS_SOURCED_FROM_GOOGLE_PAGE
-                .iter()
-                .any(|(s, _)| s == id);
+            // #1157: the page rows now live in the production table.
+            let sourced = google_published_limits(id).is_some();
             assert!(
                 yoagent_knows_gemini(id) || sourced,
                 "google offers {id}: no yoagent preset/price row and no Google-page row"
             );
         }
         // A page row must not shadow a yoagent row (it would outlive its premise).
-        for (id, url) in GEMINI_IDS_SOURCED_FROM_GOOGLE_PAGE {
+        for (id, _, _, url) in GOOGLE_PUBLISHED_LIMITS {
             assert!(
                 !yoagent_knows_gemini(id),
                 "{id} is in yoagent now; drop its row ({url})"
@@ -1056,6 +1096,10 @@ mod tests {
         assert!(models.contains(&"anthropic/claude-sonnet-4-6"));
     }
 }
+
+#[cfg(test)]
+#[path = "google_limits_tests.rs"]
+mod google_limits_tests;
 
 #[cfg(test)]
 #[path = "providers_key_tests.rs"]
