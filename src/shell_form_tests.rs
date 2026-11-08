@@ -129,3 +129,23 @@ fn skill_try_line_offers_only_real_yoyo_skill_forms_on_the_shell() {
         "try: /skill list, /skill show <name>, /skill path, /skill install <path>, /skill search <query>, /skill init <name>"
     );
 }
+
+#[test]
+fn skill_search_install_hint_names_the_door_it_is_printed_on() {
+    // #1127: the last line of `yoyo skill search` said `/skill install ...`.
+    // Shell door: handle_skill_status -> handle_skill_on(Shell) passes
+    // command_form(Shell, "skill") into handle_skill_search, which prints
+    // this line; the search itself needs gh + network, so the formatter is
+    // pinned here and the shell wiring by the `skill install <file>` binary
+    // test in tests/integration.rs, which goes through the same `skill` value.
+    use crate::commands_dev::command_form;
+    use crate::commands_skill::skill_search_install_hint;
+    assert_eq!(
+        skill_search_install_hint(&command_form(Shell, "skill")),
+        "install with: yoyo skill install gh:<owner>/<repo>"
+    );
+    assert_eq!(
+        skill_search_install_hint(&command_form(Repl, "skill")),
+        "install with: /skill install gh:<owner>/<repo>"
+    );
+}

@@ -349,6 +349,8 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // arm (+7); the other +1 was drift already present at HEAD (6602). Pasted.
     // Day 252 (#1127): +9, unknown_risk_subcommand_line(surface) + its import.
     ("src/commands_risk.rs", 6624),
+    // Day 253: pasted from what the gate printed; unlisted at 2036, 14 lines from FATAL.
+    ("src/commands_risk_unhittable.rs", 2036),
     // Day 162 (#707): +68 lines — format_project_index no longer byte-slices a
     // path tail (live panic on any non-ASCII path >50 bytes) and measures its
     // column in chars; 62 of the 68 lines are the two regression tests, one of

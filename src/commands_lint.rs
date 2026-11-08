@@ -231,7 +231,7 @@ pub(crate) fn arg_is_fix_subcommand(arg: &str) -> bool {
 /// Returns a summary string suitable for AI context.
 /// Accepts the full input string (e.g. "/lint", "/lint pedantic", "/lint strict").
 pub fn handle_lint(input: &str) -> Option<String> {
-    handle_lint_status(input).0
+    handle_lint_on(input, crate::commands_dev::DoctorSurface::Repl).0
 }
 
 /// `/lint` with an exit status for the shell door (`yoyo lint`, #982): the
@@ -243,6 +243,16 @@ pub fn handle_lint(input: &str) -> Option<String> {
 /// passed, `lint unsafe`, and a project type with no lint command exit 0.
 /// The REPL calls `handle_lint`, which discards the code.
 pub(crate) fn handle_lint_status(input: &str) -> (Option<String>, i32) {
+    handle_lint_on(input, crate::commands_dev::DoctorSurface::Shell)
+}
+
+/// Shared body of both doors; `surface` spells the unknown-subcommand line
+/// (#1127), so `yoyo lint zz` names `yoyo lint`, never `/lint`.
+pub(crate) fn handle_lint_on(
+    input: &str,
+    surface: crate::commands_dev::DoctorSurface,
+) -> (Option<String>, i32) {
+    let lint = crate::commands_dev::command_form(surface, "lint");
     // Parse strictness from subcommand
     let arg = input.strip_prefix("/lint").unwrap_or("").trim();
 
@@ -278,14 +288,14 @@ pub(crate) fn handle_lint_status(input: &str) -> (Option<String>, i32) {
         // reported "Lint passed" — the user's request silently became a different
         // operation. Name what was not recognised instead, as /risk and /fork do.
         _ => {
-            println!("{YELLOW}  Unknown /lint subcommand: {arg}{RESET}");
+            println!("{YELLOW}  Unknown {lint} subcommand: {arg}{RESET}");
             println!(
                 "{DIM}  Available: {}{RESET}\n",
                 LINT_SUBCOMMANDS.join(" | ")
             );
             return (
                 Some(format!(
-                    "Unknown /lint subcommand: {arg} (available: {})",
+                    "Unknown {lint} subcommand: {arg} (available: {})",
                     LINT_SUBCOMMANDS.join(" | ")
                 )),
                 // #982: `yoyo lint zz` exited 0 after refusing. #1009: 2, not 1 — a
@@ -1073,14 +1083,14 @@ mod tests {
         // -> exit_if_nonzero), so the unknown arm must carry a failure value.
         // Day 235 (#1009): the expected code moved 1 -> 2 on purpose, a
         // convention change: an unknown verb is a usage error everywhere else.
+        // handle_lint_status is the shell door (dispatch_sub.rs "lint"), so
+        // since #1127 its line names `yoyo lint`, never the REPL's `/lint`.
         let (summary, code) = handle_lint_status("/lint zz");
         assert_eq!(code, 2, "unknown subcommand must be a usage error");
-        assert!(
-            summary
-                .as_deref()
-                .unwrap_or("")
-                .contains("Unknown /lint subcommand: zz"),
-            "summary unchanged: {summary:?}"
+        let available = LINT_SUBCOMMANDS.join(" | ");
+        assert_eq!(
+            summary.as_deref(),
+            Some(format!("Unknown yoyo lint subcommand: zz (available: {available})").as_str()),
         );
         // Near-miss: `fix` is documented, so it is NOT the unknown-subcommand
         // failure (code 2, a summary). It is a session refusal that ran nothing,
@@ -1090,6 +1100,30 @@ mod tests {
             (None, crate::setup::SETUP_NOT_INTERACTIVE_EXIT)
         );
         assert_ne!(crate::setup::SETUP_NOT_INTERACTIVE_EXIT, 1);
+    }
+
+    #[test]
+    fn unknown_lint_subcommand_names_the_form_of_the_door_it_came_through() {
+        // #1127: the REPL keeps `/lint`; the shell door gets `yoyo lint`.
+        let available = LINT_SUBCOMMANDS.join(" | ");
+        let repl = handle_lint_on("/lint zz", crate::commands_dev::DoctorSurface::Repl);
+        assert_eq!(
+            repl,
+            (
+                Some(format!(
+                    "Unknown /lint subcommand: zz (available: {available})"
+                )),
+                2
+            )
+        );
+        let shell = handle_lint_on("/lint zz", crate::commands_dev::DoctorSurface::Shell);
+        let shell_text = shell.0.unwrap_or_default();
+        assert!(
+            !shell_text.contains("/lint"),
+            "slash form on shell: {shell_text}"
+        );
+        // The REPL wrapper is the Repl door, not the shell one.
+        assert_eq!(handle_lint("/lint zz"), repl.0);
     }
 
     #[test]

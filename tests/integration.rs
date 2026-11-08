@@ -3971,6 +3971,39 @@ fn bare_ast_usage_names_yoyo_ast_not_the_repl_slash_form() {
 }
 
 #[test]
+fn unknown_lint_subcommand_on_the_shell_names_yoyo_lint_not_slash_lint() {
+    // #1127: `yoyo lint zz1` printed `Unknown /lint subcommand: zz1`. The
+    // unknown-token branch returns before project detection, so an empty
+    // temp dir is enough.
+    let dir = tempfile::tempdir().unwrap();
+    let (code, stdout, stderr) = yoyo_plain_in(dir.path(), &["lint", "zz1"]);
+    assert_eq!(code, Some(2), "stdout={stdout} stderr={stderr}");
+    let first = stdout.lines().next().unwrap_or("");
+    assert_eq!(
+        first, "  Unknown yoyo lint subcommand: zz1",
+        "stdout={stdout}"
+    );
+    assert!(
+        !stdout.contains("/lint"),
+        "slash form on the shell: {stdout}"
+    );
+}
+
+#[test]
+fn skill_install_of_a_file_on_the_shell_names_yoyo_skill_not_slash_skill() {
+    // #1127: the not-a-directory hint said `/skill install expects ...`. A
+    // regular file fails before anything reads HOME or the network.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("notadir"), "x").unwrap();
+    let (code, stdout, stderr) = yoyo_plain_in(dir.path(), &["skill", "install", "notadir"]);
+    assert_eq!(code, Some(1), "stdout={stdout} stderr={stderr}");
+    assert_eq!(
+        stderr,
+        "  error: not a directory: notadir\n  yoyo skill install expects a skill directory containing SKILL.md\n\n"
+    );
+}
+
+#[test]
 fn blame_with_an_inverted_range_is_a_usage_error_and_exits_two() {
     // Same parse-error branch as bare `blame`: a range the parser refuses is
     // a usage error, not a success.
@@ -4525,8 +4558,9 @@ fn docs_lint_skill_take_one_spaced_argv_element_whole() {
     let (code, stdout, stderr) = yoyo_plain_in(dir.path(), &["lint", "a b"]);
     assert_eq!(code, Some(2), "stdout={stdout:?} stderr={stderr:?}");
     assert_eq!(
-        line(&stdout, "Unknown /lint subcommand"),
-        "  Unknown /lint subcommand: a b"
+        line(&stdout, "Unknown yoyo lint subcommand"),
+        // #1127: the shell door names `yoyo lint`, not the REPL's `/lint`.
+        "  Unknown yoyo lint subcommand: a b"
     );
     assert!(!stdout.contains('"'), "{stdout:?}");
 
@@ -4544,8 +4578,8 @@ fn docs_lint_skill_take_one_spaced_argv_element_whole() {
     let (code, stdout, _) = yoyo_plain_in(dir.path(), &["lint", "zzzq"]);
     assert_eq!(code, Some(2), "{stdout:?}");
     assert_eq!(
-        line(&stdout, "Unknown /lint subcommand"),
-        "  Unknown /lint subcommand: zzzq"
+        line(&stdout, "Unknown yoyo lint subcommand"),
+        "  Unknown yoyo lint subcommand: zzzq"
     );
 
     // Near misses. `yoyo lint` with no project still exits 1 (nothing ran);

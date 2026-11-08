@@ -56,7 +56,7 @@ pub(crate) fn handle_skill_on(
                 "{DIM}  install a skill from a local directory or GitHub repository{RESET}\n"
             );
         } else {
-            return skill_install(source);
+            return skill_install(source, &skill);
         }
     } else if sub == "install" {
         eprintln!("{YELLOW}  usage: {skill} install <path|gh:user/repo>{RESET}");
@@ -64,12 +64,12 @@ pub(crate) fn handle_skill_on(
     } else if let Some(query) = sub.strip_prefix("search ") {
         let query = query.trim();
         if query.is_empty() {
-            return handle_skill_search(None);
+            return handle_skill_search(None, &skill);
         } else {
-            return handle_skill_search(Some(query));
+            return handle_skill_search(Some(query), &skill);
         }
     } else if sub == "search" {
-        return handle_skill_search(None);
+        return handle_skill_search(None, &skill);
     } else if let Some(name) = sub.strip_prefix("init ") {
         let name = name.trim();
         if name.is_empty() {
@@ -331,7 +331,8 @@ struct SkillSearchResult {
 /// Searches for repositories with the `yoyo-skill` topic. If no topic-based
 /// results are found, falls back to a text search for "yoyo-skill".
 /// Displays results in a formatted table with install hints.
-fn handle_skill_search(query: Option<&str>) -> i32 {
+/// `skill` is the door's form of the verb (`command_form`, #1127).
+fn handle_skill_search(query: Option<&str>, skill: &str) -> i32 {
     // Check if gh CLI is available
     let gh_check = std::process::Command::new("gh")
         .arg("--version")
@@ -406,7 +407,7 @@ fn handle_skill_search(query: Option<&str>) -> i32 {
         println!("    {GREEN}{name_display}{RESET}{padding}  {DIM}{desc}{RESET}{updated_str}");
     }
 
-    println!("\n{DIM}  install with: /skill install gh:<owner>/<repo>{RESET}\n");
+    println!("\n{DIM}  {}{RESET}\n", skill_search_install_hint(skill));
     0
 }
 
@@ -637,13 +638,18 @@ pub(crate) fn skill_install_dir_from(
     Some(config_dir.join("yoyo").join("skills"))
 }
 
+/// The last line of a search listing, spelled for the door (#1127).
+pub(crate) fn skill_search_install_hint(skill: &str) -> String {
+    format!("install with: {skill} install gh:<owner>/<repo>")
+}
+
 /// Install a skill from a local directory path.
 ///
 /// Validates the source, extracts the skill name from SKILL.md frontmatter,
 /// and copies the entire directory to `~/.config/yoyo/skills/<name>/`.
 ///
 /// If the source starts with `gh:`, delegates to [`skill_install_from_github`].
-fn skill_install(source: &str) -> i32 {
+fn skill_install(source: &str, skill: &str) -> i32 {
     if source.starts_with("gh:") {
         return skill_install_from_github(source);
     }
@@ -657,7 +663,7 @@ fn skill_install(source: &str) -> i32 {
     }
     if !source_path.is_dir() {
         eprintln!("{RED}  error: not a directory: {source}{RESET}");
-        eprintln!("{DIM}  /skill install expects a skill directory containing SKILL.md{RESET}\n");
+        eprintln!("{DIM}  {skill} install expects a skill directory containing SKILL.md{RESET}\n");
         return 1;
     }
 
