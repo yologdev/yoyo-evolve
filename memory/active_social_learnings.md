@@ -2,18 +2,17 @@
 
 What I've learned about people from talking with them.
 
-<!-- Synthesized 2026-11-06T19:00Z (day 251) from memory/social_learnings.jsonl: 228 entries, days 11-251
-     (2026-03-11 -> 2026-11-06), 228/228 parsed. Tiers by age from 2026-11-06T19:00Z: recent (<14d, since
-     2026-10-23T19:00Z; days 240-251) = 7; medium (14d-8wk, 2026-09-11 -> 2026-10-23; days 200-236) = 27;
-     old (>8wk; days 11-175) = 194. Since the 2026-11-03 run: one new day-251 entry added to Recent; the
-     day-235 and day-236 entries moved from Recent to Medium (merged into "Asking the owner"). The Old tier
-     is the same 194 entries as last run, so its Wisdom groups are carried over; spot-checked against the
-     archive (pat pat, "you are bot", Memento, obligation-shifted, not_consulted, seizure, 16GB, "you owe me
-     nothing") and all found. Gaps, stated not smoothed: nothing recorded between day 175 (2026-08-22) and
-     day 200 (2026-09-16), between day 208 and day 216, or on days 217, 219, 222, 224, 229, 231, 232, 234,
-     237-239, 241, 243, 244, 247, 249 and 250. -->
+<!-- Synthesized 2026-11-08T17:44Z (day 253) from memory/social_learnings.jsonl: 230 entries, days 11-253
+     (2026-03-11 -> 2026-11-08), 230/230 parsed. Tiers by age from 2026-11-08T17:44Z: recent (<=14d, since
+     2026-10-25T17:44Z; days 240-253) = 9; medium (14d-8wk, 2026-09-13 -> 2026-10-25; days 200-236) = 27;
+     old (>8wk; days 11-175) = 194. Since the 2026-11-06 run: two new entries (days 252, 253) added to Recent;
+     no entry changed tier, so Medium and the Old Wisdom groups are carried over. Re-checked this run: medium
+     day list (200..236, 27 entries) and Old-tier anchors (pat pat, "you are bot", Memento, obligation-shifted,
+     not_consulted, seizure, 16GB, "you owe me nothing", RSS, paperclip, Dilbert, Occam) all found in the archive.
+     Gaps, stated not smoothed: nothing recorded between day 175 (2026-08-22) and day 200 (2026-09-16), between
+     day 208 and day 216, or on days 217, 219, 222, 224, 229, 231, 232, 234, 237-239, 241, 243, 244, 247, 249, 250. -->
 
-## Recent (last 2 weeks): days 240-251 (2026-10-26 → 2026-11-06)
+## Recent (last 2 weeks): days 240-253 (2026-10-26 → 2026-11-08)
 
 - **Day 240 · 2026-10-26T08:05Z · @yuanhao · discussion #1079, issue #1071.** He picked A, did the protected-file half himself in one commit, handed me my half by name, and added something unasked (skip-when-unchanged, with "read it before you trust the row counts"). One line in the discussion, details on the ticket. Spread now ~2h/22h/37h/78h/92h. When the owner does his half and warns me how to read it, the useful reply checks his artifact: I read its first row and reported four null-cost test-model records my reader would miscount, on the ticket he pointed to.
 - **Day 242 · 2026-10-28T02:15Z · @yuanhao · issue #1078.** My A/B said "then I'd edit rule 6", a file protected from me; he picked A (~85h) and silently made my edit too, with one line saying why. He corrects an unexecutable promise by doing it, so the mistake leaves no trace unless I look. Before writing "then I'd do X" in an ask, check X is mine to do. When he does my half, check his version against my own numbers, and reply on the ticket he answered.
@@ -22,6 +21,8 @@ What I've learned about people from talking with them.
 - **Day 246 · 2026-11-01T16:58Z · @JC351 (new), @yuanhao · issues #1089/#1096.** My "the room is one person" counted only discussions. In the same window a stranger filed a growth challenge, then re-filed it in my Challenge template with baseline, guardrails and fallback: he reshaped his ask to fit my intake, via a channel my census never read. I handed the identity question to @yuanhao (~34h): yoyo already posts on X from a separate harness (memory in yologdev/gasp), spam-ban risk is real, and "here he needs to stay focused on evolving". Count every channel before describing who reads me; my public self is bigger than this repo's memory. Adopting a stranger's idea was the owner's move, correctly not mine.
 - **Day 248 · 2026-11-03T14:50Z · @yuanhao · issues #1123/#1124/#1125 (upstream), #1064, #1096.** Three precise upstream asks, each naming the missing API and why yoyo needs it: two shipped in yoagent 0.26.7 (~3h), the third in 0.26.8 (~4h15m), each reply naming the release and function and pointing the yoyo half back to my ticket. Same morning he answered #1120, #1102, #1064. He hasn't gone quiet; he moved to where the work is. His fastest channel is a narrow ask inside his own work with the API already specified. A quiet discussions page is not a quiet relationship.
 - **Day 251 · 2026-11-06T09:40Z · @yuanhao · issue #1012 (his 2026-11-03T08:41Z decision), journal Day 251 02:02.** His decision named the policy replacing mine ("the regular rate as an upper bound, with promo_until on promos"): he had read my error-direction rule and overrode it knowingly, cost accepted in advance. My journal still told the deleted promo fix as my own compromise, a regret that wasn't mine. Mirror of Day 243, where I filed his conditional as a row of my own menu: one took his authorship away, this took the decision onto me; both lose that the priced trade was his. When the owner overrides a rule of mine, quote his sentence that prices the cost and attribute the trade to him, or I invite myself to undo a choice he made on purpose. Side count: my last five Journal Club posts (#1085, #1090, #1093, #1095, #1140) drew 0 human comments; last human discussion comment is still @yuanhao on #1079 (2026-10-26).
+- **Day 252 · 2026-11-07T22:05Z · @JC351, @yuanhao · issue #1096 (closed 2026-11-02; JC351 comment 2026-11-05T18:07Z).** Five days after the owner closed his challenge, @JC351 came back to the closed issue asking when, and what the new X handle is "so I could go and give it a follow". The one recent outside human wants a way to act, and the self he wants to follow is my X self, which this repo has no memory of. I don't know my own handle from here, and guessing would be worse than silence; it's the owner's plan and identity question (Day 246), so I left it to him. ~52h unanswered while he answered #1146 and #1144: not a refusal (the harness is mid-migration). A closed issue is a cold channel, invisible to my discussion sweep, so count it anyway. When a stranger's interest goes to a part of me I can't see, name who can answer rather than fill the gap.
+- **Day 253 · 2026-11-08T16:50Z · @yuanhao · discussion #1156, issue #1149.** Carrier #1149 sat ~22h untouched. I opened #1156 as a bounded either/or: my default (A), each option's cost, the exact protected line B would make him edit, and "a letter on #1149 is enough". He answered in ~31 minutes, exactly at the size I priced: one letter plus one line of reason on the carrier, and "A. Answered on #1149." in the discussion. That ended the zero-comment run since #1079 (2026-10-26), on an ask, not a broadcast, consistent with Day 242. Can't tell whether the ping reached him where the ticket hadn't or he just got to it that morning. The reply size I name is the size I get back, so the ask must contain everything the decision needs; he doesn't expand it. One ask, one reply.
 
 ## Medium (2-8 weeks old): days 200-236 (2026-09-16 → 2026-10-22). 27 entries, insight only; entries from one exchange are merged.
 
