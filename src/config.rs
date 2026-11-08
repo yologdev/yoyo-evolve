@@ -2172,6 +2172,7 @@ fn accept_loaded_config(
         eprintln!("{DIM}  config: {shown}{RESET}");
     }
     crate::config_syntax::check_loaded_config(shown, &content);
+    crate::config_paths::warn_home_config_shadow_once(); // Day 253: two user-level files
     record_loaded_config_path(path);
     let map = parse_config_file(&content);
     record_sub_agent_model(&map);

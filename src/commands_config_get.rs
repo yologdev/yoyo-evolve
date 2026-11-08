@@ -71,3 +71,59 @@ pub(crate) fn config_get_usage(surface: crate::commands_dev::DoctorSurface) -> S
         settable_keys_list()
     )
 }
+
+/// The lost-settings hint for `config get <key>` (Day 253): one line per
+/// skipped config file (`skipped`, from `config_paths::skipped_config_sources`)
+/// that sets `key`, saying it is not read because `loaded` is found first.
+/// yoyo reads one config file, first found wins, never merged, so a key set
+/// only in a shadowed file reads as "not set" — true of the file read, and
+/// silent about the file the user actually wrote it in. Plain text (no
+/// colour) so the table can compare whole strings; the caller styles it.
+/// `read` returns a file's contents, or `None` when it cannot be read (no
+/// guess is made about an unreadable file). Each file is parsed by
+/// `cli::parse_config_file`, the same rule `config get` applies to `loaded`.
+pub(crate) fn shadowed_key_note(
+    key: &str,
+    loaded: &std::path::Path,
+    skipped: &[std::path::PathBuf],
+    read: impl Fn(&std::path::Path) -> Option<String>,
+) -> Vec<String> {
+    skipped
+        .iter()
+        .filter_map(|path| {
+            let value = crate::cli::parse_config_file(&read(path)?).remove(key)?;
+            let shown = if is_secret_key(key) {
+                "***".to_string()
+            } else {
+                value
+            };
+            Some(format!(
+                "note: {} sets {key} = {shown}, but it is not read: {} is found first",
+                path.display(),
+                loaded.display()
+            ))
+        })
+        .collect()
+}
+
+/// [`shadowed_key_note`] over the real disk, styled for printing: empty unless
+/// `key` is absent from the loaded file (`config`) and some skipped file sets
+/// it. Reads skipped files with `read_regular_to_string`, which refuses a FIFO
+/// rather than blocking on it and prints nothing (#1047).
+pub(crate) fn shadowed_key_note_on_disk(
+    key: &str,
+    config: &std::collections::HashMap<String, String>,
+    loaded: Option<&std::path::Path>,
+) -> String {
+    let Some(loaded) = loaded.filter(|_| !config.contains_key(key)) else {
+        return String::new();
+    };
+    let chain = crate::config_paths::existing_config_paths();
+    let skipped = crate::config_paths::skipped_config_sources(&chain, Some(loaded));
+    shadowed_key_note(key, loaded, &skipped, |p| {
+        crate::non_regular_read::read_regular_to_string(p).ok()
+    })
+    .iter()
+    .map(|line| format!("  {YELLOW}{line}{RESET}\n"))
+    .collect()
+}

@@ -101,6 +101,7 @@ yoyo supports a TOML-style config file so you don't have to pass flags every tim
 2. `~/.yoyo.toml` (home directory shorthand)
 3. `~/.config/yoyo/config.toml` (XDG user-level)
 
+yoyo reads exactly one of these files; they are never merged. A project `.yoyo.toml` shadowing your home config is the intended layering and is silent, but if both `~/.yoyo.toml` and `~/.config/yoyo/config.toml` exist, every run warns once on stderr that the second is ignored, and `yoyo config get <key>` names a skipped file that sets the key.
 **Example `.yoyo.toml`:**
 
 ```toml

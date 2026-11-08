@@ -890,6 +890,12 @@ pub fn handle_config_get_status(input: &str, surface: crate::commands_dev::Docto
         .unwrap_or_else(|| "defaults".to_string());
     let (code, text) = config_get_report(key, &config, &source);
     print!("{text}");
+    if code == 0 {
+        print!(
+            "{}",
+            crate::commands_config_get::shadowed_key_note_on_disk(key, &config, path.as_deref())
+        );
+    }
     code
 }
 

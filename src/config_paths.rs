@@ -145,6 +145,72 @@ pub(crate) fn shadowing_config_file(
     }
 }
 
+/// The startup warning for two **user-level** config files (Day 253): `home`
+/// (`~/.yoyo.toml`) and `xdg` (`~/.config/yoyo/config.toml`, or under
+/// `$XDG_CONFIG_HOME`) both existing. yoyo reads one config file, first found
+/// wins, never merged, and `~/.yoyo.toml` always comes before the XDG file, so
+/// every setting in the XDG file is lost wherever yoyo runs. A stray
+/// `~/.yoyo.toml` (an old install, a dotfile sync) silently disables a config
+/// the user maintains. The project file is an input only to pin the near-miss:
+/// a project `.yoyo.toml` shadowing ONE home file is the intended layering and
+/// happens to every user with a global config, so it never warns (a warning
+/// there would fire on every run). With a project file AND both home files the
+/// home pair still warns: the XDG file is still never read anywhere. Same
+/// predicate as Claude Code 2.1.319's "a home holds two config files".
+pub(crate) fn home_config_shadow_warning(
+    _project: &std::path::Path,
+    home: Option<&std::path::Path>,
+    xdg: Option<&std::path::Path>,
+    exists: impl Fn(&std::path::Path) -> bool,
+) -> Option<String> {
+    let (home, xdg) = (home?, xdg?);
+    if home == xdg || !exists(home) || !exists(xdg) {
+        return None;
+    }
+    Some(format!(
+        "two user-level yoyo config files: {} takes precedence, so {} is ignored. \
+Merge them or delete one.",
+        home.display(),
+        xdg.display()
+    ))
+}
+
+/// Set once the two-home-files warning has printed, so it appears once per
+/// process however many times config is loaded (the REPL and watch reload it).
+static HOME_SHADOW_WARNED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// [`home_config_shadow_warning`] over the real disk, printed once to stderr.
+/// Called from `config::accept_loaded_config`, the one tail every config load
+/// goes through. Not gated on quiet mode: it reports lost settings, like the
+/// `config file skipped` warning beside it. Two paths that resolve to one file
+/// (a dotfile manager symlinking both) are one config, not two.
+pub(crate) fn warn_home_config_shadow_once() {
+    let (home, xdg) = (
+        crate::cli::home_config_path(),
+        crate::cli::user_config_path(),
+    );
+    let same_file = match (&home, &xdg) {
+        (Some(h), Some(x)) => matches!(
+            (std::fs::canonicalize(h), std::fs::canonicalize(x)),
+            (Ok(a), Ok(b)) if a == b
+        ),
+        _ => false,
+    };
+    if same_file {
+        return;
+    }
+    let exists = |p: &std::path::Path| p.exists();
+    let project = std::path::Path::new(".yoyo.toml");
+    if let Some(msg) = home_config_shadow_warning(project, home.as_deref(), xdg.as_deref(), exists)
+    {
+        if !HOME_SHADOW_WARNED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            use crate::format::{RESET, YELLOW};
+            eprintln!("{YELLOW}warning:{RESET} {msg}");
+        }
+    }
+}
+
 /// The honest note printed when a `/config set` write landed in a file that a
 /// higher-precedence config file shadows.
 pub(crate) fn shadowed_write_warning(
@@ -726,6 +792,90 @@ in-project symlink is unaffected.",
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // === home_config_shadow_warning: two user-level files (Day 253) ===
+    #[test]
+    fn home_config_shadow_warning_table() {
+        use std::path::Path;
+        let project = Path::new("/repo/.yoyo.toml");
+        let home = Path::new("/h/.yoyo.toml");
+        let xdg = Path::new("/h/.config/yoyo/config.toml");
+        let on =
+            |set: &'static [&'static str]| move |p: &Path| set.iter().any(|s| Path::new(s) == p);
+        let both = "two user-level yoyo config files: /h/.yoyo.toml takes precedence, \
+so /h/.config/yoyo/config.toml is ignored. Merge them or delete one.";
+        // Both home files: warns, naming the one that wins first.
+        assert_eq!(
+            home_config_shadow_warning(
+                project,
+                Some(home),
+                Some(xdg),
+                on(&["/h/.yoyo.toml", "/h/.config/yoyo/config.toml"])
+            ),
+            Some(both.to_string())
+        );
+        // Only one home file (either one): silent.
+        assert_eq!(
+            home_config_shadow_warning(project, Some(home), Some(xdg), on(&["/h/.yoyo.toml"])),
+            None
+        );
+        assert_eq!(
+            home_config_shadow_warning(
+                project,
+                Some(home),
+                Some(xdg),
+                on(&["/h/.config/yoyo/config.toml"])
+            ),
+            None
+        );
+        // Near-miss: project + one home file is the intended layering, silent.
+        assert_eq!(
+            home_config_shadow_warning(
+                project,
+                Some(home),
+                Some(xdg),
+                on(&["/repo/.yoyo.toml", "/h/.config/yoyo/config.toml"])
+            ),
+            None
+        );
+        assert_eq!(
+            home_config_shadow_warning(
+                project,
+                Some(home),
+                Some(xdg),
+                on(&["/repo/.yoyo.toml", "/h/.yoyo.toml"])
+            ),
+            None
+        );
+        // Project + both home files: the XDG file is still never read, so it warns.
+        assert_eq!(
+            home_config_shadow_warning(
+                project,
+                Some(home),
+                Some(xdg),
+                on(&[
+                    "/repo/.yoyo.toml",
+                    "/h/.yoyo.toml",
+                    "/h/.config/yoyo/config.toml"
+                ])
+            ),
+            Some(both.to_string())
+        );
+        // No usable HOME / XDG base: nothing to compare.
+        assert_eq!(
+            home_config_shadow_warning(project, None, Some(xdg), |_| true),
+            None
+        );
+        assert_eq!(
+            home_config_shadow_warning(project, Some(home), None, |_| true),
+            None
+        );
+        // One path for both (cannot happen with today's layout): one file, silent.
+        assert_eq!(
+            home_config_shadow_warning(project, Some(home), Some(home), |_| true),
+            None
+        );
+    }
 
     // === skipped_config_sources: the read-side half of the ladder (Day 179) ===
     //

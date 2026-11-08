@@ -90,3 +90,84 @@ fn set_key_reports_exit_0_with_its_value_and_source() {
     assert_eq!(code, 0);
     assert!(text.contains("model = m-1  (/x/.yoyo.toml)"), "{text}");
 }
+
+// === shadowed_key_note (Day 253): `config get <key>` names a skipped file that sets it ===
+
+/// A reader over an in-memory map of path -> file contents, so the table never
+/// touches the real home directory.
+fn reader<'a>(files: &'a [(&'a str, &'a str)]) -> impl Fn(&std::path::Path) -> Option<String> + 'a {
+    move |p| {
+        files
+            .iter()
+            .find(|(path, _)| std::path::Path::new(path) == p)
+            .map(|(_, body)| body.to_string())
+    }
+}
+
+#[test]
+fn shadowed_key_note_table() {
+    use crate::commands_config_get::shadowed_key_note;
+    use std::path::{Path, PathBuf};
+    let home = Path::new("/h/.yoyo.toml");
+    let xdg = PathBuf::from("/h/.config/yoyo/config.toml");
+    let files = [
+        ("/h/.yoyo.toml", "model = \"m\"\n"),
+        ("/h/.config/yoyo/config.toml", "thinking = \"low\"\n"),
+    ];
+    // (a) set only in the skipped XDG file: the note names it, its value, and the file read first.
+    assert_eq!(
+        shadowed_key_note("thinking", home, std::slice::from_ref(&xdg), reader(&files)),
+        vec![
+            "note: /h/.config/yoyo/config.toml sets thinking = low, but it is not read: \
+             /h/.yoyo.toml is found first"
+                .to_string()
+        ]
+    );
+    // (b) set in the read file and nowhere skipped: no note (the caller only asks
+    // when the key is absent from the read file, but the helper must not invent one).
+    assert!(
+        shadowed_key_note("model", home, std::slice::from_ref(&xdg), reader(&files)).is_empty()
+    );
+    // (c) set nowhere: no note.
+    assert!(
+        shadowed_key_note("provider", home, std::slice::from_ref(&xdg), reader(&files)).is_empty()
+    );
+    // (d) project shadowing home, where home sets the key: the note names the home file.
+    let project = Path::new(".yoyo.toml");
+    let files_d = [
+        (".yoyo.toml", ""),
+        ("/h/.yoyo.toml", "thinking = \"high\"\n"),
+    ];
+    assert_eq!(
+        shadowed_key_note(
+            "thinking",
+            project,
+            &[PathBuf::from("/h/.yoyo.toml")],
+            reader(&files_d)
+        ),
+        vec![
+            "note: /h/.yoyo.toml sets thinking = high, but it is not read: .yoyo.toml is found first"
+                .to_string()
+        ]
+    );
+    // An unreadable skipped file contributes nothing rather than a guess.
+    assert!(
+        shadowed_key_note("thinking", home, &[PathBuf::from("/gone")], reader(&files)).is_empty()
+    );
+    // A secret set in a skipped file is named but its value is not printed.
+    let files_s = [("/h/.config/yoyo/config.toml", "api_key = \"sk-secret\"\n")];
+    let note = shadowed_key_note(
+        "api_key",
+        home,
+        std::slice::from_ref(&xdg),
+        reader(&files_s),
+    );
+    assert_eq!(
+        note,
+        vec![
+            "note: /h/.config/yoyo/config.toml sets api_key = ***, but it is not read: \
+             /h/.yoyo.toml is found first"
+                .to_string()
+        ]
+    );
+}
