@@ -1,0 +1,21 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "hard_deny_match\|conta… ✓ (29ms)
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 15.5s (2 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_2.md, and all four checks pass.
+
+The refusal now quotes the part of the command that tripped the guard, as the user wrote it, and names the rule in words that are true for every spelling it catches. rm -rf ~ is no longer told it "contains 'rm -rf /'". The verdict itself is unchanged: every input that was refused is still refused and every allowed input still passes, and a new test checks this through the real refusal function. I judged this from the diff plus one search. I didn't run the binary to see the message on screen; the new tests call the refusal function directly.
+
+• Task fit: The matcher records where each matched segment sits in the line and hands that text back with the match, so the formatter doesn't search the command a second time. The quoted text goes through the existing display sanitizer, then is cut at 120 bytes on a character boundary, with … marking a cut.
+• Nothing left dangling: Everything new has a caller in the same diff. Nothing outside src/hard_deny.rs calls the changed match function. The one other test that pinned the old wording, in src/tools_child_bash_tests.rs, was updated rather than deleted, and the old test was renamed with a note instead of removed.
+• Tests added: the tilde, root and multi-line cases the task asked for, plus a nested bash -c, a $(…) command and a multi-byte character at the cap. The new tests also check escaped control bytes, the over-nesting message, and every refuse/allow row through the real refusal function.
+• Docs: docs/src/configuration/permissions.md gains a paragraph describing the new message. Its example is the exact text the tilde test pins.
+
+When a command is nested more than 3 shell levels deep, the message still names the rule by its label and says that part wasn't parsed. That is accurate, because at that depth the guard really is just looking for the literal text.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

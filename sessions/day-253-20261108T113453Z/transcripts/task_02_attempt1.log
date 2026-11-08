@@ -1,0 +1,308 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; wc -l src/hard_deny*.rs; g… ✓ (13ms)
+  ▶ read src/hard_deny.rs:1..481 ✓ (3ms)
+  ▶ read src/hard_deny.rs:100..430 ✓ (2ms)
+  ▶ read src/hard_deny.rs:480.. ✓ (2ms)
+  ▶ read src/hard_deny.rs:578..758  ▶ $ grep -rn "hard_deny_refusal\|hard_deny_match\|blocked by safety policy\|contains… ✓ (2ms)
+ ✓ (28ms)
+  ▶ $ sed -n 35,60p src/tool_wrappers.rs; echo ----; sed -n 50,75p src/tools_child_bas… ✓ (17ms)
+  ▶ $ grep -n "blocked by safety\|contains '" docs/src -r; sed -n 440,460p docs/src/co… ✓ (9ms)
+  ▶ $ sed -n 1626,1665p src/cli.rs ✓ (3ms)
+  ▶ $ grep -rn "pub.*fn safe_truncate" src/ ; grep -n "safe_truncate" src/cli.rs | hea… ✓ (15ms)
+  ▶ $ sed -n 405,445p src/format/mod.rs ✓ (3ms)
+  ▶ $ grep -rn "mod hard_deny\|mod cli;\|mod format;" src/*.rs; ls src/lib.rs 2>/dev/n… ✓ (30ms)
+  ▶ $ cat > /tmp/patch.py <<'PYEOF' (154 lines) ✗ (1ms)
+    │ Command blocked by safety policy: contains 'rm -rf /'. This pattern is denied for safety.
+
+────────────────────────────────────────────────────────────────────────────────
+  13 tools completed in 1m 38s (12 ✓, 1 ✗)
+
+The guard just refused my own heredoc, and its message didn't say which line did it. That's the bug I'm fixing, so I'll log it as an incidence on #1102. Writing the script with write_file instead:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ echo "$(date -u +%FT%TZ) heredoc python patch script for #1102 itself; body line… ✗ (0ms)
+    │ Command blocked by safety policy: contains 'rm -rf /'. This pattern is denied for safety.
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+That one tripped too: $(...) makes the guard desugar the line, and the quoted mention counts. That's incidence 9. Using write_file from here on.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ write /tmp/incidence.txt (4 lines) ✓ (0ms)
+
+Now I'll make the edits directly with edit_file.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/hard_deny.rs (29 → 102 lines)
+    /// The hard-deny predicate and refusal text, shared by parent and child bash.
+    /// `patterns` selects which rule labels are active (the default is all of
+    /// [`HARD_DENY_PATTERNS`]).
+  + ///
+  + /// The text names the rule in words true of every spelling it catches, and
+  + /// quotes the segment that tripped it (#1102). Superseded, recorded rather
+  + /// than erased: until Day 253 it said "contains '<label>'", which was false
+  + /// for every spelling but the label's own (`rm -rf ~` was told it "contains
+  + /// 'rm -rf /'"), so a user searching their command for it found nothing,
+  + /// and a multi-line command gave no hint which line had tripped it.
+    pub(crate) fn hard_deny_refusal<S: AsRef<str>>(patterns: &[S], command: &str) -> Option<String> {
+  -     let label = hard_deny_match(command)?;
+  -     let pattern = patterns.iter().find(|p| p.as_ref() == label)?;
+  -     Some(format!(
+  -         "Command blocked by safety policy: contains '{}'. This pattern is denied for safety.",
+  -         pattern.as_ref()
+  -     ))
+  +     let hit = hard_deny_match(command)?;
+  +     patterns.iter().find(|p| p.as_ref() == hit.label)?;
+  +     let shown = quote_for_refusal(&hit.text);
+  ... (95 more lines)
+  ▶ edit src/hard_deny.rs (5 → 5 lines)
+            for seg in &segments {
+  -             if let Some(label) = match_segment(seg, depth) {
+  -                 return Some(label);
+  +             if let Some(hit) = match_segment(seg, line, depth) {
+  +                 return Some(hit);
+                }
+            }
+  ▶ edit src/hard_deny.rs (5 → 5 lines)
+                for seg in &split_line(&line).0 {
+  -                 if let Some(label) = match_segment(seg, depth) {
+  -                     return Some(label);
+  +                 if let Some(hit) = match_segment(seg, &line, depth) {
+  +                     return Some(hit);
+                    }
+                }
+ ✓ (21.9s)
+    /// The hard-deny predicate and refusal text, shared by parent and child bash.
+    /// `patterns` selects which rule labels are active (the default is all of
+    /// [`HARD_DENY_PATTERNS`]).
+  + ///
+  + /// The text names the rule in words true of every spelling it catches, and
+  + /// quotes the segment that tripped it (#1102). Superseded, recorded rather
+  + /// than erased: until Day 253 it said "contains '<label>'", which was false
+  + /// for every spelling but the label's own (`rm -rf ~` was told it "contains
+  ... (13 more lines)
+ ✓ (43.4s)
+            for seg in &segments {
+  -             if let Some(label) = match_segment(seg, depth) {
+  -                 return Some(label);
+  +             if let Some(hit) = match_segment(seg, line, depth) {
+  +                 return Some(hit);
+                }
+            }
+ ✓ (1m 5s)
+                for seg in &split_line(&line).0 {
+  -                 if let Some(label) = match_segment(seg, depth) {
+  -                     return Some(label);
+  +                 if let Some(hit) = match_segment(seg, &line, depth) {
+  +                     return Some(hit);
+                    }
+                }
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 20s (3 ✓)
+
+Next, split_line needs to return each segment's byte span:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/hard_deny.rs (71 → 96 lines)
+  + /// One shell segment: its words (quote removal applied) and the byte span
+  + /// of the line they were read from, so a refusal can quote it as written.
+  + struct Segment {
+  +     words: Vec<String>,
+  +     span: std::ops::Range<usize>,
+  + }
+  + 
+    /// Splits one line into segments of shell words (quote removal applied).
+    /// The bool is false when the line ends inside an open quote.
+  - fn split_line(line: &str) -> (Vec<Vec<String>>, bool) {
+  -     let mut segments: Vec<Vec<String>> = Vec::new();
+  + fn split_line(line: &str) -> (Vec<Segment>, bool) {
+  +     let mut segments: Vec<Segment> = Vec::new();
+        let mut words: Vec<String> = Vec::new();
+        let mut word = String::new();
+        let mut in_word = false;
+  -     let mut chars = line.chars().peekable();
+  +     let mut chars = line.char_indices().peekable();
+        let mut balanced = true;
+  +     // Byte span of the current segment: where its first word began, and
+  ... (83 more lines)
+ ✓ (22.2s)
+  + /// One shell segment: its words (quote removal applied) and the byte span
+  + /// of the line they were read from, so a refusal can quote it as written.
+  + struct Segment {
+  +     words: Vec<String>,
+  +     span: std::ops::Range<usize>,
+  + }
+  + 
+    /// Splits one line into segments of shell words (quote removal applied).
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now match_segment:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ read src/hard_deny.rs:495..535 ✓ (0ms)
+  ▶ edit src/hard_deny.rs (35 → 44 lines)
+  - fn match_segment(seg: &[String], depth: usize) -> Option<&'static str> {
+  + /// Matches one segment of `line`. A direct match quotes the segment as
+  + /// written (`line[segment.span]`); a nested `bash -c`/`eval` match carries
+  + /// the inner script's own hit.
+  + fn match_segment(segment: &Segment, line: &str, depth: usize) -> Option<HardDenyHit> {
+  +     let seg = &segment.words;
+  +     let direct = |label: &'static str| HardDenyHit {
+  +         label,
+  +         text: line.get(segment.span.clone()).unwrap_or(line).to_string(),
+  +         unparsed: false,
+  +     };
+        let cmd_at = command_index(seg);
+        for (i, w) in seg.iter().enumerate() {
+            let b = basename(w);
+            let rest = &seg[i + 1..];
+            if b == "rm" {
+                if let Some(label) = rm_root(rest) {
+  -                 return Some(label);
+  +                 return Some(direct(label));
+                }
+  ... (30 more lines)
+ ✓ (21.9s)
+  - fn match_segment(seg: &[String], depth: usize) -> Option<&'static str> {
+  + /// Matches one segment of `line`. A direct match quotes the segment as
+  + /// written (`line[segment.span]`); a nested `bash -c`/`eval` match carries
+  + /// the inner script's own hit.
+  + fn match_segment(segment: &Segment, line: &str, depth: usize) -> Option<HardDenyHit> {
+  +     let seg = &segment.words;
+  +     let direct = |label: &'static str| HardDenyHit {
+  +         label,
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 36.6s (2 ✓)
+
+Now the tests. Inside the test module I'll point existing label assertions at a label_of helper, then replace the byte-identical test with property tests:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ n=$(grep -n "^mod tests" src/hard_deny.rs | cut -d: -f1); sed -i "${n},\$ s/hard… ✓ (10ms)
+  ▶ edit src/hard_deny.rs (1 → 7 lines)
+        use super::*;
+  + 
+  +     /// The rule label a command matches: the verdict half of
+  +     /// [`hard_deny_match`], which every verdict table below reads.
+  +     fn label_of(cmd: &str) -> Option<&'static str> {
+  +         hard_deny_match(cmd).map(|hit| hit.label)
+  +     }
+ ✓ (3m 35s)
+        use super::*;
+  + 
+  +     /// The rule label a command matches: the verdict half of
+  +     /// [`hard_deny_match`], which every verdict table below reads.
+  +     fn label_of(cmd: &str) -> Option<&'static str> {
+  +         hard_deny_match(cmd).map(|hit| hit.label)
+  +     }
+  2 tools completed in 4m 0s (2 ✓)
+
+Compiles. Now replace the byte-identical refusal test with the new property rows:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/hard_deny.rs (11 → 108 lines)
+  +     /// #1102: the refusal quotes the segment that tripped it, as written, and
+  +     /// names the rule in words true of that spelling. Superseded, recorded
+  +     /// rather than erased: this was `refusal_text_is_byte_identical_to_the_old_format`,
+  +     /// pinning "contains 'rm -rf /'" for every rm-root spelling.
+        #[test]
+  -     fn refusal_text_is_byte_identical_to_the_old_format() {
+  +     fn refusal_quotes_the_tilde_segment_not_the_rule_label() {
+  +         let got = hard_deny_refusal(HARD_DENY_PATTERNS, "rm -rf ~").expect("refuses");
+            assert_eq!(
+  -             hard_deny_refusal(HARD_DENY_PATTERNS, "rm -fr /").as_deref(),
+  -             Some(
+  -                 "Command blocked by safety policy: contains 'rm -rf /'. \
+  -                  This pattern is denied for safety."
+  -             )
+  +             got,
+  +             "Command blocked by safety policy: `rm -rf ~` reads as a recursive delete of the \
+  +              filesystem root or the home directory (/, ~ or $HOME, or any rm given \
+  +              --no-preserve-root). This is denied for safety."
+            );
+  +         assert!(!got.contains("rm -rf /"), "{got}");
+  ... (94 more lines)
+ ✓ (3m 34s)
+  +     /// #1102: the refusal quotes the segment that tripped it, as written, and
+  +     /// names the rule in words true of that spelling. Superseded, recorded
+  +     /// rather than erased: this was `refusal_text_is_byte_identical_to_the_old_format`,
+  +     /// pinning "contains 'rm -rf /'" for every rm-root spelling.
+        #[test]
+  -     fn refusal_text_is_byte_identical_to_the_old_format() {
+  +     fn refusal_quotes_the_tilde_segment_not_the_rule_label() {
+  +         let got = hard_deny_refusal(HARD_DENY_PATTERNS, "rm -rf ~").expect("refuses");
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the child-bash test that pinned the old string:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "fn root_wipe" -A4 src/tools_child_bash_tests.rs ✓ (3ms)
+  ▶ edit src/tools_child_bash_tests.rs (5 → 4 lines)
+  -             assert_eq!(
+  -                 err,
+  -                 "Command blocked by safety policy: contains 'rm -rf /'. This pattern is denied for safety.",
+  -                 "parent_confirms={parent_confirms} explore={explore}"
+  +             assert!(
+  +                 err.starts_with("Command blocked by safety policy: `rm -rf /` reads as "),
+  +                 "parent_confirms={parent_confirms} explore={explore}: {err}"
+                );
+  ▶ $ cargo test 2>&1 | grep -E "^test .*FAILED|panicked|test result|^error" | head -3… ✓ (4m 10s)
+  -             assert_eq!(
+  -                 err,
+  -                 "Command blocked by safety policy: contains 'rm -rf /'. This pattern is denied for safety.",
+  -                 "parent_confirms={parent_confirms} explore={explore}"
+  +             assert!(
+  +                 err.starts_with("Command blocked by safety policy: `rm -rf /` reads as "),
+  +                 "parent_confirms={parent_confirms} explore={explore}: {err}"
+                );
+ ✓ (4m 10s)
+  ▶ $ cargo test --bin yoyo refusal_quote_is_capped 2>&1 | grep -A6 panicked; sed -n 7… ✓ (158ms)
+  4 tools completed in 4m 21s (4 ✓)
+
+My assertion was wrong, not the code: the … goes inside the backticks. Fixing the test's expected string:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -i 's/assert!(got.contains("… reads as"), "{got}");/assert!(got.contains("…`… ✓ (39.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive control: neuter the span plumbing so the quoted text falls back to the label, run it, and restore, all in one command:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cp src/hard_deny.rs /tmp/hd.bak && sed -i 's|text: line.get(segment.span.clone()… ✓ (38.7s)
+  ▶ $ cp src/hard_deny.rs /tmp/hd.bak && sed -i 's|text: line.get(segment.span.clone()… ✓ (1m 17s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 2s (2 ✓)
+
+Control worked: the tilde row went red by name, then green again once restored, with no marker left behind. Next I'll check the module-size gate and update the docs:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "hard_deny\|tools_child_bash" tests/module_size.rs | cut -c1-200; wc -l … ✓ (7ms)
+  ▶ edit docs/src/configuration/permissions.md (1 → 3 lines)
+    The block does not look inside other programs, so `python3 -c "…"` passes on one line or many.
+  + 
+  + When the hard block fires, the refusal quotes the part of your command that tripped it, as you wrote it (only that segment, so in a multi-line command you can find the line), and says which rule it reads as. For example, `rm -rf ~` gets `` Command blocked by safety policy: `rm -rf ~` reads as a recursive delete of the filesystem root or the home directory (/, ~ or $HOME, or any rm given --no-preserve-root). This is denied for safety. `` The quote is cut at about 120 bytes, and control characters… [yoyo: 19 more bytes elided — diff lines are capped at 500 bytes]
+  ▶ $ cargo fmt && cargo fmt -- --check && cargo clippy --all-targets -- -D warnings 2… ✓ (2ms)
+    The block does not look inside other programs, so `python3 -c "…"` passes on one line or many.
+  + 
+  + When the hard block fires, the refusal quotes the part of your command that tripped it, as you wrote it (only that segment, so in a multi-line command you can find the line), and says which rule it reads as. For example, `rm -rf ~` gets `` Command blocked by safety policy: `rm -rf ~` reads as a recursive delete of the filesystem root or the home directory (/, ~ or $HOME, or any rm given --no-preserve-root). This is denied for safety. `` The quote is cut at about 120 bytes, and control characters… [yoyo: 19 more bytes elided — diff lines are capped at 500 bytes]
+ ✓ (6m 2s)
+  ▶ $ cargo test 2>&1 | grep -E "test result" | grep -v " 0 failed" ; echo "exit-scan … ✓ (4m 23s)
+  4 tools completed in 10m 40s (4 ✓)
+
+Everything passes: fmt, clippy, build, full test suite. Committing via a message file so the guard can't refuse it:
+
+  (interrupted)

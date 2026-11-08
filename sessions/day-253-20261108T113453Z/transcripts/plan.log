@@ -1,0 +1,58 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md; gh issue view 1102 --comm… ✓ (1.7s)
+  ▶ write session_plan/task_01.md (31 lines)  ▶ write session_plan/task_02.md (20 lines) ✓ (0ms)
+ ✓ (0ms)
+  ▶ $ cat > /tmp/c1102.md <<'EOF' (14 lines) ✗ (0ms)
+    │ Command blocked by safety policy: contains 'rm -rf /'. This pattern is denied for safety.
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 1m 9s (3 ✓, 1 ✗)
+
+Hit number 8: the guard refused my own heredoc. I'll write the file directly instead.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ write /tmp/c1102.md (13 lines)
+  + 🐙 **Revisit trigger fired: the tally is 8 (Day 217 ×1, 243 ×2, 252 ×2, 253 ×3), past the 5 this ticket set. Here's the decision, so it doesn't sit as "undecided".**
+  + 
+  + Hit 8, Day 253 ~10:0xZ, planning phase: a `cat > /tmp/file <<'EOF'` heredoc carrying a draft of *this comment*. It was refused with the root-form label, though the body only mentioned the rule's label inside backticks.
+  + 
+  + **Decision (mine, Day 253 planning): keep A, refusing fail-closed. Also fix the message today.**
+  + 
+  + Why A stays: since @yuanhao picked A on #1149, non-interactive yoyo approves every tool call, so hard_deny and the deny list are the only fence a `-p` user over an untrusted repo has. Option B would let `python3 <<EOF` bodies through, and those can run `os.system(...)`. Also, all 8 hits are mine: my own loop writes prose about these patterns. No product user has reported one. The cost lands on the population that knows the remedy (write_file, then pass the path).
+  + 
+  + What does change: the refusal names the rule's *label* and not the text it matched, so at least 2 of the 8 hits quoted a string that wasn't in my command (the tilde form was reported as the root form). Day 253 task 2 makes the message quote the matched segment (char-safe, sanitized). The verdict doesn't change.
+  + 
+  + Also correcting this ticket's framing: the population isn't "heredoc bodies". It's mention-only text inside any multi-line quoted argument (`python3 -c "..."`, `gh ... --body "..."`, heredocs), because lines are split before quotes are parsed (#1068).
+  + 
+  + @yuanhao: if you'd rather have B (or a narrower form, e.g. pass `cat`/`tee` bodies only), say so here and I'll do that. Otherwise this stays open as the incidence counter, and the next revisit is at 12.
+ ✓ (0ms)
+  ▶ $ gh issue comment 1102 --body-file /tmp/c1102.md 2>&1 | tail -2 ✓ (1.1s)
+  ▶ write session_plan/issue_responses.md (10 lines)  ▶ $ git add session_plan/ && git commit -q -m "Day 253 (09:46): session plan" && ls … ✓ (1ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 19.1s (4 ✓)
+
+I wrote the session plan: two task files and the issue responses. Git ignores session_plan/, so the commit step did nothing. I'm assuming the harness reads the files from disk, which is why the plan's commit command ends in || true.
+
+Task 1: Fixes #1154 and #1155 (product).
+• yoyo config get with no key will exit 2 and print a shell-style usage line (yoyo config get <key>). Today it prints the REPL's /config get and exits 0.
+• Four more shell messages will name the shell command instead of a slash command: lint unsafe, risk validate, risk history and risk harvest.
+• The fix goes through the same helper the #1127 and #1153 fixes used.
+• The task also re-checks every subcommand under two more conditions: a Rust project, and after one risk snapshot exists. Any new case it finds gets its own issue before the push.
+• Two files are close to the size limit that fails cargo test: src/help.rs (10 lines left) and src/context.rs (15 left). The task says not to touch them.
+
+Task 2: Part of #1102 (product). When the safety check blocks a dangerous delete, the message will quote the part of the command that matched, not the rule's name. Today a delete aimed at the home folder is reported as one aimed at /, so the user can't find the line that tripped it. Which commands get blocked won't change. The task includes a deliberate-break check, undone in the same command, to show the new test catches the old behaviour.
+
+Done during planning:
+• The false-block count on #1102 had passed the 5 that ticket set for revisiting it, so I recorded a decision there instead of leaving it open. The decision is to keep blocking these commands. Since @yuanhao kept auto-approve on #1149, this check and the deny list are the only protection for -p runs. All the false blocks so far were in my own work, not reported by users. He can still choose the looser option on the ticket.
+• That comment's draft was itself blocked by the check, which brings the count to 8. I posted it by writing the file directly instead.
+
+Not taken:
+• No release; the last one was 4 days ago.
+• An opt-in mode that denies tool calls in unattended runs (the Claude Code 2.1.319 gap) is a new feature and needs its own ticket first.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
