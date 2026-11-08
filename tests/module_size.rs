@@ -291,7 +291,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // source-level guard pinning that. Acknowledged, not absorbed.
     // Day 247 (#1108): 3542 -> 3576. +4 is /cost's per-turn sub-agent block call
     // site; the other +30 was absorbed drift, recorded here rather than left.
-    ("src/commands_info.rs", 3558), // Day 251: #1144 — the Claude branch of the hand window table is gone (Claude ids read yoagent); tests in anthropic_preset_tests.rs.
+    ("src/commands_info.rs", 3553), // Day 253: #1118 — the gemini-2.0 window branch is gone (shut down per Google) and the 3.x/2.5 branches merged (-5). Day 251: #1144 — the Claude branch of the hand window table is gone (Claude ids read yoagent); tests in anthropic_preset_tests.rs.
     // Day 163 (#726): -59 lines — emerging-risk prompt injection removed
     // (map, annotation, helper, and the test pinning them); see #724.
     // Day 174: +3 absorbed since Day 166.
@@ -302,7 +302,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // REGISTERED RATHER THAN SPLIT on the `src/prompt_retry.rs` precedent: a
     // register edit cannot half-land, a pure move can, and a half-landed move
     // is a reverted session. The split is owed, not done.
-    ("src/commands.rs", 2164),
+    ("src/commands.rs", 2174), // Day 253: #1118 — /model completion gains gemini-3.6-flash and gemini-3.1-pro-preview (+2); the other +8 was drift already inside the grace band.
     // Day 211 (#962): 3640 -> 3645 (+5): `handle_init_in(dir)` seam.
     // Day 228 (#869): /cd deny wired into auto_context; 3653 -> 3709 (+56: pure
     // select_auto_context_paths extracted + its emission-point test).

@@ -123,13 +123,21 @@ pub fn known_models_for_provider(provider: &str) -> &'static [&'static str] {
             "o3-mini",
             "o4-mini",
         ],
+        // #1118: every id here is a yoagent preset or on Google's models page
+        // (`every_offered_gemini_id_is_a_yoagent_preset_or_on_googles_page`).
+        // 2.5 Pro/Flash are deprecated but served to existing users until
+        // 2026-12-01; current ids come first so the warning's five name them.
         "google" => &[
             "gemini-4-argon",
             "gemini-3.8-flash",
+            "gemini-3.6-flash",
+            "gemini-3.1-pro-preview",
+            "gemini-3.5-flash-lite",
+            "gemini-3.1-flash-lite",
+            "gemini-3-flash-preview",
+            "gemini-2.5-flash-lite",
             "gemini-2.5-pro",
             "gemini-2.5-flash",
-            "gemini-2.5-flash-lite",
-            "gemini-2.0-flash",
         ],
         "groq" => &[
             "llama-4-maverick-17b",
@@ -437,7 +445,87 @@ mod tests {
             "not an API id: platform.minimax.io/docs/api-reference/text-post names \
              MiniMax-M1, never -40k",
         ),
+        (
+            "google",
+            "gemini-2.0-flash",
+            "shut down: ai.google.dev/gemini-api/docs/models lists it under Previous \
+             models as '(Shut down)' (read 2026-11-08, #1118)",
+        ),
+        (
+            "google",
+            "gemini-3.0-pro",
+            "not an API id: absent from ai.google.dev/gemini-api/docs/models (read \
+             2026-11-08); Google's ids are gemini-3-pro-preview (shut down) and 3.1-pro-preview",
+        ),
+        (
+            "google",
+            "gemini-3.0-flash",
+            "not an API id: absent from ai.google.dev/gemini-api/docs/models (read \
+             2026-11-08); Google's id is gemini-3-flash-preview",
+        ),
     ];
+
+    /// #1118: Google ids offered with no yoagent preset or price row, each
+    /// with the page that lists it as a chat model (all read 2026-11-08).
+    const GEMINI_IDS_SOURCED_FROM_GOOGLE_PAGE: &[(&str, &str)] = &[
+        ("gemini-3.5-flash-lite", "ai.google.dev/gemini-api/docs/models/gemini-3.5-flash-lite (Stable)"),
+        ("gemini-3.1-flash-lite", "ai.google.dev/gemini-api/docs/models/gemini-3.1-flash-lite (Stable)"),
+        ("gemini-3-flash-preview", "ai.google.dev/gemini-api/docs/models/gemini-3-flash-preview (Preview)"),
+        ("gemini-2.5-flash-lite", "ai.google.dev/gemini-api/docs/models: 'not deprecated and will continue to be served'"),
+        ("gemini-2.5-pro", "ai.google.dev/gemini-api/docs/models: deprecated, served to existing users; routes to gemini-3.8-flash from 2026-12-01"),
+        ("gemini-2.5-flash", "ai.google.dev/gemini-api/docs/models: deprecated, served to existing users; routes to gemini-3.5-flash-lite from 2026-12-01"),
+    ];
+
+    /// A yoagent preset or bundled price row for `google`/`id`.
+    fn yoagent_knows_gemini(id: &str) -> bool {
+        yoagent::provider::ModelConfig::preset("google", id).is_some()
+            || yoagent::provider::PriceTable::builtin()
+                .iter()
+                .any(|(p, model, _)| p == "google" && model == id)
+    }
+
+    /// #1118: a Gemini id on the picker or the known list silences the
+    /// `Unknown model` warning, so each one needs an outside source: yoagent,
+    /// or a row above naming Google's page. `gemini-3.0-pro` (offered from
+    /// memory, never a Google id) would fail here by name.
+    #[test]
+    fn every_offered_gemini_id_is_a_yoagent_preset_or_on_googles_page() {
+        let picker = crate::commands::KNOWN_MODELS
+            .iter()
+            .filter(|id| id.starts_with("gemini-"));
+        for id in known_models_for_provider("google").iter().chain(picker) {
+            let sourced = GEMINI_IDS_SOURCED_FROM_GOOGLE_PAGE
+                .iter()
+                .any(|(s, _)| s == id);
+            assert!(
+                yoagent_knows_gemini(id) || sourced,
+                "google offers {id}: no yoagent preset/price row and no Google-page row"
+            );
+        }
+        // A page row must not shadow a yoagent row (it would outlive its premise).
+        for (id, url) in GEMINI_IDS_SOURCED_FROM_GOOGLE_PAGE {
+            assert!(
+                !yoagent_knows_gemini(id),
+                "{id} is in yoagent now; drop its row ({url})"
+            );
+            assert!(
+                known_models_for_provider("google").contains(id),
+                "{id} row is unused"
+            );
+        }
+        // Every offered id's window: 1,048,576 on each id's Google page.
+        for id in known_models_for_provider("google") {
+            assert_eq!(
+                crate::commands_info::model_context_window(id),
+                Some(1_048_576),
+                "{id}"
+            );
+        }
+        // Recall control: the dead ids really fail the authority.
+        for dead in ["gemini-3.0-pro", "gemini-3.0-flash", "gemini-2.0-flash"] {
+            assert!(!yoagent_knows_gemini(dead), "{dead} must fail");
+        }
+    }
 
     #[test]
     fn ids_no_vendor_serves_are_not_offered_and_warn_when_typed() {
@@ -471,6 +559,8 @@ mod tests {
             ("minimax", "MiniMax-M1"),
             ("groq", "llama-3.3-70b-versatile"),
             ("xai", "grok-4.7"),
+            ("google", "gemini-3.1-pro-preview"),
+            ("google", "gemini-3-flash-preview"),
         ] {
             assert_eq!(crate::cli::unknown_model_warning(provider, real), None);
         }

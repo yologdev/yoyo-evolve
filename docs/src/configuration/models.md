@@ -72,7 +72,7 @@ Use `--provider <name>` to select a provider. Each provider has a default model 
 OPENAI_API_KEY=sk-... yoyo --provider openai
 
 # Google Gemini
-GOOGLE_API_KEY=... yoyo --provider google --model gemini-2.5-pro
+GOOGLE_API_KEY=... yoyo --provider google --model gemini-3.1-pro-preview
 
 # Local with Ollama (no API key needed)
 yoyo --provider ollama --model llama3.2
@@ -153,8 +153,8 @@ A model id yoyo has no preset for runs on its provider's guess: the limits that 
 every id it does not know. On the OpenAI-compatible providers `openai`, `openrouter`, `xai`, `groq`,
 `mistral`, `cerebras`, `github` and `zai` that is a 128,000-token context window and
 `max_tokens = 4096`; on `minimax` a 1M window and `max_tokens = 4096`; on `google` a 1M window and
-`max_tokens = 8192` (this is what `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite` and
-`gemini-2.0-flash` run on today). That cap covers reasoning plus answer on every turn, so a newer
+`max_tokens = 8192` (this is what `gemini-3.5-flash-lite`, `gemini-3.1-flash-lite`,
+`gemini-3-flash-preview` and the 2.5 models run on today). That cap covers reasoning plus answer on every turn, so a newer
 model (for example a GPT release newer than yoyo's presets) can be cut short. yoyo now says so once per model on stderr, even in
 quiet or piped runs (stdout is unchanged):
 

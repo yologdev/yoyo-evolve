@@ -791,16 +791,10 @@ fn model_context_window_table(model: &str) -> Option<u64> {
     if model.starts_with("o3") || model.starts_with("o4") {
         return Some(200_000);
     }
-    // Google Gemini 3.x — 1M (estimated, Google's trajectory)
-    if model.contains("gemini-3") {
-        return Some(1_048_576);
-    }
-    // Google Gemini 2.5 — 1M
-    if model.contains("gemini-2.5") {
-        return Some(1_048_576);
-    }
-    // Google Gemini 2.0 — 1M
-    if model.contains("gemini-2.0") {
+    // Gemini 3.x / 2.5 with no preset — 1,048,576 input tokens per each id's
+    // page under ai.google.dev/gemini-api/docs/models/ (read 2026-11-08, #1118).
+    // 2.0 is shut down there, so it gets no pinned window.
+    if model.contains("gemini-3") || model.contains("gemini-2.5") {
         return Some(1_048_576);
     }
     // xAI Grok — 131k
@@ -2684,7 +2678,8 @@ More text.
         assert_eq!(model_context_window("o4-mini"), Some(200_000));
         // Google
         assert_eq!(model_context_window("gemini-2.5-pro"), Some(1_048_576));
-        assert_eq!(model_context_window("gemini-2.0-flash"), Some(1_048_576));
+        // #1118: shut down per Google's models page, so no pinned window.
+        assert_eq!(model_context_window("gemini-2.0-flash"), None);
         // xAI
         assert_eq!(model_context_window("grok-4"), Some(131_072));
         // DeepSeek
