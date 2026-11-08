@@ -399,14 +399,25 @@ pub(crate) fn compute_accuracy_stats(events: &[ValidationEvent]) -> AccuracyStat
     }
 }
 
-/// Format the accuracy report as a compact box display.
+/// [`format_accuracy_report_on`] as the REPL prints it.
+#[cfg(test)]
 pub(crate) fn format_accuracy_report(stats: &AccuracyStats) -> String {
+    format_accuracy_report_on(stats, crate::commands_dev::DoctorSurface::Repl)
+}
+
+/// Format the accuracy report as a compact box display. `surface` spells the
+/// no-data hint's `risk snapshot` (#1155: the shell never reads `/risk`).
+pub(crate) fn format_accuracy_report_on(
+    stats: &AccuracyStats,
+    surface: crate::commands_dev::DoctorSurface,
+) -> String {
     if stats.total_validations == 0 {
+        let risk = crate::commands_dev::command_form(surface, "risk");
         return format!(
             "\n{BOLD}{CYAN}  No prediction accuracy data yet.{RESET}\n\n\
              {DIM}  Accuracy tracking starts automatically when watch commands\n\
              {DIM}  detect failures and validate them against risk predictions.\n\n\
-             {DIM}  Run {RESET}/risk snapshot{DIM} first, then trigger a watch failure{RESET}\n\
+             {DIM}  Run {RESET}{risk} snapshot{DIM} first, then trigger a watch failure{RESET}\n\
              {DIM}  to begin collecting data.{RESET}\n"
         );
     }

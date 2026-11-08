@@ -853,12 +853,14 @@ fn apply_config_to_runtime(
 /// Shows the current runtime value for a single config key. REPL caller: the
 /// exit code is the shell's business only (#982).
 pub fn handle_config_get(input: &str) {
-    let _ = handle_config_get_status(input);
+    let _ = handle_config_get_status(input, crate::commands_dev::DoctorSurface::Repl);
 }
 
 /// [`handle_config_get`] plus the shell exit code (#982): 2 for a key that is
-/// neither settable nor in the file (misuse, like `yoyo model <bad>`), else 0.
-pub fn handle_config_get_status(input: &str) -> i32 {
+/// neither settable nor in the file (misuse, like `yoyo model <bad>`), or for
+/// no key at all (#1154, like `yoyo skill show`), else 0. `surface` spells
+/// the usage line, so the shell never reads `/config get` (#1155).
+pub fn handle_config_get_status(input: &str, surface: crate::commands_dev::DoctorSurface) -> i32 {
     let key = input
         .strip_prefix("/config get ")
         .or_else(|| input.strip_prefix("/config get"))
@@ -866,9 +868,8 @@ pub fn handle_config_get_status(input: &str) -> i32 {
         .trim();
 
     if key.is_empty() {
-        println!("{YELLOW}  usage: /config get <key>{RESET}");
-        println!("{DIM}  settable keys: {}{RESET}", settable_keys_list());
-        return 0;
+        eprint!("{}", crate::commands_config_get::config_get_usage(surface));
+        return 2;
     }
 
     // Read from the detected config file

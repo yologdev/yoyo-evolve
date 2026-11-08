@@ -149,3 +149,45 @@ fn skill_search_install_hint_names_the_door_it_is_printed_on() {
         "install with: /skill install gh:<owner>/<repo>"
     );
 }
+
+/// #1154/#1155: the second-level lines (`config get` with no key, `lint
+/// unsafe` outside Rust, and the risk subcommands' "no snapshots yet" hints).
+/// Compared with ANSI stripped, against what a reader at each door can type.
+#[test]
+fn second_level_hints_name_the_form_each_door_can_run() {
+    use crate::commands_config_get::config_get_usage;
+    use crate::commands_dev::command_form;
+    use crate::commands_lint::lint_unsafe_not_rust_line;
+    use crate::commands_risk::no_snapshots_line;
+    use crate::commands_risk_accuracy::{compute_accuracy_stats, format_accuracy_report_on};
+    type Render = fn(crate::commands_dev::DoctorSurface) -> String;
+    let rows: [(&str, Render); 6] = [
+        ("config get <key>", |s| config_get_usage(s)),
+        ("lint unsafe is only available", |s| {
+            lint_unsafe_not_rust_line(&command_form(s, "lint"))
+        }),
+        ("risk snapshot first.", |s| no_snapshots_line(s, "validate")),
+        ("risk snapshot periodically", |s| {
+            no_snapshots_line(s, "history")
+        }),
+        ("risk snapshot first (nothing to grade", |s| {
+            no_snapshots_line(s, "harvest")
+        }),
+        ("risk snapshot first, then trigger", |s| {
+            format_accuracy_report_on(&compute_accuracy_stats(&[]), s)
+        }),
+    ];
+    let plain = |s: String| crate::watch::strip_ansi_escapes(&s).into_owned();
+    for (tail, render) in &rows {
+        let verb = tail.split(' ').next().unwrap();
+        let shell = plain(render(Shell));
+        assert!(shell.contains(&format!("yoyo {tail}")), "shell: {shell}");
+        assert!(
+            !shell.contains(&format!("/{verb}")),
+            "shell leaks /{verb}: {shell}"
+        );
+        let repl = plain(render(Repl));
+        assert!(repl.contains(&format!("/{tail}")), "repl: {repl}");
+        assert!(!repl.contains("yoyo "), "repl names the shell form: {repl}");
+    }
+}

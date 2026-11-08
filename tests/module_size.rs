@@ -348,7 +348,9 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // runtime failure: the RISK_FAILED flag (+6) plus one store per failure
     // arm (+7); the other +1 was drift already present at HEAD (6602). Pasted.
     // Day 252 (#1127): +9, unknown_risk_subcommand_line(surface) + its import.
-    ("src/commands_risk.rs", 6624),
+    // Day 253 (#1155): +21, risk_snapshot_form + no_snapshots_line(surface, sub)
+    // and the surface threaded into history/validate/accuracy/harvest/learning.
+    ("src/commands_risk.rs", 6645),
     // Day 253: pasted from what the gate printed; unlisted at 2036, 14 lines from FATAL.
     ("src/commands_risk_unhittable.rs", 2036),
     // Day 162 (#707): +68 lines — format_project_index no longer byte-slices a
@@ -483,7 +485,9 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // status functions so usage names `yoyo <verb>`; rustfmt wrapped each call (+4) and the
     // blame dispatch test's assert (+3), pasted.
     // Day 252: #1114 flag_value skips value slots via option_position, +7 (doc lines).
-    ("src/dispatch_sub.rs", 2677),
+    // Day 253 (#1154): 2680 at HEAD (+3 unregistered drift), +3 for the Shell
+    // surface passed to config get (rustfmt wraps the call).
+    ("src/dispatch_sub.rs", 2683),
     // Day 209: 3439 -> 3455 (+16, within the drift band, pasted rather than left to absorb).
     // #937 option 1: nine lines of doc above `builtin_model_pricing` naming both ignored
     // audit commands (deliverable 4 — an alarm nobody can find is the #745/#767/#769

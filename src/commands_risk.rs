@@ -51,7 +51,7 @@ use crate::commands_risk_epistemic::handle_risk_epistemic;
 // (`AccuracyStats` and the private trend helper are only used inside the
 // accuracy module itself, so they aren't re-exported.)
 pub(crate) use crate::commands_risk_accuracy::{
-    compute_accuracy_stats, format_accuracy_report, is_green_event, AccuracyTrend,
+    compute_accuracy_stats, format_accuracy_report_on, is_green_event, AccuracyTrend,
 };
 
 // Weight-learning + revert-history live in `commands_risk_weights.rs`.
@@ -660,6 +660,25 @@ pub(crate) fn risk_subcommand_list() -> String {
 }
 
 /// Handle the `/risk` command — display per-file risk scores.
+/// `risk snapshot` as `surface` types it, bolded: every "no snapshots yet"
+/// hint names it, and the shell must not read `/risk snapshot` (#1155).
+pub(crate) fn risk_snapshot_form(surface: DoctorSurface) -> String {
+    format!("{BOLD}{} snapshot{RESET}", command_form(surface, "risk"))
+}
+
+/// The "No snapshots found" line `risk <sub>` prints before any snapshot
+/// exists (#1155). Not a failure: the exit code stays 0.
+pub(crate) fn no_snapshots_line(surface: DoctorSurface, sub: &str) -> String {
+    let snap = risk_snapshot_form(surface);
+    match sub {
+        "harvest" => format!(
+            "  No snapshots found — run {snap} first (nothing to grade CI failures against)."
+        ),
+        "history" => format!("  No snapshots found. Run {snap} periodically to build history."),
+        _ => format!("  No snapshots found. Run {snap} first."),
+    }
+}
+
 pub(crate) fn handle_risk(input: &str, surface: DoctorSurface) {
     let sub = input.strip_prefix("/risk").unwrap_or(input).trim();
 
@@ -669,12 +688,12 @@ pub(crate) fn handle_risk(input: &str, surface: DoctorSurface) {
     }
 
     if sub == "history" {
-        handle_risk_history();
+        handle_risk_history(surface);
         return;
     }
 
     if sub == "validate" {
-        handle_risk_validate();
+        handle_risk_validate(surface);
         return;
     }
 
@@ -684,7 +703,7 @@ pub(crate) fn handle_risk(input: &str, surface: DoctorSurface) {
     }
 
     if sub == "accuracy" {
-        handle_risk_accuracy();
+        handle_risk_accuracy(surface);
         return;
     }
 
@@ -699,7 +718,7 @@ pub(crate) fn handle_risk(input: &str, surface: DoctorSurface) {
     }
 
     if sub == "harvest" {
-        handle_risk_harvest();
+        handle_risk_harvest(surface);
         return;
     }
 
@@ -1257,7 +1276,7 @@ pub(crate) fn format_recent_events(events: &[RichValidationEvent], max_events: u
 }
 
 /// Format the learning status section.
-fn format_learning_status(weights_path: &std::path::Path) -> String {
+fn format_learning_status(weights_path: &std::path::Path, surface: DoctorSurface) -> String {
     let mut out = format!("\n{BOLD}  Learning Status{RESET}\n");
 
     let content = match std::fs::read_to_string(weights_path) {
@@ -1267,9 +1286,10 @@ fn format_learning_status(weights_path: &std::path::Path) -> String {
             let val_content = std::fs::read_to_string(RISK_VALIDATION_PATH).unwrap_or_default();
             let event_count = parse_validation_events(&val_content).len();
             if event_count == 0 {
+                let risk = command_form(surface, "risk");
                 out.push_str(&format!(
                     "  {DIM}No learned weights yet. Collect validation events\n\
-                     {DIM}  via /risk snapshot → /risk validate to start learning.{RESET}\n"
+                     {DIM}  via {risk} snapshot → {risk} validate to start learning.{RESET}\n"
                 ));
             } else {
                 out.push_str(&format!(
@@ -1389,7 +1409,7 @@ fn snapshot_health_line(ledger: &SnapshotLedger) -> Option<String> {
 }
 
 /// Handle the `/risk accuracy` subcommand.
-fn handle_risk_accuracy() {
+fn handle_risk_accuracy(surface: DoctorSurface) {
     // Read the ledger through the three-state reader so a corrupt file can't
     // masquerade as a missing one (#764). Still open on that issue: a line
     // that is valid JSON but missing fields is absorbed by the parser's
@@ -1405,7 +1425,7 @@ fn handle_risk_accuracy() {
     let stats = compute_accuracy_stats(&events);
 
     // Section 1: Overall accuracy summary
-    let report = format_accuracy_report(&stats);
+    let report = format_accuracy_report_on(&stats, surface);
     print!("{report}");
 
     // If no data, the accuracy report already explains what to do — stop here
@@ -1443,7 +1463,8 @@ fn handle_risk_accuracy() {
     print!("{recent_section}");
 
     // Section 4: Learning status
-    let learning_section = format_learning_status(std::path::Path::new(LEARNED_WEIGHTS_PATH));
+    let learning_section =
+        format_learning_status(std::path::Path::new(LEARNED_WEIGHTS_PATH), surface);
     print!("{learning_section}");
 }
 
@@ -2342,7 +2363,7 @@ fn compute_trend(validations: &[HistoryValidation]) -> &'static str {
 }
 
 /// Format the history report table from validated snapshot intervals.
-fn format_history_report(validations: &[HistoryValidation]) -> String {
+fn format_history_report(validations: &[HistoryValidation], surface: DoctorSurface) -> String {
     let mut out = String::new();
 
     out.push_str(&format!("\n  {BOLD}Risk Prediction History{RESET}\n\n"));
@@ -2352,7 +2373,8 @@ fn format_history_report(validations: &[HistoryValidation]) -> String {
             "  No validated snapshots — need at least 2 snapshots with commits between them.\n",
         );
         out.push_str(&format!(
-            "  Run {BOLD}/risk snapshot{RESET} periodically to build history.\n"
+            "  Run {} periodically to build history.\n",
+            risk_snapshot_form(surface)
         ));
         return out;
     }
@@ -2440,21 +2462,17 @@ fn format_history_report(validations: &[HistoryValidation]) -> String {
 }
 
 /// Handle `/risk history` — show accuracy trend across all past snapshots.
-fn handle_risk_history() {
+fn handle_risk_history(surface: DoctorSurface) {
     // 1. Load all snapshots
     let path = std::path::Path::new(RISK_SNAPSHOT_PATH);
     let contents = match std::fs::read_to_string(path) {
         Ok(c) if !c.trim().is_empty() => c,
         Ok(_) => {
-            println!(
-                "  No snapshots found. Run {BOLD}/risk snapshot{RESET} periodically to build history."
-            );
+            println!("{}", no_snapshots_line(surface, "history"));
             return;
         }
         Err(_) => {
-            println!(
-                "  No snapshots found. Run {BOLD}/risk snapshot{RESET} periodically to build history."
-            );
+            println!("{}", no_snapshots_line(surface, "history"));
             return;
         }
     };
@@ -2465,7 +2483,10 @@ fn handle_risk_history() {
             "  Need at least 2 snapshots for history. Currently have {}.",
             snapshots.len()
         );
-        println!("  Run {BOLD}/risk snapshot{RESET} periodically to build history.");
+        println!(
+            "  Run {} periodically to build history.",
+            risk_snapshot_form(surface)
+        );
         return;
     }
 
@@ -2533,7 +2554,7 @@ fn handle_risk_history() {
         }
     }
 
-    let report = format_history_report(&validations);
+    let report = format_history_report(&validations, surface);
     print!("{report}");
 }
 
@@ -2663,7 +2684,7 @@ fn fetch_compare_files(base: &str, head: &str) -> Result<Vec<String>, String> {
 ///
 /// Deliberately manual (like `yoyo risk validate`): no cron, no hook. Every
 /// skip prints its reason; nothing is recorded on a guess.
-fn handle_risk_harvest() {
+fn handle_risk_harvest(surface: DoctorSurface) {
     let day: u32 = std::fs::read_to_string("DAY_COUNT")
         .ok()
         .and_then(|s| s.trim().parse().ok())
@@ -2673,7 +2694,7 @@ fn handle_risk_harvest() {
     let snapshot_content = std::fs::read_to_string(RISK_SNAPSHOT_PATH).unwrap_or_default();
     let snapshots = parse_all_snapshots(&snapshot_content);
     if snapshots.is_empty() {
-        println!("  No snapshots found — run {BOLD}/risk snapshot{RESET} first (nothing to grade CI failures against).");
+        println!("{}", no_snapshots_line(surface, "harvest"));
         return;
     }
 
@@ -2867,17 +2888,17 @@ fn handle_risk_harvest() {
     );
 }
 
-fn handle_risk_validate() {
+fn handle_risk_validate(surface: DoctorSurface) {
     // 1. Load the most recent snapshot
     let path = std::path::Path::new(RISK_SNAPSHOT_PATH);
     let contents = match std::fs::read_to_string(path) {
         Ok(c) if !c.trim().is_empty() => c,
         Ok(_) => {
-            println!("  No snapshots found. Run {BOLD}/risk snapshot{RESET} first.");
+            println!("{}", no_snapshots_line(surface, "validate"));
             return;
         }
         Err(_) => {
-            println!("  No snapshots found. Run {BOLD}/risk snapshot{RESET} first.");
+            println!("{}", no_snapshots_line(surface, "validate"));
             return;
         }
     };
@@ -2886,7 +2907,7 @@ fn handle_risk_validate() {
     let last_line = match contents.lines().rev().find(|l| !l.trim().is_empty()) {
         Some(l) => l,
         None => {
-            println!("  No snapshots found. Run {BOLD}/risk snapshot{RESET} first.");
+            println!("{}", no_snapshots_line(surface, "validate"));
             return;
         }
     };
@@ -4780,7 +4801,7 @@ src/plain rs file.rs
 
     #[test]
     fn test_format_history_report_empty() {
-        let report = format_history_report(&[]);
+        let report = format_history_report(&[], DoctorSurface::Repl);
         assert!(report.contains("No validated snapshots"));
     }
 
@@ -4810,7 +4831,7 @@ src/plain rs file.rs
                 },
             },
         ];
-        let report = format_history_report(&validations);
+        let report = format_history_report(&validations, DoctorSurface::Repl);
         // Should contain day labels
         assert!(report.contains("108"), "Report should contain day 108");
         assert!(report.contains("109"), "Report should contain day 109");

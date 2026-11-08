@@ -61,3 +61,13 @@ pub(crate) fn config_get_unknown_key_message(key: &str, known: &[&str]) -> Optio
     }
     Some(msg)
 }
+
+/// What `config get` with no key prints (#1154/#1155): the usage line in the
+/// form `surface` can run, then the settable keys. The caller exits 2.
+pub(crate) fn config_get_usage(surface: crate::commands_dev::DoctorSurface) -> String {
+    let config = crate::commands_dev::command_form(surface, "config");
+    format!(
+        "{YELLOW}  usage: {config} get <key>{RESET}\n{DIM}  settable keys: {}{RESET}\n",
+        settable_keys_list()
+    )
+}

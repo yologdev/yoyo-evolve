@@ -841,7 +841,10 @@ pub(crate) fn try_dispatch_subcommand_in(
                         // Reconstruct as /config get <key>
                         let key = args.get(3).map(|s| s.as_str()).unwrap_or("");
                         let input = format!("/config get {key}");
-                        exit_if_nonzero(crate::commands_config::handle_config_get_status(&input));
+                        exit_if_nonzero(crate::commands_config::handle_config_get_status(
+                            &input,
+                            crate::commands_dev::DoctorSurface::Shell,
+                        ));
                     }
                     Some(other) => {
                         eprintln!(

@@ -4248,6 +4248,72 @@ fn skill_show_install_init_without_an_argument_exit_two_with_usage() {
 }
 
 #[test]
+fn second_level_shell_lines_name_yoyo_forms_and_config_get_without_key_exits_two() {
+    // #1154: `yoyo config get` with no key printed usage and exited 0, so
+    // `yoyo config get && next` carried on. It is a usage error: 2, usage on
+    // stderr, like `yoyo skill show`. #1155: these lines named `/lint` and
+    // `/risk`, which a shell cannot run. The four no-data rows are not
+    // failures, so their exit codes are pinned unchanged.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (code, stdout, stderr) = yoyo_plain_in(dir.path(), &["config", "get"]);
+    assert_eq!(code, Some(2), "stdout={stdout} stderr={stderr}");
+    assert_eq!(
+        stderr.lines().next().map(str::trim),
+        Some("usage: yoyo config get <key>")
+    );
+    assert!(stderr.contains("settable keys: model"), "{stderr}");
+    assert!(!stderr.contains("/config"), "{stderr}");
+    for (args, code_want, line) in [
+        (&["lint", "unsafe"][..], 1, "yoyo lint unsafe is only available for Rust projects (no Cargo.toml found)"),
+        (&["risk", "validate"][..], 0, "No snapshots found. Run yoyo risk snapshot first."),
+        (&["risk", "history"][..], 0, "No snapshots found. Run yoyo risk snapshot periodically to build history."),
+        (&["risk", "harvest"][..], 0, "No snapshots found — run yoyo risk snapshot first (nothing to grade CI failures against)."),
+        (&["risk", "accuracy"][..], 0, "Run yoyo risk snapshot first, then trigger a watch failure"),
+    ] {
+        let (code, stdout, stderr) = yoyo_plain_in(dir.path(), args);
+        assert_eq!(code, Some(code_want), "{args:?}: stdout={stdout} stderr={stderr}");
+        assert!(stdout.lines().any(|l| l.trim() == line), "{args:?}: {stdout}");
+        assert!(!stdout.contains(&format!("/{}", args[0])), "{args:?}: {stdout}");
+    }
+    // Near miss: a key still reads and exits 0.
+    let (code, stdout, stderr) = yoyo_plain_in(dir.path(), &["config", "get", "model"]);
+    assert_eq!(code, Some(0), "stdout={stdout} stderr={stderr}");
+    // One real snapshot (written by `yoyo risk snapshot`, not typed): history's
+    // "need at least 2" branch names the shell form too.
+    for git in [
+        &["init", "-q"][..],
+        &[
+            "-c",
+            "user.email=a@b",
+            "-c",
+            "user.name=a",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "i",
+        ][..],
+    ] {
+        let ok = Command::new("git")
+            .args(git)
+            .current_dir(dir.path())
+            .status()
+            .expect("git");
+        assert!(ok.success(), "git {git:?}");
+    }
+    let (code, stdout, stderr) = yoyo_plain_in(dir.path(), &["risk", "snapshot"]);
+    assert_eq!(code, Some(0), "snapshot: stdout={stdout} stderr={stderr}");
+    let (code, stdout, _) = yoyo_plain_in(dir.path(), &["risk", "history"]);
+    assert_eq!(code, Some(0), "{stdout}");
+    assert!(stdout.contains("Need at least 2 snapshots"), "{stdout}");
+    assert!(
+        stdout.contains("Run yoyo risk snapshot periodically"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("/risk"), "{stdout}");
+}
+
+#[test]
 fn config_set_and_edit_refusals_exit_two() {
     // `set` and `edit` share the unknown-subcommand arm: from the shell they
     // are refused (they need agent state), so `yoyo config set ... && next`

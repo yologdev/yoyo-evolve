@@ -261,7 +261,7 @@ pub(crate) fn handle_lint_on(
         // #1137: no Cargo.toml means nothing was scanned: 1, like the
         // no-recognized-project 1 below.
         let code = i32::from(!std::path::Path::new("Cargo.toml").exists());
-        return (handle_lint_unsafe(), code);
+        return (handle_lint_unsafe(&lint), code);
     }
 
     // `/lint fix` is routed to handle_lint_fix (dispatch.rs), which needs a live
@@ -544,13 +544,21 @@ fn collect_rs_files_recursive(dir: &std::path::Path, files: &mut Vec<std::path::
     }
 }
 
+/// What `lint unsafe` says outside a Rust project; `lint` is the verb as the
+/// door spells it (`/lint` or `yoyo lint`, #1155).
+pub(crate) fn lint_unsafe_not_rust_line(lint: &str) -> String {
+    format!(
+        "{DIM}  {lint} unsafe is only available for Rust projects (no Cargo.toml found){RESET}\n"
+    )
+}
+
 /// Handle the `/lint unsafe` command: scan for unsafe code and report findings.
-pub fn handle_lint_unsafe() -> Option<String> {
+pub fn handle_lint_unsafe(lint: &str) -> Option<String> {
     let cwd = std::env::current_dir().unwrap_or_default();
 
     // Check for Cargo.toml — this is Rust-specific
     if !cwd.join("Cargo.toml").exists() {
-        println!("{DIM}  /lint unsafe is only available for Rust projects (no Cargo.toml found){RESET}\n");
+        println!("{}", lint_unsafe_not_rust_line(lint));
         return None;
     }
 
