@@ -4025,14 +4025,15 @@ fn blame_of_a_committed_file_keeps_exit_zero_under_no_color() {
 #[test]
 fn config_unknown_subcommand_refusal_exits_two() {
     // #982: `yoyo config zzz` printed its refusal on stderr and exited 0.
-    // The refusal text is unchanged; only the exit status moves.
+    // Day 253: its text also claimed `zzz` "requires an interactive session",
+    // which is false (no surface has it), so it now says unknown.
     let dir = tempfile::tempdir().expect("tempdir");
     let (code, stdout, stderr) = yoyo_plain_in(dir.path(), &["config", "zzz"]);
     assert_eq!(code, Some(2), "stdout={stdout} stderr={stderr}");
     assert_eq!(stdout, "");
     assert_eq!(
         stderr,
-        "  `config zzz` requires an interactive session.\n  Try: yoyo config show (works from the shell)\n"
+        "  unknown config subcommand: `zzz`\n  Try: yoyo config show, yoyo config get <key> (work from the shell); inside yoyo: /config edit, /config set\n"
     );
 }
 
@@ -4330,10 +4331,29 @@ fn config_set_and_edit_refusals_exit_two() {
         assert_eq!(
             stderr,
             format!(
-                "  `config {verb}` requires an interactive session.\n  Try: yoyo config show (works from the shell)\n"
+                "  `config {verb}` requires an interactive session: start yoyo and use /config {verb}\n  Try: yoyo config show, yoyo config get <key> (work from the shell)\n"
             ),
             "{args:?}"
         );
+    }
+}
+
+#[test]
+fn config_unknown_word_refuses_as_unknown_not_interactive() {
+    // A word that is no config subcommand anywhere must not claim the REPL
+    // would run it; a typo of a real one gets a did-you-mean. Exit 2 both.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let hint = "  Try: yoyo config show, yoyo config get <key> (work from the shell); inside yoyo: /config edit, /config set\n";
+    for (word, headline) in [
+        ("bogus", "unknown config subcommand: `bogus`"),
+        (
+            "shwo",
+            "unknown config subcommand: `shwo` (did you mean `show`?)",
+        ),
+    ] {
+        let (code, stdout, stderr) = yoyo_plain_in(dir.path(), &["config", word]);
+        assert_eq!(code, Some(2), "{word}: stdout={stdout} stderr={stderr}");
+        assert_eq!(stderr, format!("  {headline}\n{hint}"), "{word}");
     }
 }
 

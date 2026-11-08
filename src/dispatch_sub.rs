@@ -847,10 +847,10 @@ pub(crate) fn try_dispatch_subcommand_in(
                         ));
                     }
                     Some(other) => {
-                        eprintln!(
-                            "{YELLOW}  `config {other}` requires an interactive session.{RESET}"
-                        );
-                        eprintln!("{DIM}  Try: yoyo config show (works from the shell){RESET}");
+                        // Unknown words say unknown; only set/edit claim the REPL.
+                        let (headline, hint) =
+                            crate::commands_config_get::config_shell_refusal(other);
+                        eprintln!("{YELLOW}  {headline}{RESET}\n{DIM}  {hint}{RESET}");
                         // #982: a refused or unknown subcommand did not run, so
                         // exit 2 (usage) rather than 0. Covers `set`/`edit` too:
                         // `yoyo config set k v && next` must not read success.

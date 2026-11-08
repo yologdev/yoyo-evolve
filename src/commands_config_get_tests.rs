@@ -171,3 +171,83 @@ fn shadowed_key_note_table() {
         ]
     );
 }
+
+// `yoyo config <word>` refusals: unknown words say unknown, REPL-only
+// subcommands say interactive, and every suggested shell command runs.
+
+use crate::commands_config_get::{config_shell_refusal, CONFIG_SHELL_FORMS};
+
+const SHELL_TRY: &str = "Try: yoyo config show, yoyo config get <key> (work from the shell)";
+
+#[test]
+fn unknown_config_word_is_named_unknown_not_interactive() {
+    let (headline, hint) = config_shell_refusal("bogus");
+    assert_eq!(headline, "unknown config subcommand: `bogus`");
+    assert_eq!(
+        hint,
+        format!("{SHELL_TRY}; inside yoyo: /config edit, /config set")
+    );
+    assert!(!headline.contains("interactive"), "{headline}");
+}
+
+#[test]
+fn typo_of_real_config_subcommand_suggests_it() {
+    let (headline, hint) = config_shell_refusal("shwo");
+    assert_eq!(
+        headline,
+        "unknown config subcommand: `shwo` (did you mean `show`?)"
+    );
+    assert_eq!(
+        hint,
+        format!("{SHELL_TRY}; inside yoyo: /config edit, /config set")
+    );
+}
+
+#[test]
+fn repl_only_config_subcommands_keep_interactive_wording() {
+    for sub in ["set", "edit"] {
+        let (headline, hint) = config_shell_refusal(sub);
+        assert_eq!(
+            headline,
+            format!(
+                "`config {sub}` requires an interactive session: start yoyo and use /config {sub}"
+            )
+        );
+        assert_eq!(hint, SHELL_TRY);
+    }
+}
+
+/// The shell forms are a subset of the authority, and the dispatch arm runs
+/// exactly them: each `yoyo config <x>` a refusal prints is a word the shell
+/// arm handles (a round trip), and every other CONFIG_SUBCOMMANDS member is
+/// refused with the interactive wording, never as unknown.
+#[test]
+fn suggested_config_commands_round_trip_to_the_shell_arm() {
+    let src = include_str!("dispatch_sub.rs");
+    let arm = src.find(concat!("\"config", "\" =>")).expect("config arm");
+    let end = src[arm..]
+        .find(concat!("\"permissions", "\" =>"))
+        .expect("next arm");
+    let body = &src[arm..arm + end];
+    for (sub, form) in CONFIG_SHELL_FORMS {
+        assert!(crate::commands::CONFIG_SUBCOMMANDS.contains(sub), "{sub}");
+        assert!(
+            body.contains(&format!("Some(\"{sub}\")")),
+            "arm misses {sub}"
+        );
+        let words: Vec<&str> = form.split_whitespace().collect();
+        assert_eq!(&words[..3], ["yoyo", "config", *sub], "{form}");
+        assert!(SHELL_TRY.contains(form), "{form}");
+    }
+    for sub in crate::commands::CONFIG_SUBCOMMANDS {
+        let on_shell = CONFIG_SHELL_FORMS.iter().any(|(s, _)| s == sub);
+        assert_eq!(
+            body.contains(&format!("Some(\"{sub}\")")),
+            on_shell,
+            "{sub}"
+        );
+        if !on_shell {
+            assert!(config_shell_refusal(sub).0.contains("interactive session"));
+        }
+    }
+}

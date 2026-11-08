@@ -127,3 +127,43 @@ pub(crate) fn shadowed_key_note_on_disk(
     .map(|line| format!("  {YELLOW}{line}{RESET}\n"))
     .collect()
 }
+
+/// The `CONFIG_SUBCOMMANDS` that `yoyo config <sub>` runs from the shell, each
+/// in the form a shell user types. Every other member needs the REPL. The
+/// dispatch arm in `dispatch_sub.rs` matches exactly these words; a test pins
+/// both directions.
+pub(crate) const CONFIG_SHELL_FORMS: &[(&str, &str)] = &[
+    ("show", "yoyo config show"),
+    ("get", "yoyo config get <key>"),
+];
+
+/// What `yoyo config <word>` prints when `word` does not run from the shell,
+/// as (headline, hint), unstyled. A real REPL-only subcommand (`set`, `edit`)
+/// says it needs an interactive session; any other word is unknown, with a
+/// did-you-mean from `CONFIG_SUBCOMMANDS`, because claiming the REPL would run
+/// it is false. Both hints list only commands that work from the shell. The
+/// caller exits 2 either way (#982).
+pub(crate) fn config_shell_refusal(word: &str) -> (String, String) {
+    let shell: Vec<&str> = CONFIG_SHELL_FORMS.iter().map(|(_, form)| *form).collect();
+    let try_line = format!("Try: {} (work from the shell)", shell.join(", "));
+    if crate::commands::CONFIG_SUBCOMMANDS.contains(&word) {
+        return (
+            format!("`config {word}` requires an interactive session: start yoyo and use /config {word}"),
+            try_line,
+        );
+    }
+    let mut headline = format!("unknown config subcommand: `{word}`");
+    if let Some(near) = crate::commands::closest_match(word, crate::commands::CONFIG_SUBCOMMANDS, 2)
+    {
+        headline.push_str(&format!(" (did you mean `{near}`?)"));
+    }
+    let repl: Vec<String> = crate::commands::CONFIG_SUBCOMMANDS
+        .iter()
+        .filter(|sub| !CONFIG_SHELL_FORMS.iter().any(|(s, _)| s == *sub))
+        .map(|sub| format!("/config {sub}"))
+        .collect();
+    (
+        headline,
+        format!("{try_line}; inside yoyo: {}", repl.join(", ")),
+    )
+}
