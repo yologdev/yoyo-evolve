@@ -107,7 +107,8 @@ This appears when the Anthropic API returns an error. Common causes:
 - **Invalid API key** — check your key is correct and active
   (Google reports a bad key as `400` with `API_KEY_INVALID` / "API key not valid" rather
   than 401; yoyo treats that as an auth failure too and names the variable to set, e.g.
-  `GEMINI_API_KEY` / `GOOGLE_API_KEY`)
+  `GEMINI_API_KEY` / `GOOGLE_API_KEY`; xAI's bad-key reply is also a `400`,
+  "Incorrect API key provided", and gets the same hint naming `XAI_API_KEY`)
 - **Rate limiting** — you're sending too many requests; wait and retry
 - **Model unavailable** — the model you specified doesn't exist or you don't have access
 - **A model id from another vendor's family** — `--provider` and `--model` resolve

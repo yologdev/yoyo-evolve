@@ -603,10 +603,11 @@ pub(crate) fn diagnose_api_error_for(error: &str, model: &str, oneshot: bool) ->
         || lower.contains("invalid api key")
         || lower.contains("invalid_api_key")
         || lower.contains("authentication")
-        // Google rejects a bad key with 400 INVALID_ARGUMENT, not 401 (#1163; body
+        // Google (#1163) and xAI (#1165) reject a bad key with a 400, not 401 (bodies
         // seen on the wire). Never bare `400`/`invalid_argument`: those cover bad fields.
         || lower.contains("api_key_invalid")
         || lower.contains("api key not valid")
+        || lower.contains("incorrect api key")
     {
         let env_var = crate::cli::provider_api_key_env(&provider).unwrap_or("ANTHROPIC_API_KEY");
         // The source cli.rs recorded when it resolved the key (#1062); with none

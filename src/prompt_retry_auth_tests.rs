@@ -201,3 +201,33 @@ fn google_cross_provider_fallback_names_both_unset_google_vars() {
         assert!(got.contains(v), "hint omits {v}: {got}");
     }
 }
+
+/// xAI's real reply to a bad key, captured from the built binary on Day 254
+/// (`yoyo --provider xai` with a junk key): a 400, not a 401, and its
+/// `invalid-argument` code is the same one xAI uses for any bad field (#1165).
+const XAI_BAD_KEY: &str = r#"HTTP 400 Bad Request: {"code":"invalid-argument","error":"Incorrect API key provided. You can obtain an API key from https://console.x.ai."}"#;
+
+#[test]
+fn xai_400_incorrect_api_key_reaches_the_auth_hint() {
+    let diag = super::diagnose_api_error_for(XAI_BAD_KEY, "grok-4", true)
+        .expect("xAI's bad-key 400 must get a diagnosis");
+    assert!(
+        diag.starts_with("Authentication failed for provider 'xai'."),
+        "{diag}"
+    );
+}
+
+#[test]
+fn xai_400_that_is_not_about_the_key_gets_no_auth_hint() {
+    // Near miss: same status, same `invalid-argument` code, a bad field
+    // instead of a bad key. Keying on `400` or `invalid-argument` would
+    // mislabel it.
+    let err = r#"HTTP 400 Bad Request: {"code":"invalid-argument","error":"Invalid request content: temperature must be <= 2"}"#;
+    let diag = super::diagnose_api_error_for(err, "grok-4", true);
+    assert!(
+        !diag
+            .as_deref()
+            .is_some_and(|d| d.contains("Authentication failed")),
+        "{diag:?}"
+    );
+}
