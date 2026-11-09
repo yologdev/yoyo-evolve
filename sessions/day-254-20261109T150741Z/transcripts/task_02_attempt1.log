@@ -1,0 +1,109 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh… ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 380,420p src/prompt_retry.r… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "fn resolve_diagnostic_pro… ✓ (8ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 14.1s (3 ✓)
+
+Test first, then the matcher.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat >> src/pro… (33 lines) ✓ (118ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test --bin yoyo xai_400 2>&1… ✓ (32.3s)
+  2 tools completed in 38.8s (2 ✓)
+
+Red by name before the fix — that's the recall control running naturally. Now the matcher:
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (20 lines) ✓ (32.8s)
+
+Now the atomic recall control on the fixed tree (remove the new matcher line, run, restore):
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/prompt_retry.rs /tmp/pr.bak… ✓ (113ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The sed delimiter clashed with ||, so nothing was mutated — that green run is void. Redo with a different delimiter:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/prompt_retry.rs /tmp/pr.bak… ✓ (32.9s)
+
+Control went red by name and was restored. Full gate, plus the optional live probe:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt -- --check && cargo buil…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; mkdir -p /tmp/x; timeout 60 env -i… ✓ (1.2s)
+ ✓ (5m 6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /tmp/x; timeout 60 env -i HOME=/tmp/x PATH=$PATH XAI_API_KEY=junk /home/runne… ✓ (139ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 5m 15s (3 ✓)
+
+Outside the repo, with --model grok-4, the hint shows. Inside the repo it didn't. I want to know why before I call it fixed:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "^[a-z_]* *=" .yoyo.toml |… ✓ (133ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The model id isn't the cause (outside the repo, claude-opus-5-5 gets the hint too). So it's something in the repo's config:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "hint\|quiet" .yoyo.toml; … ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Not the hints switch. Let me compare against the same command run inside the repo, one config key at a time:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp/x; B=/home/runner/work/yoyo-evolve/yoyo-evolve/target/debug/yoyo; for k … ✓ (890ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Not a single key alone. Run in the repo with the full output:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 60 env -i HOME=/tmp/x PATH… ✓ (2.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "API_KEY_INVALID\|1163\|I… ✓ (18ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 100,115p docs/src/troublesh… ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/troubleshooting/common-issues.md (1 → 2 lines)
+  -   `GEMINI_API_KEY` / `GOOGLE_API_KEY`)
+  +   `GEMINI_API_KEY` / `GOOGLE_API_KEY`; xAI's bad-key reply is also a `400`,
+  +   "Incorrect API key provided", and gets the same hint naming `XAI_API_KEY`)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat > /tmp/msg… (37 lines) ✓ (4ms)
+  -   `GEMINI_API_KEY` / `GOOGLE_API_KEY`)
+  +   `GEMINI_API_KEY` / `GOOGLE_API_KEY`; xAI's bad-key reply is also a `400`,
+  +   "Incorrect API key provided", and gets the same hint naming `XAI_API_KEY`)
+ ✓ (24ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 28.4s (5 ✓)
+
+I fixed #1165 and committed it as 04165c15. When xAI rejects a bad key, yoyo now prints the "Authentication failed for provider 'xai'" hint.
+
+The bug: xAI rejects a bad key with an HTTP 400 that says "Incorrect API key provided", not a 401. The check that decides whether to show the hint never matched that wording, so an xAI user whose key had fallen through to ANTHROPIC_API_KEY got no hint telling them what was wrong.
+
+The fix: that check (diagnose_api_error_for in src/prompt_retry.rs) now also matches incorrect api key, using the same lowercased text as the other phrases. It does not match on 400 or invalid-argument alone, because xAI uses that code for any bad field.
+
+Tests (in src/prompt_retry_auth_tests.rs):
+• Bad key: the exact reply I captured from xAI, with model grok-4, now gets the hint for provider xai.
+• Near miss: the same 400 and invalid-argument code, but about a bad temperature value, does not get the hint.
+• Recall control: the bad-key test failed before the fix. On the fixed code, I removed the new line, ran the test (it failed by name), and put the line back, all in one command. My first try at this changed nothing because of a sed quoting mistake, so I ran it again.
+
+Real run: env -i HOME=/tmp/x PATH=$PATH XAI_API_KEY=junk yoyo --provider xai --model grok-4 -p hi now prints the hint, including XAI_API_KEY is set but the API rejected it — check the key value. One earlier run printed no hint because it ran alongside the build and used the binary from before the fix. After rebuilding, the hint shows both inside and outside the repo.
+
+Checks: fmt, build, clippy with -D warnings, and the full cargo test all pass. I edited one sentence in the docs after that, without re-running them.
+
+Other changes:
+• prompt_retry.rs went from 2803 to 2804 lines, so I updated its limit in tests/module_size.rs.
+• docs/src/troubleshooting/common-issues.md now mentions xAI's 400 next to Google's.
+
+I didn't check what zai, minimax or bedrock send for a bad key, and the commit says so. The OVERFLOW_PHRASES drift stays on #1167.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

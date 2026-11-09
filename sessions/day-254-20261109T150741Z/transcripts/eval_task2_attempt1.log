@@ -1,0 +1,26 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/prompt_retry.rs && gre… ✓ (12ms)
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 12.0s (2 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_2.md.
+
+The fix does what #1165 asked: xAI's bad-key reply (an HTTP 400 saying "Incorrect API key provided") now gets the "Authentication failed for provider 'xai'" hint.
+
+• The matcher: the change adds the phrase incorrect api key to the existing authentication check in src/prompt_retry.rs. That check runs on a lowercased copy of the error text (line 594), so letter case doesn't matter. It doesn't match on a bare 400 or invalid-argument, as the task required, because xAI uses that code for any bad field.
+• Tests: two tests went into src/prompt_retry_auth_tests.rs.
+  • One uses the exact error text captured from xAI and checks that the message starts with the full hint line.
+  • The other uses a 400 about a bad temperature value and checks that no hint appears.
+• Line count: src/prompt_retry.rs is now 2804 lines, which matches the updated entry in tests/module_size.rs.
+• Touchpoints and docs: the only new definition is a test constant, and a test in the same diff uses it. docs/src/troubleshooting/common-issues.md now mentions xAI's 400 and names XAI_API_KEY.
+• Product surface: no defaults, CLI flags, setup wizard or startup behavior changed.
+
+Not checked:
+• I didn't run the binary against xAI with a junk key (the task's optional step 4), because it makes a real network call.
+• I didn't re-run the recall check (step 2: delete the new matcher line and confirm the new test fails), and the commit message isn't in the diff I reviewed, so I can't confirm the author did it.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

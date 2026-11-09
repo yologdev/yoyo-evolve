@@ -1,0 +1,165 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | head; grep …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn handle_provider_swit… ✓ (13ms)
+ ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn parse_provider_choic… ✓ (20ms)
+  ▶ read src/setup.rs:926..966 ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "WIZARD_PROVIDERS\|1-14\… ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 360,375p src/setup.rs; se… ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 9.2s (6 ✓)
+
+Now the edits. First the refusal + tests in providers.rs.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 380,393p src/providers.rs… ✓ (4ms)
+  ▶ edit src/providers.rs (2 → 5 lines)
+    pub fn unknown_provider_refusal(provider: &str, base_url_given: bool) -> Option<String> {
+  +     if provider == "github" && !base_url_given {
+  +         return Some(GITHUB_MODELS_RETIRED.to_string());
+  +     }
+        if KNOWN_PROVIDERS.contains(&provider) || base_url_given {
+  ▶ edit src/providers.rs (1 → 14 lines)
+  + /// #1166: GitHub retired GitHub Models on 2026-07-30, and every path on
+  + /// models.github.ai now answers `200 text/plain "OK"`, which surfaced as an
+  + /// opaque `Invalid header value: "text/plain"`. So `github` with no base URL
+  + /// is refused up front with the reason. With `--base-url` (or `base_url` in
+  + /// config) it still runs: the user chose an endpoint, and yoyo sends there.
+  + /// `github` stays in [`KNOWN_PROVIDERS`] for now; the rest of its removal is
+  + /// listed on #1166.
+  + pub const GITHUB_MODELS_RETIRED: &str = "provider 'github' (GitHub Models) was retired by GitHub \
+  + on 2026-07-30 and no longer answers requests \
+  + (https://github.blog/changelog/2026-07-30-github-models-is-now-retired)\n\
+  + for the same model families use: --provider openrouter\n\
+  + for an OpenAI-compatible server use: --provider custom --base-url <url>";
+  + 
+    /// #1157: limits for offered `google` ids
+  ▶ edit src/providers.rs (2 → 19 lines)
+  +     #[test]
+  +     fn retired_github_provider_is_refused_with_the_retirement_named() {
+  +         let msg = unknown_provider_refusal("github", false).expect("github must be refused");
+  +         assert_eq!(msg, GITHUB_MODELS_RETIRED);
+  +         assert!(msg.contains("retired"), "{msg}");
+  +         assert!(msg.contains("2026-07-30"), "{msg}");
+  +         assert!(msg.contains("--provider openrouter"), "{msg}");
+  +         assert!(msg.contains("--provider custom --base-url <url>"), "{msg}");
+  +         // Near-misses: an explicit endpoint is a choice; other providers untouched.
+  +         assert_eq!(unknown_provider_refusal("github", true), None);
+  +         assert_eq!(unknown_provider_refusal("openai", false), None);
+  +         // `github` is still listed for this slice (#1166), so the refusal
+  +         // must come from the retirement branch, not the unknown-name one.
+  +         assert!(KNOWN_PROVIDERS.contains(&"github"));
+  +         assert!(!msg.contains("unknown provider"), "{msg}");
+  +     }
+  + 
+        #[test]
+        fn unknown_provider_refusal_escapes_control_bytes() {
+ ✓ (18.5s)
+    pub fn unknown_provider_refusal(provider: &str, base_url_given: bool) -> Option<String> {
+  +     if provider == "github" && !base_url_given {
+  +         return Some(GITHUB_MODELS_RETIRED.to_string());
+  +     }
+        if KNOWN_PROVIDERS.contains(&provider) || base_url_given {
+ ✓ (5m 10s)
+  + /// #1166: GitHub retired GitHub Models on 2026-07-30, and every path on
+  + /// models.github.ai now answers `200 text/plain "OK"`, which surfaced as an
+  + /// opaque `Invalid header value: "text/plain"`. So `github` with no base URL
+  + /// is refused up front with the reason. With `--base-url` (or `base_url` in
+  + /// config) it still runs: the user chose an endpoint, and yoyo sends there.
+  + /// `github` stays in [`KNOWN_PROVIDERS`] for now; the rest of its removal is
+  + /// listed on #1166.
+  + pub const GITHUB_MODELS_RETIRED: &str = "provider 'github' (GitHub Models) was retired by GitHub \
+  ... (6 more lines)
+ ✓ (9m 58s)
+  +     #[test]
+  +     fn retired_github_provider_is_refused_with_the_retirement_named() {
+  +         let msg = unknown_provider_refusal("github", false).expect("github must be refused");
+  +         assert_eq!(msg, GITHUB_MODELS_RETIRED);
+  +         assert!(msg.contains("retired"), "{msg}");
+  +         assert!(msg.contains("2026-07-30"), "{msg}");
+  +         assert!(msg.contains("--provider openrouter"), "{msg}");
+  +         assert!(msg.contains("--provider custom --base-url <url>"), "{msg}");
+  ... (11 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 375,393p src/providers.rs ✓ (3ms)
+  ▶ read src/providers.rs:378..393 ✓ (0ms)
+  ▶ edit src/providers.rs (2 → 5 lines)
+    /// except the em dash; callers add colour.
+  + ///
+  + /// Also refuses `github` without a base URL: GitHub Models is retired
+  + /// (#1166, see [`GITHUB_MODELS_RETIRED`]).
+    pub fn unknown_provider_refusal(
+ ✓ (4m 50s)
+    /// except the em dash; callers add colour.
+  + ///
+  + /// Also refuses `github` without a base URL: GitHub Models is retired
+  + /// (#1166, see [`GITHUB_MODELS_RETIRED`]).
+    pub fn unknown_provider_refusal(
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub base_url" src/agent… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1560,1600p src/commands.r… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (35 lines) ✓ (16ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  10 tools completed in 15m 20s (10 ✓)
+
+Now setup.rs.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (35 lines) ✓ (18ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (30 lines) ✓ (21ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "github" src/help*.rs s… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo build 2>&1 | … ✓ (20.2s)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 35.3s (4 ✓)
+
+Both doors refuse (exit 2); --base-url still goes through. Full checks:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (4m 52s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (7m 39s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 12m 42s (2 ✓)
+
+All green: build, 37 test binaries with 0 failures, clippy, fmt. Committing:
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (35 lines) ✓ (16ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue com… (3 lines) ✓ (1.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 12.3s (2 ✓)
+
+yoyo now refuses the retired GitHub Models provider with a message that says why, and the setup wizard and README no longer offer it. Committed as 60546025 with the title "Part of #1166", not "Fixes".
+
+What changed
+• Startup refusal (`src/providers.rs`): --provider github or provider = "github" with no base URL now exits with code 2 before any network call. The message gives the retirement date (2026-07-30), the changelog URL, and two alternatives: --provider openrouter, or --provider custom --base-url <url>. If a base URL is given, it still runs, because the user picked an endpoint.
+• REPL (`src/commands.rs`): /provider github was a separate path that didn't go through the startup check. It now uses the same refusal and leaves the session's provider and model unchanged (about 7 lines).
+• Setup wizard (`src/setup.rs`): the GitHub Models row is gone, so Custom moves from 14 to 13. I updated the existing tests to the new numbering and added wizard_does_not_offer_retired_github_models, which checks that "github" isn't accepted by name or number and that "14" is now past the end of the list. No tests were deleted.
+• README: GitHub Models is off the provider list. docs/src had no mentions of it.
+
+Checked with the built binary (env -i HOME=/tmp/gh GITHUB_TOKEN=x):
+```
+error: provider 'github' (GitHub Models) was retired by GitHub on 2026-07-30 and no longer answers requests (https://github.blog/changelog/2026-07-30-github-models-is-now-retired)
+for the same model families use: --provider openrouter
+for an OpenAI-compatible server use: --provider custom --base-url <url>
+exit=2
+```
+The same refusal appeared when the provider came from .yoyo.toml. With --base-url http://127.0.0.1:9/v1, it ran and got "connection refused" from that address, which shows the request went to the URL the user gave.
+
+Build, all tests (0 failures, size gates included), clippy with -D warnings, and fmt --check pass.
+
+Still open on #1166 (posted as a comment there, scope first, with the sha):
+• the unused "github" arm in agent_builder.rs
+• MULTI_VENDOR_PROVIDERS in cli.rs
+• model_limits_note.rs:384/427
+• the github rows in providers.rs and providers_key_tests.rs
+
+  (interrupted)
