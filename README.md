@@ -171,7 +171,7 @@ Sub-agents also auto-receive `sub_agent` and `shared_state` tools for delegating
 ### 🔌 Multi-Provider Support
 Works with **15 providers** out of the box — switch mid-session with `/provider`:
 
-Anthropic · OpenAI · Google · Ollama · OpenRouter · xAI · Groq · DeepSeek · Mistral · Cerebras · AWS Bedrock · GitHub Models · Zhipu (ZAI) · MiniMax · Custom (any OpenAI-compatible endpoint)
+Anthropic · OpenAI · Google · Ollama · OpenRouter · xAI · Groq · DeepSeek · Mistral · Cerebras · AWS Bedrock · Zhipu (ZAI) · MiniMax · Custom (any OpenAI-compatible endpoint)
 
 ### 📂 Git Integration
 - `/diff` — full status + diff with insertion/deletion summary

@@ -390,7 +390,13 @@ pub fn default_model_for_provider(provider: &str) -> String {
 /// `commands::closest_match`; otherwise the known list. The name is
 /// sanitized (a project `.yoyo.toml` is repository-authored). Glyph-free
 /// except the em dash; callers add colour.
+///
+/// Also refuses `github` without a base URL: GitHub Models is retired
+/// (#1166, see [`GITHUB_MODELS_RETIRED`]).
 pub fn unknown_provider_refusal(provider: &str, base_url_given: bool) -> Option<String> {
+    if provider == "github" && !base_url_given {
+        return Some(GITHUB_MODELS_RETIRED.to_string());
+    }
     if KNOWN_PROVIDERS.contains(&provider) || base_url_given {
         return None;
     }
@@ -406,6 +412,19 @@ pub fn unknown_provider_refusal(provider: &str, base_url_given: bool) -> Option<
     msg.push_str("\nfor an OpenAI-compatible server use: --provider custom --base-url <url>");
     Some(msg)
 }
+
+/// #1166: GitHub retired GitHub Models on 2026-07-30, and every path on
+/// models.github.ai now answers `200 text/plain "OK"`, which surfaced as an
+/// opaque `Invalid header value: "text/plain"`. So `github` with no base URL
+/// is refused up front with the reason. With `--base-url` (or `base_url` in
+/// config) it still runs: the user chose an endpoint, and yoyo sends there.
+/// `github` stays in [`KNOWN_PROVIDERS`] for now; the rest of its removal is
+/// listed on #1166.
+pub const GITHUB_MODELS_RETIRED: &str = "provider 'github' (GitHub Models) was retired by GitHub \
+on 2026-07-30 and no longer answers requests \
+(https://github.blog/changelog/2026-07-30-github-models-is-now-retired)\n\
+for the same model families use: --provider openrouter\n\
+for an OpenAI-compatible server use: --provider custom --base-url <url>";
 
 /// #1157: limits for offered `google` ids yoagent has no preset for, each
 /// read from that id's own page: `(id, input token limit, output token
@@ -719,6 +738,23 @@ mod tests {
         );
         // Anti-vacuous: the list really is the authority, not an empty join.
         assert!(first.contains("anthropic") && first.contains("custom"));
+    }
+
+    #[test]
+    fn retired_github_provider_is_refused_with_the_retirement_named() {
+        let msg = unknown_provider_refusal("github", false).expect("github must be refused");
+        assert_eq!(msg, GITHUB_MODELS_RETIRED);
+        assert!(msg.contains("retired"), "{msg}");
+        assert!(msg.contains("2026-07-30"), "{msg}");
+        assert!(msg.contains("--provider openrouter"), "{msg}");
+        assert!(msg.contains("--provider custom --base-url <url>"), "{msg}");
+        // Near-misses: an explicit endpoint is a choice; other providers untouched.
+        assert_eq!(unknown_provider_refusal("github", true), None);
+        assert_eq!(unknown_provider_refusal("openai", false), None);
+        // `github` is still listed for this slice (#1166), so the refusal
+        // must come from the retirement branch, not the unknown-name one.
+        assert!(KNOWN_PROVIDERS.contains(&"github"));
+        assert!(!msg.contains("unknown provider"), "{msg}");
     }
 
     #[test]

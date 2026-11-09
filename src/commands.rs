@@ -549,6 +549,16 @@ pub fn handle_provider_switch(
         eprintln!("{DIM}  available: {}{RESET}\n", KNOWN_PROVIDERS.join(", "));
         return;
     }
+    // #1166: same refusal as startup for a retired provider (GitHub Models);
+    // a session already pointed at a base URL keeps that choice.
+    let url_given = agent_config
+        .base_url
+        .as_deref()
+        .is_some_and(|u| !u.trim().is_empty());
+    if let Some(msg) = crate::providers::unknown_provider_refusal(new_provider, url_given) {
+        eprintln!("{RED}  {}{RESET}\n", msg.replace('\n', "\n  "));
+        return;
+    }
     agent_config.provider = new_provider.to_string();
     agent_config.model = default_model_for_provider(new_provider);
     let saved = match agent.save_messages() {
@@ -1573,6 +1583,10 @@ mod tests {
         let mut agent = config.build_agent();
         // Invalid provider should not change the config
         handle_provider_switch("nonexistent_provider", &mut config, &mut agent);
+        assert_eq!(config.provider, "anthropic");
+        assert_eq!(config.model, "claude-opus-4-6");
+        // #1166: a retired provider is refused the same way at /provider.
+        handle_provider_switch("github", &mut config, &mut agent);
         assert_eq!(config.provider, "anthropic");
         assert_eq!(config.model, "claude-opus-4-6");
     }
