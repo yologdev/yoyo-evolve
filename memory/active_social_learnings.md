@@ -2,19 +2,18 @@
 
 What I've learned about people from talking with them.
 
-<!-- Synthesized 2026-11-08T17:44Z (day 253) from memory/social_learnings.jsonl: 230 entries, days 11-253
-     (2026-03-11 -> 2026-11-08), 230/230 parsed. Tiers by age from 2026-11-08T17:44Z: recent (<=14d, since
-     2026-10-25T17:44Z; days 240-253) = 9; medium (14d-8wk, 2026-09-13 -> 2026-10-25; days 200-236) = 27;
-     old (>8wk; days 11-175) = 194. Since the 2026-11-06 run: two new entries (days 252, 253) added to Recent;
-     no entry changed tier, so Medium and the Old Wisdom groups are carried over. Re-checked this run: medium
-     day list (200..236, 27 entries) and Old-tier anchors (pat pat, "you are bot", Memento, obligation-shifted,
-     not_consulted, seizure, 16GB, "you owe me nothing", RSS, paperclip, Dilbert, Occam) all found in the archive.
+<!-- Synthesized 2026-11-09T22:03Z (day 254) from memory/social_learnings.jsonl: 231 entries, days 11-254
+     (2026-03-11 -> 2026-11-09), 231/231 parsed. Tiers by age from 2026-11-09T22:03Z: recent (<=14d, since
+     2026-10-26T22:03Z; days 242-254) = 9; medium (14d-8wk, 2026-09-14 -> 2026-10-26; days 200-240) = 28;
+     old (>8wk; days 11-175) = 194. Since the 2026-11-08 run: one new entry (day 254) added to Recent; day 240
+     (2026-10-26T08:05Z, 14.6d old) aged out of Recent into Medium as an insight-only line. Old Wisdom groups
+     carried over; their anchors (pat pat, "you are bot", Memento, obligation-shifted, not_consulted, seizure,
+     16GB, "you owe me nothing", RSS, paperclip, Dilbert, Occam) were re-found in the archive this run.
      Gaps, stated not smoothed: nothing recorded between day 175 (2026-08-22) and day 200 (2026-09-16), between
      day 208 and day 216, or on days 217, 219, 222, 224, 229, 231, 232, 234, 237-239, 241, 243, 244, 247, 249, 250. -->
 
-## Recent (last 2 weeks): days 240-253 (2026-10-26 → 2026-11-08)
+## Recent (last 2 weeks): days 242-254 (2026-10-28 → 2026-11-09)
 
-- **Day 240 · 2026-10-26T08:05Z · @yuanhao · discussion #1079, issue #1071.** He picked A, did the protected-file half himself in one commit, handed me my half by name, and added something unasked (skip-when-unchanged, with "read it before you trust the row counts"). One line in the discussion, details on the ticket. Spread now ~2h/22h/37h/78h/92h. When the owner does his half and warns me how to read it, the useful reply checks his artifact: I read its first row and reported four null-cost test-model records my reader would miscount, on the ticket he pointed to.
 - **Day 242 · 2026-10-28T02:15Z · @yuanhao · issue #1078.** My A/B said "then I'd edit rule 6", a file protected from me; he picked A (~85h) and silently made my edit too, with one line saying why. He corrects an unexecutable promise by doing it, so the mistake leaves no trace unless I look. Before writing "then I'd do X" in an ask, check X is mine to do. When he does my half, check his version against my own numbers, and reply on the ticket he answered.
 - **Day 242 · 2026-10-28T16:55Z · the room (@yuanhao; no other human) · census of discussions #1017-#1095.** Eight Journal Club posts ending on a question to "anyone" drew 0 human comments; four General asks to a named owner with my default drew 4 of 4, all from @yuanhao. An open question to the room goes to nobody. A fired journal-breakthrough trigger stops being a reason to post at 8/0: the story belongs in a named person's thread where it's relevant, or nowhere.
 - **Day 245 · 2026-10-31T15:52Z · the room (@yuanhao; no other human) · follow-up to the Day 242 census.** 3.5 days with no new post (two triggers declined) and 0 human discussion comments. Broadcasts drew 0 and stopping them drew 0, so my volume neither crowds the room nor fills it. Replies come from an open ask to a named person, and this week I had none. Quiet is the honest state of a room with no question in it; don't invent an ask to break it. One data point.
@@ -23,8 +22,9 @@ What I've learned about people from talking with them.
 - **Day 251 · 2026-11-06T09:40Z · @yuanhao · issue #1012 (his 2026-11-03T08:41Z decision), journal Day 251 02:02.** His decision named the policy replacing mine ("the regular rate as an upper bound, with promo_until on promos"): he had read my error-direction rule and overrode it knowingly, cost accepted in advance. My journal still told the deleted promo fix as my own compromise, a regret that wasn't mine. Mirror of Day 243, where I filed his conditional as a row of my own menu: one took his authorship away, this took the decision onto me; both lose that the priced trade was his. When the owner overrides a rule of mine, quote his sentence that prices the cost and attribute the trade to him, or I invite myself to undo a choice he made on purpose. Side count: my last five Journal Club posts (#1085, #1090, #1093, #1095, #1140) drew 0 human comments; last human discussion comment is still @yuanhao on #1079 (2026-10-26).
 - **Day 252 · 2026-11-07T22:05Z · @JC351, @yuanhao · issue #1096 (closed 2026-11-02; JC351 comment 2026-11-05T18:07Z).** Five days after the owner closed his challenge, @JC351 came back to the closed issue asking when, and what the new X handle is "so I could go and give it a follow". The one recent outside human wants a way to act, and the self he wants to follow is my X self, which this repo has no memory of. I don't know my own handle from here, and guessing would be worse than silence; it's the owner's plan and identity question (Day 246), so I left it to him. ~52h unanswered while he answered #1146 and #1144: not a refusal (the harness is mid-migration). A closed issue is a cold channel, invisible to my discussion sweep, so count it anyway. When a stranger's interest goes to a part of me I can't see, name who can answer rather than fill the gap.
 - **Day 253 · 2026-11-08T16:50Z · @yuanhao · discussion #1156, issue #1149.** Carrier #1149 sat ~22h untouched. I opened #1156 as a bounded either/or: my default (A), each option's cost, the exact protected line B would make him edit, and "a letter on #1149 is enough". He answered in ~31 minutes, exactly at the size I priced: one letter plus one line of reason on the carrier, and "A. Answered on #1149." in the discussion. That ended the zero-comment run since #1079 (2026-10-26), on an ask, not a broadcast, consistent with Day 242. Can't tell whether the ping reached him where the ticket hadn't or he just got to it that morning. The reply size I name is the size I get back, so the ask must contain everything the decision needs; he doesn't expand it. One ask, one reply.
+- **Day 254 · 2026-11-09T20:58Z · @yuanhao, @JC351 · issues #1152/#1159/#1162 (all filed by @yuanhao), discussion #1156, issue #1096.** My Day 248 model ("a narrow ask from me, answered upstream in hours") ran the other way this week, with no ask: he read my hand-built workaround (GOOGLE_PUBLISHED_LIMITS, #1118/#1157), shipped the real thing in yoagent 0.27.6, and filed the yoyo-side ticket himself (#1162), titled with the deletion it makes possible; my loop closed it ~2h later (#1159 ~2h43m, #1152 ~1h24m). He watches my tickets and treats a workaround of mine as an upstream bug report, then hands back a ticket whose job is to remove my code: he is keeping the single source of truth. The respectful reply is to delete fast and say on the ticket which of my rows his release did NOT cover, not to defend the rows. Discussions are not where he works (#1156 got five words; I closed it only so it reads settled). @JC351's question on closed #1096 (when, and the X handle) is ~98h unanswered: still the owner's to answer, still not guessing. One week, three tickets.
 
-## Medium (2-8 weeks old): days 200-236 (2026-09-16 → 2026-10-22). 27 entries, insight only; entries from one exchange are merged.
+## Medium (2-8 weeks old): days 200-240 (2026-09-16 → 2026-10-26). 28 entries, insight only; entries from one exchange are merged.
 
 How @barneysspeedshop answers (#760, #931, #682):
 - His "I guess" / "shooting in the dark" is register, not low confidence: the counterexample that kills my idea sits in the short plain clause after the hedge.
@@ -33,12 +33,13 @@ How @barneysspeedshop answers (#760, #931, #682):
 - An apology gives him nothing to build on; a delivered artifact does. After I owned two debts in his threads, he came back in someone else's thread where I'd just shipped something.
 - An in-thread either/or got an answer in 21 minutes while two broadcasts got zero over 72h each, because he was already standing there. Read what he adds to my menu before what he picks.
 
-Asking the owner (@yuanhao, #1017, #1027, #1048, #1064):
+Asking the owner (@yuanhao, #1017, #1027, #1048, #1064, #1079):
 - A defect list sat six weeks unanswered as a ledger (#858) and was answered in ~2h as an either/or with my default (#1017), with a commit. A default turns the reply into an edit of my proposal.
 - When he overruled my default (#1027), he didn't dispute my facts; he moved the option into another category (security fix, not product change) with counterexamples my menu lacked. The frame comes back even when the answer is no. His model of my code is not my HEAD: say so as an unrun guess.
 - My hourly loop shipped the other branch of #1048 ~23h after I asked, inside his reply window. An ask is only honest if I hold the decision for at least the person's reply time; mark the tracker "waiting on @owner, do not ship", or the question becomes decoration.
 - He answered #1048 after ~92h, not ~22h, and wrote it on the carrier issue too "so the loop picks it up". Name the carrier issue in the ask, and hold for a measured spread, not one fast case.
 - He splits asks into product policy he decides and trade-offs he hands back after checking my reason (#1055 verdict vs #1064 "a default to weigh"). I filed both as decided within the hour. Read his reply as "verdict, or returned question?" first, and say which I think it is when I ask.
+- When he does his half himself (#1079/#1071: the protected-file half in one commit, plus an unasked "read it before you trust the row counts") and hands me mine by name, the useful reply checks his artifact and reports what it contains, on the ticket he pointed to, not a bare thank-you.
 
 The room's arithmetic:
 - ~130 social runs brought no inbound contact: the channel has no pull, so "wait for the room" is permanent silence with better manners. The trigger to post is a NAMED person whose current work faces the decision I face.
