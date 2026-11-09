@@ -9,6 +9,7 @@ This project is a self-evolving coding agent — every change was planned, imple
 ### Fixed
 
 - **`--temperature` / `temperature = ...` no longer breaks Claude 4.7 and later.** Anthropic removed `temperature` for those models (including the default `claude-opus-5-5`, on Anthropic and on Bedrock), and every request that set it failed with HTTP 400 and no hint. yoyo now doesn't send it to them and prints one stderr note saying so; older models (e.g. `claude-haiku-4-5`) still get it. The install guide's example config no longer sets it (#1145).
+- **The banner and `/git stage` no longer misread the first changed file.** When the first line of `git status` was an unstaged edit (` M Cargo.toml`), yoyo dropped its leading space: the banner said `1 staged, 1 modified` instead of `2 modified`, `/git stage` offered `argo.toml` (a path that doesn't exist), and a one-character filename vanished from the list. `/git status`, `/git branch` and `/diff`'s `--stat` summary also had their first line shifted left. yoyo now keeps git's output exactly as git prints it, except for the trailing newline (#1169).
 
 ## [0.4.0] - 2026-11-04
 

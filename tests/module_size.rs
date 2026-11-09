@@ -573,7 +573,9 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // than smuggled: this file is now grandfathered, so branch 2/3's ±100 drift
     // band applies to it from here on. The better fix is a split; owed, not done.
     // Day 237 (#1072): 2031 -> 2032, the `#[path]` line declaring git_branch.rs; context.rs shrank by 3.
-    ("src/git.rs", 2032),
+    // Day 254 (#1169): 2032 -> 2037, `git_stdout` (one trim_end decoder shared by
+    // run_git/run_git_in_dir, net +1) and the 3-line `#[path]` wiring of git_porcelain_tests.rs.
+    ("src/git.rs", 2037),
     ("src/help.rs", 2856), // Day 196: +71 drift paid off (pasted from what the gate printed).
     // Day 197: the stdin channel (`hook_stdin_payload` + its guards) crossed the
     // cap. Registered rather than split, on the Day-183 `prompt_retry.rs`

@@ -167,7 +167,7 @@ fn git_command() -> std::process::Command {
 }
 
 /// Run a git command with the given args.
-/// Returns `Ok(stdout_trimmed)` on success, `Err(stderr_trimmed)` on failure.
+/// Returns `Ok(stdout)` (trailing whitespace only trimmed, #1169), `Err(stderr_trimmed)` on failure.
 /// This is the common path for most git invocations — use raw `Command` only
 /// when you need the full `Output` struct (e.g., for separate stdout+stderr handling).
 ///
@@ -187,16 +187,20 @@ pub fn run_git(args: &[&str]) -> Result<String, String> {
         }
     }
     match git_command().args(args).output() {
-        Ok(output) if output.status.success() => {
-            Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-        }
+        Ok(output) if output.status.success() => Ok(git_stdout(&output.stdout)),
         Ok(output) => Err(String::from_utf8_lossy(&output.stderr).trim().to_string()),
         Err(e) => Err(format!("git not found: {e}")),
     }
 }
 
+/// Decode git's stdout. #1169: trim only the END. Porcelain line 1 can start
+/// with a significant space (` M file` = unstaged); a full trim made it `M file`.
+fn git_stdout(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).trim_end().to_string()
+}
+
 /// Run a git command in a specific directory.
-/// Returns `Ok(stdout_trimmed)` on success, `Err(stderr_trimmed)` on failure.
+/// Returns `Ok(stdout)` (trailing whitespace only trimmed, #1169), `Err(stderr_trimmed)` on failure.
 ///
 /// Uses `git -C <dir>` so the process working directory is unchanged.
 /// The test safety guard checks `dir` (not `cwd`) against the project root.
@@ -210,9 +214,7 @@ pub fn run_git_in_dir(dir: &std::path::Path, args: &[&str]) -> Result<String, St
         );
     }
     match git_command().arg("-C").arg(dir).args(args).output() {
-        Ok(output) if output.status.success() => {
-            Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-        }
+        Ok(output) if output.status.success() => Ok(git_stdout(&output.stdout)),
         Ok(output) => Err(String::from_utf8_lossy(&output.stderr).trim().to_string()),
         Err(e) => Err(format!("git not found: {e}")),
     }
@@ -243,6 +245,9 @@ pub fn run_git_output(args: &[&str]) -> Result<std::process::Output, String> {
 
 #[path = "git_branch.rs"]
 pub(crate) mod git_branch;
+#[cfg(test)]
+#[path = "git_porcelain_tests.rs"]
+mod git_porcelain_tests;
 pub fn git_branch() -> Option<String> {
     git_branch::current_branch_in(std::path::Path::new("."))
 }
