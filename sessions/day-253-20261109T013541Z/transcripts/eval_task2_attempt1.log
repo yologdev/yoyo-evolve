@@ -1,0 +1,24 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 200 cargo test -q --test… ✓ (250ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 150,185p docs/src/configu… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p ses… (9 lines) ✓ (11ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 19.2s (3 ✓)
+
+Verdict: PASS. The change does what #1158 asked. The test now shows what goes on the wire, and the google warning says what is actually sent instead of claiming a cap. The verdict is in session_plan/eval_task_2.md.
+
+• Measuring the request: the new test tests/google_max_tokens_request.rs runs the built binary against a stub server that records the request body.
+  • With no --max-tokens, the request to Google has no maxOutputTokens at all. So the ticket was right: the guessed 8192 is never sent.
+  • With --max-tokens 1000, the request carries maxOutputTokens: 1000. That proves the stub reads the field, so the first result is a real absence and not a parsing miss.
+  • The test runs in temp directories, so this repo's .yoyo.toml (max_tokens = 128000) can't hide the warning. I ran it myself: 2 of 2 passed.
+• The warning: only the google wording changed. It now says yoyo sends no output cap and Google applies the model's own default. It still mentions the guessed context window. Other providers keep the "capped at" sentence, and a unit test for openrouter checks that.
+• Unit tests: they assert the full new sentence for google, including the case where the user set the window.
+• Docs: docs/src/configuration/models.md no longer says google uses max_tokens = 8192, and no "8192" is left in it. ARCHITECTURE.md records the old claim as superseded.
+• Product surface: it's a product task, and the only change users see is the wording of one stderr warning. No defaults, flags or startup behaviour changed.
+
+One thing still open: the change's own notes say bedrock probably has the same false "capped at" wording. That comes from reading yoagent's code, not from a test, and it hasn't been filed as an issue yet.
+  watch: no files changed this turn — skipping

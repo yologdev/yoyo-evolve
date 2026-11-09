@@ -1,0 +1,160 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | head; wc -l… ✓ (17ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 210,260p src/tools_user_d… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 11.2s (2 ✓)
+
+Write the probe first, then run.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/t… (40 lines) ✓ (36.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The probe found a real hole: 10 of 11 rows get past the rule. Only rm "-rf" x is refused, and that's because the raw glob rm * matches it. Now reading the shared reader:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,130p src/safety/indirec…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 130,649p src/safety/indir… ✓ (5ms)
+ ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 340,560p src/safety/indir… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=352 && NR<=393' src/saf… ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 9.2s (4 ✓)
+
+The tool display collapses lines; I'll use read_file for the exact text.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ read src/safety/indirect_command.rs:352..394 ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn .*unquote\|fn .*deq… ✓ (19ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "quote" src/hard_deny.rs… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 250,340p src/hard_deny.rs… ✓ (8ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 27.6s (4 ✓)
+
+hard_deny.rs already has a quote-removing tokenizer. I'll look at whether it can be reused instead of writing a second one:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^fn \|^pub\|^pub(crate)… ✓ (4ms)
+  ▶ read src/hard_deny.rs:375..480 ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read src/safety/indirect_command.rs:276..346 ✓ (0ms)
+  ▶ edit src/safety/indirect_command.rs (1 → 39 lines)
+  + /// Shell quote removal on one lexed word, so `"rm"`, `r'm'` and `\rm` all
+  + /// read `rm` (the program the shell runs): `'…'` is literal, `"…"` drops its
+  + /// quotes and the backslash before `$ ` " \`, and an unquoted `\x` is `x`.
+  + /// `$'…'` is left alone: such a command word is already refused as unreadable.
+  + fn remove_quotes(word: &str) -> String {
+  +     let mut out = String::new();
+  +     let mut chars = word.chars().peekable();
+  +     let (mut sq, mut dq) = (false, false);
+  +     while let Some(c) = chars.next() {
+  +         match c {
+  +             '\'' if !dq => sq = !sq,
+  +             '"' if !sq => dq = !dq,
+  +             '\\' if !sq => match chars.peek().copied() {
+  +                 Some(n) if !dq || matches!(n, '$' | '`' | '"' | '\\' | '\n') => {
+  +                     out.push(n);
+  +                     chars.next();
+  +                 }
+  +                 _ => out.push(c),
+  +             },
+  +             _ => out.push(c),
+  ... (19 more lines)
+  ▶ edit src/safety/indirect_command.rs (2 → 7 lines)
+        for seg in deny_segments(command) {
+  -         if let Some(p) = user_deny.iter().find(|p| glob_match(p, &seg)) {
+  +         // As written, and with quote removal (`"rm" -rf x` runs `rm -rf x`).
+  +         let unquoted = unquoted_segment(&seg);
+  +         if let Some(p) = user_deny
+  +             .iter()
+  +             .find(|p| glob_match(p, &seg) || glob_match(p, &unquoted))
+  +         {
+ ✓ (23.4s)
+  + /// Shell quote removal on one lexed word, so `"rm"`, `r'm'` and `\rm` all
+  + /// read `rm` (the program the shell runs): `'…'` is literal, `"…"` drops its
+  + /// quotes and the backslash before `$ ` " \`, and an unquoted `\x` is `x`.
+  + /// `$'…'` is left alone: such a command word is already refused as unreadable.
+  + fn remove_quotes(word: &str) -> String {
+  +     let mut out = String::new();
+  +     let mut chars = word.chars().peekable();
+  +     let (mut sq, mut dq) = (false, false);
+  ... (13 more lines)
+ ✓ (5m 14s)
+        for seg in deny_segments(command) {
+  -         if let Some(p) = user_deny.iter().find(|p| glob_match(p, &seg)) {
+  +         // As written, and with quote removal (`"rm" -rf x` runs `rm -rf x`).
+  +         let unquoted = unquoted_segment(&seg);
+  +         if let Some(p) = user_deny
+  +             .iter()
+  +             .find(|p| glob_match(p, &seg) || glob_match(p, &unquoted))
+  +         {
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 6m 3s (5 ✓)
+
+Now I'll add the $'…' rows to the probe and run the table:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (11 lines) ✓ (36.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/tools… (12 lines) ✓ (37.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/tools… (12 lines) ✓ (36.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk '{print NR": "$NF" <- "$2" "… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "strip_outer_quotes" src… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "strip_outer_quotes" src… ✓ (12ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 2m 36s (6 ✓)
+
+Now I'll pin those readers in the probe table. The rows: partial-quoted eval, command, and bash (the inline-shell recursion):
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (14 lines) ✓ (35.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Positive controls, each run as one atomic mutate, test, restore, test command, and serially. Control 1 neuters the unquoted-segment match:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && f=src/safety/indirect_command.rs… ✓ (1m 13s)
+
+Control 1 went red naming the 11 segment rows, then back to green after the restore. Control 2 puts strip_outer_quotes back into both base computations:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && f=src/safety/indirect_command.rs… ✓ (1m 14s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn indirection_probe_pl… ✓ (5ms)
+  ▶ read src/safety/indirect_command.rs:630..642 ✓ (0ms)
+  ▶ edit src/safety/indirect_command.rs (1 → 6 lines)
+                ("bash <<EOF\n$X -rf ~\nEOF", unreadable("$X")),
+  +             // a partly quoted eval / shell / wrapper word is the same word
+  +             // (None before the quote-removal fix: `e'v'al` was not `eval`)
+  +             ("e'v'al \"$X -rf ~\"", unreadable("$X")),
+  +             ("b'a'sh -c '$X -rf ~'", unreadable("$X")),
+  +             ("s\\udo $X -rf ~", unreadable("$X")),
+ ✓ (4m 48s)
+                ("bash <<EOF\n$X -rf ~\nEOF", unreadable("$X")),
+  +             // a partly quoted eval / shell / wrapper word is the same word
+  +             // (None before the quote-removal fix: `e'v'al` was not `eval`)
+  +             ("e'v'al \"$X -rf ~\"", unreadable("$X")),
+  +             ("b'a'sh -c '$X -rf ~'", unreadable("$X")),
+  +             ("s\\udo $X -rf ~", unreadable("$X")),
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 6m 20s (4 ✓)
+
+Running the full gate:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (4m 2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test…
+  (interrupted)
+
