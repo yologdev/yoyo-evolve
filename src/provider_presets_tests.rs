@@ -194,8 +194,8 @@ fn output_ceiling_is_declared_only_where_the_vendor_publishes_one() {
     for (provider, id) in [("xai", "grok-4.7"), ("mistral", "mistral-large-4")] {
         assert_eq!(ceiling_warning(provider, id, 200_000), None, "{id}");
     }
-    // Generic google ids still declare nothing (#1020); #1157's published
-    // rows declare Google's own cap.
+    // Generic google ids still declare nothing (#1020); flash-lite's yoagent
+    // preset (0.27.7, #1168) declares Google's own cap.
     assert_eq!(ceiling_warning("google", "gemini-3.0-flash", 200_000), None);
     assert!(ceiling_warning("google", "gemini-2.5-flash-lite", 65_537).is_some());
     assert_eq!(

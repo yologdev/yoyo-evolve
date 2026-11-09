@@ -1486,6 +1486,11 @@ fn reconciled_mistral_and_gemini_live_rows_bill_the_models_dev_price() {
         ("google", "gemini-2.5-flash-lite", (0.1, 0.0, 0.01, 0.4)),
     ];
     for (provider, id, expected) in rows {
+        // #1168: yoagent 0.27.7 prices gemini-2.5-flash-lite, so /cost bills its
+        // row (cache_write 0.0 -> the input rate, `cost_row`). Google never
+        // reports cache writes (yoagent google.rs fills only `cache_read`), so
+        // that cell bills nothing; the openai test above reads it the same way.
+        let expected = after_yoagent(id, expected);
         assert!(
             crate::providers::known_models_for_provider(provider).contains(&id),
             "{id} is no longer in known_models_for_provider(\"{provider}\") — it was reconciled \

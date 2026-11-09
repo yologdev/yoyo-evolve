@@ -426,36 +426,6 @@ on 2026-07-30 and no longer answers requests \
 for the same model families use: --provider openrouter\n\
 for an OpenAI-compatible server use: --provider custom --base-url <url>";
 
-/// #1157: limits for offered `google` ids yoagent has no preset for, each
-/// read from that id's own page: `(id, input token limit, output token
-/// limit, source)`. Without a row the run path would use
-/// `ModelConfig::google`'s 1,000,000 / 8192 guess: a guessed window, no
-/// declared output ceiling (#943), and the guessed-limits warning on every
-/// run. (It does not cut replies: Google is sent `maxOutputTokens` only when
-/// the user sets `max_tokens`.)
-/// A row must never shadow a yoagent preset (a test checks both ways).
-///
-/// #1162 (yoagent 0.27.6, page re-read 2026-11-09): every Gemini 3+ row is a
-/// yoagent preset now and was dropped. One row is left: `gemini-2.5-flash-lite`,
-/// which ai.google.dev/gemini-api/docs/deprecations says "is not deprecated and
-/// remains available through the API until further notice", and which yoagent
-/// has no preset for. It waits for one (#1164, upstream); when it lands the guard
-/// fails by name and this table and its readers go.
-pub(crate) const GOOGLE_PUBLISHED_LIMITS: &[(&str, u32, u32, &str)] = &[(
-    "gemini-2.5-flash-lite",
-    1_048_576,
-    65_536,
-    "https://ai.google.dev/gemini-api/docs/models/gemini-2.5-flash-lite",
-)];
-
-/// `(context_window, max_output)` from [`GOOGLE_PUBLISHED_LIMITS`].
-pub(crate) fn google_published_limits(id: &str) -> Option<(u32, u32)> {
-    GOOGLE_PUBLISHED_LIMITS
-        .iter()
-        .find(|(row, ..)| *row == id)
-        .map(|&(_, window, out, _)| (window, out))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -540,31 +510,25 @@ mod tests {
     }
 
     /// #1118: a Gemini id on the picker or the known list silences the
-    /// `Unknown model` warning, so each one needs an outside source: yoagent,
-    /// or a row above naming Google's page. `gemini-3.0-pro` (offered from
-    /// memory, never a Google id) would fail here by name.
+    /// `Unknown model` warning, so each one needs an outside source: a yoagent
+    /// preset whose limits are real, not `ModelConfig::google`'s 1,000,000 /
+    /// 8192 guess. `gemini-3.0-pro` (offered from memory, never a Google id)
+    /// would fail here by name. #1168 (Day 254): yoagent 0.27.7 presets cover
+    /// every offered id, so yoyo's own Google-page table is gone.
     #[test]
-    fn every_offered_gemini_id_is_a_yoagent_preset_or_on_googles_page() {
+    fn every_offered_gemini_id_is_a_yoagent_preset_with_real_limits() {
+        let guess = yoagent::provider::ModelConfig::google("zz", "zz");
         let picker = crate::commands::KNOWN_MODELS
             .iter()
             .filter(|id| id.starts_with("gemini-"));
         for id in known_models_for_provider("google").iter().chain(picker) {
-            // #1157: the page rows now live in the production table.
-            let sourced = google_published_limits(id).is_some();
-            assert!(
-                yoagent_knows_gemini(id) || sourced,
-                "google offers {id}: no yoagent preset/price row and no Google-page row"
-            );
-        }
-        // A page row must not shadow a yoagent row (it would outlive its premise).
-        for (id, _, _, url) in GOOGLE_PUBLISHED_LIMITS {
-            assert!(
-                !yoagent_knows_gemini(id),
-                "{id} is in yoagent now; drop its row ({url})"
-            );
-            assert!(
-                known_models_for_provider("google").contains(id),
-                "{id} row is unused"
+            let preset = yoagent::provider::ModelConfig::preset("google", id)
+                .unwrap_or_else(|| panic!("google offers {id}: no yoagent preset"));
+            assert!(yoagent_knows_gemini(id), "{id}");
+            assert_ne!(
+                (preset.context_window, preset.max_tokens),
+                (guess.context_window, guess.max_tokens),
+                "{id}: the preset carries ModelConfig::google's guess, not real limits"
             );
         }
         // Every offered id's window: 1,048,576 on each id's Google page.

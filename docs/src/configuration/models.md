@@ -149,11 +149,13 @@ the regular rate after (since Day 242; see [Cost Tracking](../features/cost-trac
 
 Since yoagent 0.27.6, `gemini-3.5-flash-lite`, `gemini-3.1-flash-lite` and
 `gemini-3-flash-preview` are yoagent presets too (as `gemini-3.6-flash` and
-`gemini-3.1-pro-preview` already were), with the same limits and yoagent's prices. One Gemini id yoyo offers still has no yoagent preset:
-`gemini-2.5-flash-lite`, which Google says "is not deprecated and remains available through the
-API until further notice". It takes the limits its own page under
-[ai.google.dev/gemini-api/docs/models](https://ai.google.dev/gemini-api/docs/models) publishes:
-1,048,576 input tokens and 65,536 output tokens (read 2026-11-09). `/model info` prints the same
+`gemini-3.1-pro-preview` already were), with the same limits and yoagent's prices. Since
+yoagent 0.27.7, `gemini-2.5-flash-lite` (which Google says "is not deprecated and remains
+available through the API until further notice") is a yoagent preset as well, so every Gemini id
+yoyo offers runs on yoagent's preset limits: for 2.5 Flash-Lite, 1,048,576 input tokens and 65,536
+output tokens, as its page under
+[ai.google.dev/gemini-api/docs/models](https://ai.google.dev/gemini-api/docs/models) publishes.
+yoyo keeps no Gemini limits table of its own. `/model info` prints the same
 window and output cap, a `max_tokens` above 65,536 gets the declared-ceiling warning, and your own
 `max_tokens` / `context_window` still win. yoyo's Google provider sends `maxOutputTokens` only
 when you set `max_tokens`; otherwise Google applies its own default.
@@ -172,8 +174,7 @@ every id it does not know. On the OpenAI-compatible providers `openai`, `openrou
 `mistral`, `cerebras`, `github` and `zai` that is a 128,000-token context window and
 `max_tokens = 4096`; on `minimax` a 1M window and `max_tokens = 4096`. That cap covers reasoning
 plus answer on every turn, so a newer model (for example a GPT release newer than yoyo's presets)
-can be cut short. On `google` (a `gemini-*` id that is neither a preset nor one of the offered ids
-below) the guess is a 1M window, and no output cap is sent at all: the request carries no
+can be cut short. On `google` (a `gemini-*` id that is not a yoagent preset) the guess is a 1M window, and no output cap is sent at all: the request carries no
 `maxOutputTokens` unless you set `max_tokens`, so Google applies the model's own default output
 limit, and the warning says that instead of naming a cap. yoyo now says so once per model on stderr, even in
 quiet or piped runs (stdout is unchanged):

@@ -204,7 +204,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 249 (#1122): +4, the openrouter arm's second lookup (yoagent routed presets).
     // Day 250 (#1026): +3, `incomplete: None` in three existing PromptOutcome test literals.
     // Day 251 (#1145): 4984 -> 4980, temperature wiring moved to src/temperature_support.rs.
-    ("src/agent_builder.rs", 4977), // Day 251: #1144 — anthropic_output_maximum reads yoagent 0.27.2 max_output first.
+    ("src/agent_builder.rs", 4997), // Day 254: #1168 — google_limits_beyond_preset and its run-path/ceiling readers deleted (yoagent 0.27.7 presets cover every Gemini id): 5011 -> 4997; the register had been 34 behind HEAD inside the grace band. Day 251: #1144 — anthropic_output_maximum reads yoagent 0.27.2 max_output first.
     // Day 164 (#728): +98 lines — `/skill install`'s destination becomes a third
     // auto-discovery source, so an explicitly installed skill actually loads.
     // The two near-identical per-directory blocks were collapsed into one loop
@@ -291,7 +291,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // source-level guard pinning that. Acknowledged, not absorbed.
     // Day 247 (#1108): 3542 -> 3576. +4 is /cost's per-turn sub-agent block call
     // site; the other +30 was absorbed drift, recorded here rather than left.
-    ("src/commands_info.rs", 3553), // Day 253: #1118 — the gemini-2.0 window branch is gone (shut down per Google) and the 3.x/2.5 branches merged (-5). Day 251: #1144 — the Claude branch of the hand window table is gone (Claude ids read yoagent); tests in anthropic_preset_tests.rs.
+    ("src/commands_info.rs", 3559), // Day 254: #1168 — the /model info GOOGLE_PUBLISHED_LIMITS branch is gone (-4, 3563 -> 3559; the register had been 10 behind HEAD inside the grace band). Day 253: #1118 — the gemini-2.0 window branch is gone (shut down per Google) and the 3.x/2.5 branches merged (-5). Day 251: #1144 — the Claude branch of the hand window table is gone (Claude ids read yoagent); tests in anthropic_preset_tests.rs.
     // Day 163 (#726): -59 lines — emerging-risk prompt injection removed
     // (map, annotation, helper, and the test pinning them); see #724.
     // Day 174: +3 absorbed since Day 166.

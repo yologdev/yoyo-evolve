@@ -315,7 +315,7 @@ pass --max-tokens) to cap replies."
         // Near-miss: the current google default has a vendor preset.
         assert_eq!(note_for("google", "gemini-3.8-flash", true), None);
         assert_eq!(note_for("google", "gemini-4-argon", true), None);
-        // #1157: a published-limits row is not a guess either.
+        // #1168: flash-lite is a yoagent preset since 0.27.7, not a guess.
         assert_eq!(note_for("google", "gemini-2.5-flash-lite", true), None);
         // Anthropic default (fleet preset) stays silent.
         assert_eq!(note_for("anthropic", "claude-opus-5-5", true), None);

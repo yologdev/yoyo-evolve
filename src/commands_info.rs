@@ -759,10 +759,6 @@ pub fn model_context_window(model: &str) -> Option<u64> {
     {
         return Some(u64::from(preset.context_window));
     }
-    // #1157: the run path's table for Gemini ids with no preset.
-    if let Some((window, _)) = crate::agent_builder::google_limits_beyond_preset(model) {
-        return Some(u64::from(window));
-    }
     if model.contains("claude") {
         let config = ["bedrock", "openrouter"]
             .iter()
