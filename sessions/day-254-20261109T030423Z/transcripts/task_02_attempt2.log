@@ -1,0 +1,40 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | head; git l… ✓ (15ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+The work is committed and the tree is clean. Verifying the gates on HEAD.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo FMT… ✓ (16.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (3m 18s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -cE "FAIL… ✓ (3m 5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -nE "FAIL… ✓ (3m 11s)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 10m 14s (4 ✓)
+
+Task 2 was already committed by the earlier attempt as 01c8b118 ("Fixes #1159: pin every consumer of the checkpoint stop…"), so I didn't add another commit. Nothing changed in the tree, and every check passes on HEAD:
+
+• cargo fmt -- --check is clean, and so is cargo clippy --all-targets -- -D warnings.
+• cargo test passes, including the 6 tests in checkpoint_stop_tests. The full suite is 6880 tests in the main binary plus the integration suites, with 0 failures. (My first count of failures came back as 2, but that was my grep matching "0 failed; 4 ignored". Nothing actually failed.)
+
+What 01c8b118 does:
+• No checkpoint-stop consumer needed a code change on yoagent 0.27.5. It adds 6 tests in src/checkpoint_stop_tests.rs, registered in src/main.rs, and the census table is in the commit body. They check that:
+  • the run history ends on the new "agent stopped" marker message;
+  • -p prints the model's last reply, not the marker;
+  • --output-format json does the same;
+  • the exit code is still 2;
+  • a saved session with the marker restores and the next prompt still works;
+  • the reply is not mistaken for a stopped sub-agent by the one piece of yoyo code that looks for that prefix.
+• What the tests don't drive directly:
+  • The checkpoint callback in `build_agent`. It has no test hook, so the tests use a callback of the same shape.
+  • The global "checkpoint triggered" flag. It isn't set in tests, because another test checks its default value.
+  • A real provider. The resume test uses only the mock provider, which accepts two user messages in a row. Nobody has checked that against a real provider.
+• One related bug is not fixed: in the REPL, auto-continue (on by default) can carry on past a checkpoint stop. That bug predates 0.27.5 and isn't part of #1159, so it was filed as #1161 in the earlier attempt. It was found by reading the code, not by running it.
+• The title says `Fixes #1159` because Task 1 (44f159f8) and the yoagent 0.27.5 lock bump (612cd699) are both in the log, so #1159's done-when is met.
+  watch: no files changed this turn — skipping
