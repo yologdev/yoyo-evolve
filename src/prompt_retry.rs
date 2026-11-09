@@ -544,9 +544,15 @@ pub fn auth_failure_message(provider: &str, env_var: &str, source: &KeySource) -
             let own = crate::providers::provider_api_key_vars(provider);
             if !own.is_empty() && !own.contains(&var.as_str()) {
                 // The provider's own variables were all unset, so the generic
-                // fallback sent another key (CLAUDE.md's wrong-token 401).
+                // fallback sent another key (CLAUDE.md's wrong-token 401). Name
+                // every own variable: google reads GEMINI_API_KEY first (#1163).
+                let unset = match own {
+                    [one] => format!("{one} is not set"),
+                    [init @ .., last] => format!("Neither {} nor {last} is set", init.join(", ")),
+                    [] => format!("{env_var} is not set"),
+                };
                 format!(
-                    "{head}\n  {env_var} is not set, so the key from {var} was sent instead, and the API rejected it.\n\
+                    "{head}\n  {unset}, so the key from {var} was sent instead, and the API rejected it.\n\
                      Set the right one with: export {env_var}=<your-key>\n{config_hint}"
                 )
             } else {
@@ -597,6 +603,10 @@ pub(crate) fn diagnose_api_error_for(error: &str, model: &str, oneshot: bool) ->
         || lower.contains("invalid api key")
         || lower.contains("invalid_api_key")
         || lower.contains("authentication")
+        // Google rejects a bad key with 400 INVALID_ARGUMENT, not 401 (#1163; body
+        // seen on the wire). Never bare `400`/`invalid_argument`: those cover bad fields.
+        || lower.contains("api_key_invalid")
+        || lower.contains("api key not valid")
     {
         let env_var = crate::cli::provider_api_key_env(&provider).unwrap_or("ANTHROPIC_API_KEY");
         // The source cli.rs recorded when it resolved the key (#1062); with none

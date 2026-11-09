@@ -659,7 +659,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 241 (20:26): 2785 -> 2786 -- +1 for REFUSAL_STEM_PARTIAL_READ in is_deterministic_tool_error.
     // +1 Day 248 (#1120): the reserved-DNS fast-fail pointer beside the classifier.
     // +6 Day 249 (#1126): DNS matcher takes reqwest's real text; tests in a sibling file.
-    ("src/prompt_retry.rs", 2793), // Day 252 (01:37): +1, yoagent ReadLog refusal stem is deterministic (#1094).
+    ("src/prompt_retry.rs", 2803), // Day 254 (12:00): +10, Google 400 API_KEY_INVALID is an auth failure; fallback hint names every own key var (#1163).
     // Day 162 (#689): +14 lines — double Ctrl+C at the idle REPL prompt now
     // exits (consecutive-flag `ctrl_c_armed`, dim hint on first press).
     // Day 174: +91 absorbed since Day 166.

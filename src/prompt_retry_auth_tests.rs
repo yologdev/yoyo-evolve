@@ -99,3 +99,105 @@ fn generic_fallback_without_provider_vars_does_not_invent_a_right_one() {
         "Authentication failed for provider 'custom'.\n  API_KEY is set but the API rejected it — check the key value.\nAPI_KEY is where this session's key came from; fix its value there, or pass --api-key <key>."
     );
 }
+
+/// Google's real reply to a bad key, observed on the wire in the Day 254
+/// assessment (#1163): `yoyo --provider google --model gemini-2.5-flash -p hi`
+/// with GEMINI_API_KEY/GOOGLE_API_KEY unset and ANTHROPIC_API_KEY set got
+/// `400 Bad Request` with `"API key not valid. Please pass a valid API key."`
+/// and `"reason": "API_KEY_INVALID"`, and yoyo printed raw JSON with no hint.
+/// Wrapped the way yoagent 0.27.5's google provider builds it
+/// (`"Google API error {status}: {body}"`, classified as `Api`, not `Auth`,
+/// because yoagent's classifier maps only 401/403 to `Auth`).
+const GOOGLE_BAD_KEY: &str = r#"Google API error 400 Bad Request: {
+  "error": {
+    "code": 400,
+    "message": "API key not valid. Please pass a valid API key.",
+    "status": "INVALID_ARGUMENT",
+    "details": [
+      {
+        "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+        "reason": "API_KEY_INVALID",
+        "domain": "googleapis.com",
+        "metadata": { "service": "generativelanguage.googleapis.com" }
+      }
+    ]
+  }
+}"#;
+
+#[test]
+fn google_400_api_key_invalid_reaches_the_auth_hint() {
+    let diag = super::diagnose_api_error_for(GOOGLE_BAD_KEY, "gemini-2.5-flash", true)
+        .expect("Google's bad-key 400 must get a diagnosis");
+    assert!(
+        diag.starts_with("Authentication failed for provider 'google'."),
+        "{diag}"
+    );
+}
+
+#[test]
+fn each_google_bad_key_marker_alone_is_an_auth_failure() {
+    // Either half of Google's body is enough: the message text and the reason
+    // code each identify a rejected key, and neither is a bare status.
+    for err in [
+        "Google API error 400 Bad Request: API key not valid. Please pass a valid API key.",
+        r#"Google API error 400 Bad Request: {"reason": "API_KEY_INVALID"}"#,
+    ] {
+        let diag = super::diagnose_api_error_for(err, "gemini-2.5-flash", true);
+        assert!(
+            diag.as_deref()
+                .is_some_and(|d| d.starts_with("Authentication failed")),
+            "{err} -> {diag:?}"
+        );
+    }
+}
+
+#[test]
+fn google_400_that_is_not_about_the_key_gets_no_auth_hint() {
+    // Near miss: same status, same INVALID_ARGUMENT, a bad field instead of a
+    // bad key. Matching on `400` or `invalid_argument` would mislabel it.
+    let err = r#"Google API error 400 Bad Request: {
+  "error": {
+    "code": 400,
+    "message": "Invalid JSON payload received. Unknown name \"tempurature\" at 'generation_config': Cannot find field.",
+    "status": "INVALID_ARGUMENT"
+  }
+}"#;
+    let diag = super::diagnose_api_error_for(err, "gemini-2.5-flash", true);
+    assert!(
+        !diag
+            .as_deref()
+            .is_some_and(|d| d.contains("Authentication failed")),
+        "{diag:?}"
+    );
+}
+
+#[test]
+fn google_cross_provider_fallback_names_both_unset_google_vars() {
+    // The assessment's exact case: both of google's own variables unset, the
+    // generic fallback sent ANTHROPIC_API_KEY. The hint must not say only
+    // GOOGLE_API_KEY is unset when GEMINI_API_KEY (read first) is unset too.
+    let got = auth_failure_message(
+        "google",
+        "GOOGLE_API_KEY",
+        &KeySource::Env("ANTHROPIC_API_KEY".into()),
+    );
+    assert_eq!(
+        got,
+        format!(
+            "Authentication failed for provider 'google'.\n  Neither GEMINI_API_KEY nor GOOGLE_API_KEY is set, so the key from ANTHROPIC_API_KEY was sent instead, and the API rejected it.\nSet the right one with: export GOOGLE_API_KEY=<your-key>\n{CONFIG_HINT}"
+        )
+    );
+    // Remedy check (Day 252): the variable the hint tells the user to export
+    // is one google's key lookup actually reads, and every variable it calls
+    // unset is one too, so following the advice works.
+    let vars = crate::providers::provider_api_key_vars("google");
+    let export = got
+        .lines()
+        .find_map(|l| l.strip_prefix("Set the right one with: export "))
+        .and_then(|rest| rest.split('=').next())
+        .expect("hint has an export line");
+    assert!(vars.contains(&export), "{export} not in {vars:?}");
+    for v in vars {
+        assert!(got.contains(v), "hint omits {v}: {got}");
+    }
+}
