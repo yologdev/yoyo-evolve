@@ -161,10 +161,12 @@ when you set `max_tokens`; otherwise Google applies its own default.
 A model id yoyo has no preset for runs on its provider's guess: the limits that provider hands
 every id it does not know. On the OpenAI-compatible providers `openai`, `openrouter`, `xai`, `groq`,
 `mistral`, `cerebras`, `github` and `zai` that is a 128,000-token context window and
-`max_tokens = 4096`; on `minimax` a 1M window and `max_tokens = 4096`; on `google` a 1M window and
-`max_tokens = 8192` (for a `gemini-*` id that is neither a preset nor one of the offered ids
-below). That cap covers reasoning plus answer on every turn, so a newer
-model (for example a GPT release newer than yoyo's presets) can be cut short. yoyo now says so once per model on stderr, even in
+`max_tokens = 4096`; on `minimax` a 1M window and `max_tokens = 4096`. That cap covers reasoning
+plus answer on every turn, so a newer model (for example a GPT release newer than yoyo's presets)
+can be cut short. On `google` (a `gemini-*` id that is neither a preset nor one of the offered ids
+below) the guess is a 1M window, and no output cap is sent at all: the request carries no
+`maxOutputTokens` unless you set `max_tokens`, so Google applies the model's own default output
+limit, and the warning says that instead of naming a cap. yoyo now says so once per model on stderr, even in
 quiet or piped runs (stdout is unchanged):
 
 ```text

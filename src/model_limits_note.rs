@@ -85,6 +85,22 @@ pub(crate) fn unknown_model_limits_note(
         shown
     };
     let marker = if plain { "warning: " } else { "⚠ " };
+    // #1158: GoogleProvider sends `maxOutputTokens` only from a user cap
+    // (observed in tests/google_max_tokens_request.rs: no `generationConfig`
+    // at all without one), so ModelConfig's guessed `max_tokens` never goes
+    // out and "capped at {max_tokens}" would be false for google.
+    if provider == "google" {
+        let no_cap = "yoyo sends no output cap, so Google applies the model's own default \
+output limit; set max_tokens in .yoyo.toml (or pass --max-tokens) to cap replies";
+        return Some(match user_context_window {
+            Some(_) => format!("{marker}no preset is known for google model '{shown}'. {no_cap}."),
+            None => format!(
+                "{marker}no preset is known for google model '{shown}', so yoyo is using a \
+guessed {window}-token context window. {no_cap}, and context_window (or --context-window) if \
+the model's window differs."
+            ),
+        });
+    }
     let assumed = match user_context_window {
         Some(_) => format!("max_tokens = {max_tokens}"),
         None => format!("a {window}-token context window and max_tokens = {max_tokens}"),
@@ -254,18 +270,48 @@ context_window in .yoyo.toml (or pass --max-tokens / --context-window)."
         let probe = create_model_config("google", PROBE_IDS[0], None);
         for id in ["gemini-zzz", "gemini-3.0-pro", "gemini-2.0-flash"] {
             let out = note_for("google", id, true).unwrap_or_else(|| panic!("{id} must warn"));
+            // #1158: the wire carries no maxOutputTokens without a user cap
+            // (tests/google_max_tokens_request.rs), so the note names the
+            // window guess and says no cap is sent, never "capped at 8192".
             assert_eq!(
                 out,
                 format!(
                     "warning: no preset is known for google model '{id}', so yoyo is using \
-guessed limits: a {w}-token context window and max_tokens = {m}. Every reply (reasoning \
-included) is capped at {m} output tokens. If the model allows more, set max_tokens and \
-context_window in .yoyo.toml (or pass --max-tokens / --context-window).",
+a guessed {w}-token context window. yoyo sends no output cap, so Google applies the model's own \
+default output limit; set max_tokens in .yoyo.toml (or pass --max-tokens) to cap replies, and \
+context_window (or --context-window) if the model's window differs.",
                     w = probe.context_window,
-                    m = probe.max_tokens
                 )
             );
+            assert!(!out.contains(&probe.max_tokens.to_string()), "{out}");
         }
+        // With the window set by the user, nothing is guessed that reaches
+        // the wire or the budget's window, but the "no cap is sent" fact
+        // still holds and is the whole note.
+        let out = unknown_model_limits_note(
+            "google",
+            "gemini-zzz",
+            probe.context_window,
+            probe.max_tokens,
+            None,
+            Some(500_000),
+            true,
+        )
+        .expect("google no-cap note still applies");
+        assert_eq!(
+            out,
+            "warning: no preset is known for google model 'gemini-zzz'. yoyo sends no output \
+cap, so Google applies the model's own default output limit; set max_tokens in .yoyo.toml (or \
+pass --max-tokens) to cap replies."
+        );
+        // Near-miss: a non-google arm on a guess keeps the "capped at"
+        // sentence (openai-compat sends ModelConfig.max_tokens as its
+        // fallback, yoagent openai_compat.rs:431; read, not observed here).
+        let out = note_for("openrouter", "vendor/some-model", true).unwrap();
+        assert!(
+            out.contains("Every reply (reasoning included) is capped at"),
+            "{out}"
+        );
         // Near-miss: the current google default has a vendor preset.
         assert_eq!(note_for("google", "gemini-3.8-flash", true), None);
         assert_eq!(note_for("google", "gemini-4-argon", true), None);
