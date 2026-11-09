@@ -109,8 +109,8 @@ fn published_rows_reach_the_run_path_and_model_info() {
 /// the agent (the only value GoogleProvider sends as maxOutputTokens).
 #[test]
 fn user_max_tokens_still_wins_over_a_published_row() {
-    let agent = google_agent_config("gemini-2.5-pro", Some(1234)).build_agent();
+    let agent = google_agent_config("gemini-2.5-flash-lite", Some(1234)).build_agent();
     assert_eq!(agent.max_tokens, Some(1234));
-    let agent = google_agent_config("gemini-2.5-pro", None).build_agent();
+    let agent = google_agent_config("gemini-2.5-flash-lite", None).build_agent();
     assert_eq!(agent.max_tokens, None, "no user value, nothing overrides");
 }

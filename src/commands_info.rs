@@ -2682,7 +2682,12 @@ More text.
         assert_eq!(model_context_window("o3"), Some(200_000));
         assert_eq!(model_context_window("o4-mini"), Some(200_000));
         // Google
-        assert_eq!(model_context_window("gemini-2.5-pro"), Some(1_048_576));
+        assert_eq!(
+            model_context_window("gemini-2.5-flash-lite"),
+            Some(1_048_576)
+        );
+        // #1162: no longer offered and no row, so no pinned window.
+        assert_eq!(model_context_window("gemini-2.5-pro"), None);
         // #1118: shut down per Google's models page, so no pinned window.
         assert_eq!(model_context_window("gemini-2.0-flash"), None);
         // xAI
@@ -2800,7 +2805,7 @@ More text.
             ("gpt-4.1", Some(1_048_576)),
             ("gpt-4o", Some(128_000)),
             ("o3", Some(200_000)),
-            ("gemini-2.5-pro", Some(1_048_576)),
+            ("gemini-2.5-flash-lite", Some(1_048_576)),
             ("grok-4", Some(131_072)),
             ("deepseek-v4-pro", Some(128_000)),
             ("codestral", Some(128_000)),

@@ -197,8 +197,11 @@ fn output_ceiling_is_declared_only_where_the_vendor_publishes_one() {
     // Generic google ids still declare nothing (#1020); #1157's published
     // rows declare Google's own cap.
     assert_eq!(ceiling_warning("google", "gemini-3.0-flash", 200_000), None);
-    assert!(ceiling_warning("google", "gemini-2.5-flash", 65_537).is_some());
-    assert_eq!(ceiling_warning("google", "gemini-2.5-flash", 65_536), None);
+    assert!(ceiling_warning("google", "gemini-2.5-flash-lite", 65_537).is_some());
+    assert_eq!(
+        ceiling_warning("google", "gemini-2.5-flash-lite", 65_536),
+        None
+    );
 }
 
 #[test]

@@ -1481,9 +1481,8 @@ fn reconciled_openai_live_rows_bill_the_models_dev_price() {
 /// arm because the `contains("gemini-2.5-flash")` arm used to swallow it.
 #[test]
 fn reconciled_mistral_and_gemini_live_rows_bill_the_models_dev_price() {
-    let rows: [(&str, &str, Rates); 3] = [
+    let rows: [(&str, &str, Rates); 2] = [
         ("mistral", "mistral-large-latest", (0.5, 0.0, 0.05, 1.5)),
-        ("google", "gemini-2.5-flash", (0.3, 0.0, 0.03, 2.5)),
         ("google", "gemini-2.5-flash-lite", (0.1, 0.0, 0.01, 0.4)),
     ];
     for (provider, id, expected) in rows {
@@ -1498,6 +1497,11 @@ fn reconciled_mistral_and_gemini_live_rows_bill_the_models_dev_price() {
             "{id}: /cost resolves {got:?}, models.dev (2026-10-23) says {expected:?}"
         );
     }
+    // #1162: gemini-2.5-flash is no longer offered (Google's deprecations page,
+    // 2026-11-09: closed to new users, routed to gemini-3.5-flash-lite from
+    // 2026-12-01), but its existing users are still billed this row.
+    assert!(!crate::providers::known_models_for_provider("google").contains(&"gemini-2.5-flash"));
+    assert_eq!(price_of("gemini-2.5-flash"), Some((0.3, 0.0, 0.03, 2.5)));
     // Near-miss: the dated mistral-large-2512 shares the arm and the price.
     // (mistral-small-latest was left out of this slice and got its own exact arm
     // in the next one; see `reconciled_mistral_small_and_flash_variants_...` below.)
@@ -1800,7 +1804,11 @@ fn retired_gemini_ids_bill_what_googles_deprecations_page_names() {
                 "gemini-3.7-flash",
                 after_yoagent("gemini-3.8-flash", (1.5, 0.0, 0.15, 7.5)),
             ),
-            ("gemini-3.1-flash-lite-preview", (0.25, 0.0, 0.025, 1.5)),
+            // #1162: bills yoagent's 3.1-flash-lite row, its successor's.
+            (
+                "gemini-3.1-flash-lite-preview",
+                after_yoagent("gemini-3.1-flash-lite", (0.25, 0.0, 0.025, 1.5)),
+            ),
             ("gemini-3.1-flash-image-preview", (0.5, 0.0, 0.0, 60.0)),
             ("gemini-3-pro-image-preview", (2.0, 0.0, 0.0, 120.0)),
             ("gemini-3.8-flash", (1.5, 0.0, 0.15, 7.5)),

@@ -219,11 +219,10 @@ fn builtin_model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
     // 3.5 (routes to 3.6, at a price Google never names, so it keeps its higher 9.00 output).
     if model.contains("gemini-3") {
         match model {
-            "gemini-3-flash-preview" => return Some((0.50, 0.0, 0.05, 3.00)),
-            "gemini-3.1-flash-lite" | "gemini-3.1-flash-lite-preview" => {
-                return Some((0.25, 0.0, 0.025, 1.50));
-            }
-            "gemini-3.5-flash-lite" => return Some((0.30, 0.0, 0.03, 2.50)),
+            // #1162: yoagent 0.27.6 prices 3-flash-preview, 3.1-flash-lite and
+            // 3.5-flash-lite, so their rows here went; the retired preview id
+            // bills its successor's yoagent row, as 3.7-flash does below.
+            "gemini-3.1-flash-lite-preview" => return yoagent_price_row("gemini-3.1-flash-lite"),
             "gemini-3.1-flash-image" | "gemini-3.1-flash-image-preview" => {
                 return Some((0.50, 0.0, 0.0, 60.00));
             }

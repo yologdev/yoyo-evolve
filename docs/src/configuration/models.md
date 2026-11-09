@@ -147,14 +147,23 @@ Gemini 4 Argon and Gemini 3.8 Flash bill Google's introductory rate until its st
 the regular rate after (since Day 242; see [Cost Tracking](../features/cost-tracking.md)). Near-miss ids (`gemini-3.8-flash-lite`, `grok-4.7-mini`, `mistral-large-latest`,
 `glm-5.4`) keep the generic defaults.
 
-The other Gemini ids yoyo offers with no yoagent preset (`gemini-3.5-flash-lite`,
-`gemini-3.1-flash-lite`, `gemini-3-flash-preview`, `gemini-2.5-flash-lite`, `gemini-2.5-pro`,
-`gemini-2.5-flash`) take the limits each id's own page under
+Since yoagent 0.27.6, `gemini-3.5-flash-lite`, `gemini-3.1-flash-lite` and
+`gemini-3-flash-preview` are yoagent presets too (as `gemini-3.6-flash` and
+`gemini-3.1-pro-preview` already were), with the same limits and yoagent's prices. One Gemini id yoyo offers still has no yoagent preset:
+`gemini-2.5-flash-lite`, which Google says "is not deprecated and remains available through the
+API until further notice". It takes the limits its own page under
 [ai.google.dev/gemini-api/docs/models](https://ai.google.dev/gemini-api/docs/models) publishes:
-1,048,576 input tokens and 65,536 output tokens (read 2026-11-08). `/model info` prints the same
+1,048,576 input tokens and 65,536 output tokens (read 2026-11-09). `/model info` prints the same
 window and output cap, a `max_tokens` above 65,536 gets the declared-ceiling warning, and your own
 `max_tokens` / `context_window` still win. yoyo's Google provider sends `maxOutputTokens` only
 when you set `max_tokens`; otherwise Google applies its own default.
+
+yoyo no longer offers `gemini-2.5-pro` or `gemini-2.5-flash`. Google's
+[deprecations page](https://ai.google.dev/gemini-api/docs/deprecations) (read 2026-11-09) says
+they are closed to new users and that from December 1, 2026 requests to them route to
+`gemini-3.8-flash` and `gemini-3.5-flash-lite`. If you already use one, you can still pass it with
+`--model`. You will get the `Unknown model` and guessed-limits warnings, `/model info` shows the
+window as unknown, and `/cost` still prices it at the 2.5 rate (for `gemini-2.5-pro` that is wrong from December 1, when Google bills 3.8 Flash rates; tracked in #1012).
 
 ### Models with no preset run on guessed limits
 

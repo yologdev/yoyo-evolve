@@ -125,8 +125,9 @@ pub fn known_models_for_provider(provider: &str) -> &'static [&'static str] {
         ],
         // #1118: every id here is a yoagent preset or on Google's models page
         // (`every_offered_gemini_id_is_a_yoagent_preset_or_on_googles_page`).
-        // 2.5 Pro/Flash are deprecated but served to existing users until
-        // 2026-12-01; current ids come first so the warning's five name them.
+        // #1162: 2.5 Pro/Flash are not offered (deprecated, closed to new
+        // users, rerouted 2026-12-01: see IDS_NO_VENDOR_SERVES); current ids
+        // come first so the warning's five name them.
         "google" => &[
             "gemini-4-argon",
             "gemini-3.8-flash",
@@ -136,8 +137,6 @@ pub fn known_models_for_provider(provider: &str) -> &'static [&'static str] {
             "gemini-3.1-flash-lite",
             "gemini-3-flash-preview",
             "gemini-2.5-flash-lite",
-            "gemini-2.5-pro",
-            "gemini-2.5-flash",
         ],
         "groq" => &[
             "llama-4-maverick-17b",
@@ -409,48 +408,26 @@ pub fn unknown_provider_refusal(provider: &str, base_url_given: bool) -> Option<
 }
 
 /// #1157: limits for offered `google` ids yoagent has no preset for, each
-/// read from that id's own page (2026-11-08): `(id, input token limit,
-/// output token limit, source)`. Without a row the run path would use
-/// `ModelConfig::google`'s 1,000,000 / 8192 guess, cutting replies at 8192.
+/// read from that id's own page: `(id, input token limit, output token
+/// limit, source)`. Without a row the run path would use
+/// `ModelConfig::google`'s 1,000,000 / 8192 guess: a guessed window, no
+/// declared output ceiling (#943), and the guessed-limits warning on every
+/// run. (It does not cut replies: Google is sent `maxOutputTokens` only when
+/// the user sets `max_tokens`.)
 /// A row must never shadow a yoagent preset (a test checks both ways).
-pub(crate) const GOOGLE_PUBLISHED_LIMITS: &[(&str, u32, u32, &str)] = &[
-    (
-        "gemini-3.5-flash-lite",
-        1_048_576,
-        65_536,
-        "https://ai.google.dev/gemini-api/docs/models/gemini-3.5-flash-lite",
-    ),
-    (
-        "gemini-3.1-flash-lite",
-        1_048_576,
-        65_536,
-        "https://ai.google.dev/gemini-api/docs/models/gemini-3.1-flash-lite",
-    ),
-    (
-        "gemini-3-flash-preview",
-        1_048_576,
-        65_536,
-        "https://ai.google.dev/gemini-api/docs/models/gemini-3-flash-preview",
-    ),
-    (
-        "gemini-2.5-flash-lite",
-        1_048_576,
-        65_536,
-        "https://ai.google.dev/gemini-api/docs/models/gemini-2.5-flash-lite",
-    ),
-    (
-        "gemini-2.5-pro",
-        1_048_576,
-        65_536,
-        "https://ai.google.dev/gemini-api/docs/models/gemini-2.5-pro",
-    ),
-    (
-        "gemini-2.5-flash",
-        1_048_576,
-        65_536,
-        "https://ai.google.dev/gemini-api/docs/models/gemini-2.5-flash",
-    ),
-];
+///
+/// #1162 (yoagent 0.27.6, page re-read 2026-11-09): every Gemini 3+ row is a
+/// yoagent preset now and was dropped. One row is left: `gemini-2.5-flash-lite`,
+/// which ai.google.dev/gemini-api/docs/deprecations says "is not deprecated and
+/// remains available through the API until further notice", and which yoagent
+/// has no preset for. It waits for one (#1164, upstream); when it lands the guard
+/// fails by name and this table and its readers go.
+pub(crate) const GOOGLE_PUBLISHED_LIMITS: &[(&str, u32, u32, &str)] = &[(
+    "gemini-2.5-flash-lite",
+    1_048_576,
+    65_536,
+    "https://ai.google.dev/gemini-api/docs/models/gemini-2.5-flash-lite",
+)];
 
 /// `(context_window, max_output)` from [`GOOGLE_PUBLISHED_LIMITS`].
 pub(crate) fn google_published_limits(id: &str) -> Option<(u32, u32)> {
@@ -465,8 +442,10 @@ mod tests {
     use super::*;
 
     /// #1147 (Day 251): ids yoyo used to offer that no vendor serves, each with
-    /// the page that says so (all read 2026-11-06). Kept as a register so a
-    /// later session re-adding one from memory fails here, by name.
+    /// the page that says so (read 2026-11-06 unless the row dates its own read).
+    /// #1162 adds ids a vendor still serves to existing users only, on a dated
+    /// reroute: not offered to new users, who would be refused. Kept as a
+    /// register so a later session re-adding one from memory fails here, by name.
     const IDS_NO_VENDOR_SERVES: &[(&str, &str, &str)] = &[
         (
             "openai",
@@ -502,6 +481,22 @@ mod tests {
             "gemini-2.0-flash",
             "shut down: ai.google.dev/gemini-api/docs/models lists it under Previous \
              models as '(Shut down)' (read 2026-11-08, #1118)",
+        ),
+        (
+            "google",
+            "gemini-2.5-pro",
+            "deprecated, closed to new users, rerouted: ai.google.dev/gemini-api/docs/deprecations \
+             (read 2026-11-09, #1162): 'Access through the API is limited to existing users who \
+             have actively used it in the past. Effective December 1, 2026, all API requests to \
+             gemini-2.5-pro will automatically route to gemini-3.8-flash'",
+        ),
+        (
+            "google",
+            "gemini-2.5-flash",
+            "deprecated, closed to new users, rerouted: ai.google.dev/gemini-api/docs/deprecations \
+             (read 2026-11-09, #1162): 'Access to the 2.5 models is limited to users who have \
+             actively used them in the past', and 'effective December 1, 2026, API requests to \
+             gemini-2.5-flash will automatically route to gemini-3.5-flash-lite'",
         ),
         (
             "google",
