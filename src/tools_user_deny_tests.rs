@@ -451,3 +451,47 @@ fn eval_refusal_message_names_the_carve_out() {
     assert!(r.contains("passes your deny list"), "{r}");
     assert!(r.contains("outside yoyo"), "{r}");
 }
+
+/// Claude Code 2.1.319 (2026-11-06) fixed "Bash deny and ask rules missed
+/// commands written with quoted words". The same class for yoyo: a command
+/// word spelled with quotes or a backslash (`"rm"`, `r'm'`, `\rm`) is the
+/// same command to the shell, so a user deny rule must refuse it. Rows are
+/// spellings x two rule shapes (bare `rm *`, verb-with-argument `git push *`),
+/// each also inside a chain and a subshell; near-misses keep the test from
+/// passing by refusing everything.
+#[test]
+fn user_deny_refuses_quoted_and_escaped_command_words() {
+    use crate::tools::user_deny_refusal;
+    let list = vec!["rm *".to_string(), "git push *".to_string()];
+    let must_refuse = [
+        "\"rm\" -rf x",
+        "'rm' -rf x",
+        "r'm' -rf x",
+        "r\"m\" -rf x",
+        "\\rm -rf x",
+        "rm \"-rf\" x",
+        "\"git\" push origin",
+        "git \"push\" origin",
+        "git 'pu'sh origin",
+        "true && \"rm\" -rf x",
+        "(r'm' -rf x)",
+        "$'rm' -rf x",
+        "\"\"rm -rf x",
+        // The other readers of the command word in indirect_command.rs: the
+        // eval check, the wrapper skip and the inline-shell recursion.
+        "e'v'al \"$(printf rm)\" x",
+        "c'o'mmand $X -rf x",
+        "b'a'sh -c '$X -rf x'",
+    ];
+    let mut leaked = Vec::new();
+    for cmd in must_refuse {
+        if user_deny_refusal(&list, cmd).is_none() {
+            leaked.push(cmd);
+        }
+    }
+    assert!(leaked.is_empty(), "passed a deny rule: {leaked:?}");
+    let must_allow = ["echo \"rm -rf x\"", "grep 'rm' notes.txt", "\"rmdir\" x"];
+    for cmd in must_allow {
+        assert_eq!(user_deny_refusal(&list, cmd), None, "{cmd:?} must pass");
+    }
+}

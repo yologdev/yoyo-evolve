@@ -128,6 +128,44 @@ fn strip_outer_quotes(w: &str) -> &str {
     w
 }
 
+/// Shell quote removal on one lexed word, so `"rm"`, `r'm'` and `\rm` all
+/// read `rm` (the program the shell runs): `'…'` is literal, `"…"` drops its
+/// quotes and the backslash before `$ ` " \`, and an unquoted `\x` is `x`.
+/// `$'…'` is left alone: such a command word is already refused as unreadable.
+fn remove_quotes(word: &str) -> String {
+    let mut out = String::new();
+    let mut chars = word.chars().peekable();
+    let (mut sq, mut dq) = (false, false);
+    while let Some(c) = chars.next() {
+        match c {
+            '\'' if !dq => sq = !sq,
+            '"' if !sq => dq = !dq,
+            '\\' if !sq => match chars.peek().copied() {
+                Some(n) if !dq || matches!(n, '$' | '`' | '"' | '\\' | '\n') => {
+                    out.push(n);
+                    chars.next();
+                }
+                _ => out.push(c),
+            },
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// A deny segment with quote removal applied to every word: the spelling a
+/// deny rule like `rm *` is written in, whatever quoting the command used.
+fn unquoted_segment(seg: &str) -> String {
+    lex_shell_words(seg)
+        .into_iter()
+        .filter_map(|t| match t {
+            ShellToken::Word(w) => Some(remove_quotes(&w)),
+            ShellToken::Boundary => None,
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// `NAME=value` / `NAME+=value` — a leading assignment, after which the next
 /// word is still in command position.
 fn is_shell_assignment(w: &str) -> bool {
@@ -292,7 +330,8 @@ pub(super) fn check_indirect_command_word(cmd: &str, _cmd_lower: &str) -> Option
                  so the safety check cannot see what it is"
             ));
         }
-        let base = strip_outer_quotes(w).rsplit('/').next().unwrap_or("");
+        let unquoted = remove_quotes(w);
+        let base = unquoted.rsplit('/').next().unwrap_or("");
         // The rest of this command segment, as words.
         let segment: Vec<&str> = tokens[i..]
             .iter()
@@ -470,7 +509,8 @@ fn eval_of_substitution(cmd: &str, inner_allowed: &dyn Fn(&str) -> bool) -> Opti
         let Some(program) = words.get(start) else {
             continue;
         };
-        let base = strip_outer_quotes(program).rsplit('/').next().unwrap_or("");
+        let unquoted = remove_quotes(program);
+        let base = unquoted.rsplit('/').next().unwrap_or("");
         let args = &words[start + 1..];
         if base == "eval" && args.iter().any(|a| a.contains("$(") || a.contains('`')) {
             // #1066: the one shape that is let through.
@@ -514,7 +554,12 @@ pub(crate) fn user_deny_spelling_refusal(
         return None;
     }
     for seg in deny_segments(command) {
-        if let Some(p) = user_deny.iter().find(|p| glob_match(p, &seg)) {
+        // As written, and with quote removal (`"rm" -rf x` runs `rm -rf x`).
+        let unquoted = unquoted_segment(&seg);
+        if let Some(p) = user_deny
+            .iter()
+            .find(|p| glob_match(p, &seg) || glob_match(p, &unquoted))
+        {
             let shown = crate::cli::sanitize_for_display(&seg);
             return Some(format!(
                 "Command blocked by your permission rules: the part `{shown}` matches deny pattern '{p}'."
@@ -594,6 +639,11 @@ mod tests {
             ("$'\\x72m' -rf ~", unreadable("$'\\x72m'")),
             ("set -- rm -rf ~; \"$@\"", unreadable("\"$@\"")),
             ("bash <<EOF\n$X -rf ~\nEOF", unreadable("$X")),
+            // a partly quoted eval / shell / wrapper word is the same word
+            // (None before the quote-removal fix: `e'v'al` was not `eval`)
+            ("e'v'al \"$X -rf ~\"", unreadable("$X")),
+            ("b'a'sh -c '$X -rf ~'", unreadable("$X")),
+            ("s\\udo $X -rf ~", unreadable("$X")),
         ];
         for (cmd, want) in rows {
             assert_eq!(&analyze_bash_command(cmd), want, "verdict for {cmd:?}");
