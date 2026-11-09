@@ -49,6 +49,8 @@ mod cd_allow;
 mod cd_config_note;
 mod cd_deny;
 mod cd_hooks;
+#[cfg(test)]
+mod checkpoint_stop_tests;
 mod cli;
 mod cli_config;
 mod commands;
