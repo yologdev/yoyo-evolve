@@ -73,13 +73,15 @@ async fn oversized_partial_output_goes_through_the_shared_cap() {
     .await;
     assert!(err.contains("Output so far:"), "{err}");
     assert!(
-        err.contains("... (output truncated)"),
+        err.contains("... (output truncated: ") && err.contains(" bytes omitted) ..."),
         "capped by the reader: {err}"
     );
+    // Head + tail (#1159): the newest line is kept, the middle is dropped.
     assert!(
-        !err.contains("line number 100 "),
-        "tail beyond the cap dropped: {err}"
+        err.contains("line number 100 of the output"),
+        "tail kept: {err}"
     );
+    assert!(!err.contains("line number 50 "), "middle dropped: {err}");
     assert!(
         err.len() < 400,
         "partial was capped, got {} bytes",
