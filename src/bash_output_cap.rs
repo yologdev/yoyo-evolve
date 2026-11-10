@@ -5,11 +5,12 @@
 //! first `cap` bytes and drops all of that. This keeps the first half and the
 //! most recent half, and says exactly how many bytes were dropped between.
 //!
-//! Mirrors yoagent 0.27.5's own `bash` (`Capture` in `src/tools/bash.rs`,
-//! ~455-530 of the registry copy: `head_cap = cap / 2`, `tail_cap = cap -
-//! head_cap`). That struct is private, so this is a hand copy, and the marker
-//! text in [`HeadTailCap::render`] is a hand copy of its `format!` string: it
-//! CAN drift if yoagent changes its wording. Unlike yoagent (bytes, lossy
+//! Mirrors yoagent's own `bash` (`Capture` in `src/tools/bash.rs`:
+//! `head_cap = cap / 2`, `tail_cap = cap - head_cap`). That struct is
+//! private, so this is a hand copy, but the copy is pinned to yoagent's
+//! public `BashTool` by `head_tail_and_marker_match_yoagent_bash_tool`, which
+//! runs both on the same output: a yoagent change to the cut points or the
+//! marker text fails it. Unlike yoagent (bytes, lossy
 //! decode), this works on `&str` lines and never cuts inside a character;
 //! bytes dropped by a boundary adjustment are counted in the omitted number,
 //! so `kept + omitted == total` holds exactly.
@@ -173,11 +174,46 @@ mod tests {
         assert!(input.starts_with(head) && input.ends_with(tail));
     }
 
-    #[test]
-    fn marker_text_is_yoagents() {
-        // Hand copy of yoagent 0.27.5 src/tools/bash.rs `Capture::text`.
-        let out = capped(4, "abcdefgh");
-        assert_eq!(out, "ab\n... (output truncated: 4 bytes omitted) ...\ngh");
+    /// Runs yoagent's own public `BashTool` and this cap over the same bytes
+    /// and requires the same text, so the copy is pinned to its authority
+    /// rather than to a string typed here. `BashTool`'s content is
+    /// `"Exit code: N\n"` + the stdout capture's text when stderr is empty
+    /// (`render_output` in yoagent's src/tools/bash.rs); the header is
+    /// stripped and only the capped body is compared: kept head, marker line
+    /// with its omitted count, kept tail. ASCII only: yoagent cuts bytes and
+    /// this cuts at char boundaries, which agree exactly on ASCII.
+    #[tokio::test]
+    async fn head_tail_and_marker_match_yoagent_bash_tool() {
+        use yoagent::types::{AgentTool, Content, ToolContext};
+        let command = "seq 1 2000";
+        let full = std::process::Command::new("bash")
+            .args(["-c", command])
+            .output()
+            .expect("run seq");
+        let full = String::from_utf8(full.stdout).unwrap();
+        assert!(full.len() > 1000, "input must overflow the cap");
+        for cap in [100, 101, 257] {
+            let tool = yoagent::tools::bash::BashTool {
+                max_output_bytes: cap,
+                ..Default::default()
+            };
+            let result = tool
+                .execute(
+                    serde_json::json!({ "command": command }),
+                    ToolContext::new("t", "bash"),
+                )
+                .await
+                .expect("yoagent bash ran");
+            let Content::Text { text } = &result.content[0] else {
+                panic!("expected text content");
+            };
+            let body = text
+                .strip_prefix("Exit code: 0\n")
+                .unwrap_or_else(|| panic!("unexpected wrapper: {text:?}"));
+            let ours = capped(cap, &full);
+            assert!(ours.contains("\n... (output truncated: "), "{ours}");
+            assert_eq!(ours, body, "cap {cap}");
+        }
     }
 
     #[test]

@@ -37,7 +37,11 @@ budget_left() { # $1=YOYO_SESSION_BUDGET_SECS  $2=JOB_DEADLINE_EPOCH
       session_secs_left ) 2>/dev/null | tail -1
 }
 check "budget: unset → gates disabled"      "$(budget_left '' '')"        "999999"
-check "budget: numeric honored"             "$(budget_left 500 '')"       "500"
+# 499..500, not exactly 500: the same two-`date`-reads race as the checks
+# below (observed in CI 2026-11-10, run 42736547831: got 499).
+L=$(budget_left 500 '')
+[ "$L" -ge 499 ] 2>/dev/null && [ "$L" -le 500 ] && ok "budget: numeric honored" \
+    || bad "budget: numeric honored" "expected 499..500, got '$L'"
 # 2699..2700 for the same two-`date`-reads race the checks below document
 # (observed 2026-09-27: got 2699).
 L=$(budget_left '45m' '')
