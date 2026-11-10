@@ -506,7 +506,7 @@ pub enum KeySource {
     Argv,
     ConfigFile,
     /// The environment variable actually read (a provider alias such as
-    /// `GEMINI_API_KEY`, or the `ANTHROPIC_API_KEY`/`API_KEY` fallback).
+    /// `GEMINI_API_KEY`, or the generic `API_KEY` fallback; #1170).
     Env(String),
     Missing,
 }
@@ -605,7 +605,7 @@ pub(crate) fn diagnose_api_error_for(error: &str, model: &str, oneshot: bool) ->
         || lower.contains("api key not valid")
         || lower.contains("incorrect api key")
     {
-        let env_var = crate::cli::provider_api_key_env(&provider).unwrap_or("ANTHROPIC_API_KEY");
+        let env_var = crate::cli::provider_api_key_env(&provider).unwrap_or("API_KEY");
         // The source cli.rs recorded when it resolved the key (#1062); with none
         // recorded, the old env-presence reading, so that path is unchanged.
         let source = KEY_SOURCE.get().cloned().unwrap_or_else(|| {

@@ -69,7 +69,7 @@ pub fn provider_api_key_vars(provider: &str) -> &'static [&'static str] {
 
 /// The provider's own key from `lookup`, trying `provider_api_key_vars` in
 /// order; empty values count as unset. `None` sends the caller to its
-/// `ANTHROPIC_API_KEY` > `API_KEY` fallback.
+/// generic `API_KEY` fallback (never `ANTHROPIC_API_KEY` for another provider, #1170).
 pub fn find_provider_key(
     provider: &str,
     lookup: impl Fn(&str) -> Option<String>,

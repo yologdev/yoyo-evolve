@@ -1118,12 +1118,8 @@ fn resolve_api_key(args: &[String], provider: &str) -> Option<String> {
         return Some(key);
     }
 
-    // Fallback env vars
-    if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
-        if !key.is_empty() {
-            return Some(key);
-        }
-    }
+    // Generic fallback. Never ANTHROPIC_API_KEY: it is anthropic's own variable
+    // (found above) and must not reach another provider (#1170).
     if let Ok(key) = std::env::var("API_KEY") {
         if !key.is_empty() {
             return Some(key);
@@ -1158,9 +1154,15 @@ fn run_review_subcommand(args: &[String], review: &crate::verb_flags::ReviewArgs
 
     let api_key = match resolve_api_key(args, &provider) {
         Some(key) => key,
+        // A user-run server needs no key, as on the main path (cli.rs). Before
+        // #1170 review only reached these with ANTHROPIC_API_KEY sent as the key.
+        None if crate::model_limits_note::USER_RUN_SERVER_PROVIDERS
+            .contains(&provider.as_str()) =>
+        {
+            "not-needed".to_string()
+        }
         None => {
-            let env_hint =
-                crate::providers::provider_api_key_env(&provider).unwrap_or("ANTHROPIC_API_KEY");
+            let env_hint = crate::providers::provider_api_key_env(&provider).unwrap_or("API_KEY");
             eprintln!(
                 "{RED}error:{RESET} No API key found.\n\
                  Set {env_hint} env var, use --api-key <key>, or add api_key to .yoyo.toml."

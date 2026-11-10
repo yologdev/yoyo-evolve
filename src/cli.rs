@@ -1146,7 +1146,8 @@ fn parse_model_config(
         std::process::exit(2);
     }
 
-    // API key: --api-key flag > provider-specific env > ANTHROPIC_API_KEY > API_KEY > config file
+    // API key: --api-key flag > provider-specific env > API_KEY > config file (#1170:
+    // ANTHROPIC_API_KEY only for anthropic, where it is the provider-specific env)
     let api_key_from_flag = flag_value(args, &["--api-key"]);
 
     // Choose provider-specific env var name
@@ -1169,13 +1170,13 @@ fn parse_model_config(
             match from_provider_env.zip(provider_var) {
                 Some((key, var)) => (key, KeySource::Env(var)),
                 None => {
-                    // Fallback chain: ANTHROPIC_API_KEY > API_KEY > config file
-                    let var = match std::env::var("ANTHROPIC_API_KEY") {
-                        Ok(_) => "ANTHROPIC_API_KEY",
-                        Err(_) => "API_KEY",
-                    };
-                    match std::env::var("ANTHROPIC_API_KEY").or_else(|_| std::env::var("API_KEY")) {
-                        Ok(key) if !key.is_empty() => (key, KeySource::Env(var.to_string())),
+                    // Fallback chain: API_KEY > config file. ANTHROPIC_API_KEY is
+                    // Anthropic's credential by name and anthropic's own variable
+                    // (found above), so it is never a fallback for another
+                    // provider: before #1170 it went as a bearer token to ollama,
+                    // custom proxies, openai, bedrock... whenever theirs was unset.
+                    match std::env::var("API_KEY") {
+                        Ok(key) if !key.is_empty() => (key, KeySource::Env("API_KEY".to_string())),
                         _ => match file_config.get("api_key").cloned() {
                             Some(key) if !key.is_empty() => (key, KeySource::ConfigFile),
                             _ => {
@@ -1191,7 +1192,7 @@ fn parse_model_config(
                                     (String::new(), KeySource::Missing)
                                 } else {
                                     // Piped/single-shot mode: terse error for scripts
-                                    let env_hint = provider_env_var.unwrap_or("ANTHROPIC_API_KEY");
+                                    let env_hint = provider_env_var.unwrap_or("API_KEY");
                                     eprintln!("{RED}error:{RESET} No API key found.");
                                     eprintln!(
                                         "Set {env_hint} env var, use --api-key <key>, or add api_key to .yoyo.toml."

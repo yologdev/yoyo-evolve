@@ -76,10 +76,11 @@ yoyo --provider custom --base-url http://localhost:8080/v1 --model my-model
 yoyo resolves your API key in this order:
 
 1. `--api-key` CLI flag (highest priority)
-2. Provider-specific environment variable (e.g., `OPENAI_API_KEY` for `--provider openai`)
-3. `ANTHROPIC_API_KEY` environment variable (fallback)
-4. `API_KEY` environment variable (generic fallback)
-5. `api_key` in config file (see below)
+2. Provider-specific environment variable (e.g., `OPENAI_API_KEY` for `--provider openai`, `ANTHROPIC_API_KEY` for `--provider anthropic`)
+3. `API_KEY` environment variable (generic fallback, for any provider)
+4. `api_key` in config file (see below)
+
+`ANTHROPIC_API_KEY` is only ever sent to the `anthropic` provider. Up to yoyo 0.4.0 it was also the fallback key for every other provider, so an Anthropic key in your shell went as a bearer token to ollama, a `--provider custom` proxy, OpenAI, Bedrock and so on whenever their own variable was unset. Now a provider that needs a key and has none stops with `No API key found` naming its own variable, and `ollama` / `custom` run with no key (#1170).
 
 Set one of them:
 

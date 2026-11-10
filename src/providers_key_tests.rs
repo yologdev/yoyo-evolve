@@ -17,13 +17,10 @@ fn env_of<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String
 }
 
 /// The lookup cli.rs and dispatch_sub.rs run: provider's own variables, then
-/// the `ANTHROPIC_API_KEY` > `API_KEY` fallback they keep unchanged.
+/// the generic `API_KEY`. Not `ANTHROPIC_API_KEY`: since #1170 it is read only
+/// as anthropic's own variable (the binary-level pin is tests/provider_key_canary.rs).
 fn full_chain(provider: &str, env: &dyn Fn(&str) -> Option<String>) -> Option<String> {
-    find_provider_key(provider, env).or_else(|| {
-        ["ANTHROPIC_API_KEY", "API_KEY"]
-            .iter()
-            .find_map(|v| env(v).filter(|k| !k.is_empty()))
-    })
+    find_provider_key(provider, env).or_else(|| env("API_KEY").filter(|k| !k.is_empty()))
 }
 
 /// (provider, env pairs, expected key).
@@ -49,6 +46,9 @@ fn provider_key_presence_table() {
         ("google", &[], None),
         // A Google name does not leak into another provider.
         ("openai", &[("GEMINI_API_KEY", "gem")], None),
+        // Nor does Anthropic's (#1170).
+        ("openai", &[("ANTHROPIC_API_KEY", "ant")], None),
+        ("ollama", &[("ANTHROPIC_API_KEY", "ant")], None),
     ];
     for (provider, env, want) in rows {
         let got = full_chain(provider, &env_of(env));

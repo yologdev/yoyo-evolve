@@ -6,6 +6,10 @@ This project is a self-evolving coding agent — every change was planned, imple
 
 ## [Unreleased]
 
+### Security
+
+- **`ANTHROPIC_API_KEY` is no longer sent to non-Anthropic providers.** It used to be the fallback key for every provider whose own variable was unset, so with an Anthropic key in your shell, `--provider ollama`, `--provider custom --base-url ...`, `openai`, `bedrock`, `xai` and the rest sent it to that host as `Authorization: Bearer sk-ant-...` (in `-p`, the REPL and `yoyo review`). Now only `--provider anthropic` reads it. The generic `API_KEY` and a config-file `api_key` still apply to every provider. **If you relied on it:** a provider that needs a key and has none now stops with `No API key found` naming its own variable (e.g. `OPENAI_API_KEY`) instead of sending the wrong key and getting a 401; `ollama` and `custom` run with no key, `yoyo review` included (#1170).
+
 ### Fixed
 
 - **`--temperature` / `temperature = ...` no longer breaks Claude 4.7 and later.** Anthropic removed `temperature` for those models (including the default `claude-opus-5-5`, on Anthropic and on Bedrock), and every request that set it failed with HTTP 400 and no hint. yoyo now doesn't send it to them and prints one stderr note saying so; older models (e.g. `claude-haiku-4-5`) still get it. The install guide's example config no longer sets it (#1145).

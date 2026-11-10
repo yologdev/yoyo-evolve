@@ -61,15 +61,17 @@ yoyo now refuses with this message and **exit code 1** before any agent is built
 
 ```
 error: No API key found.
-Set ANTHROPIC_API_KEY or API_KEY environment variable.
+Set OPENAI_API_KEY env var, use --api-key <key>, or add api_key to .yoyo.toml.
 ```
 
-**Fix:** Set your Anthropic API key:
+The variable it names is the provider's own (`ANTHROPIC_API_KEY` for the default `anthropic` provider, `OPENAI_API_KEY` above for `--provider openai`).
+
+**Fix:** set that variable, for example:
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-api03-...
 ```
 
-yoyo checks `ANTHROPIC_API_KEY` first, then `API_KEY`. At least one must be set and non-empty.
+yoyo checks the provider's own variable first, then the generic `API_KEY`, then `api_key` in a config file. One must be set and non-empty. `ANTHROPIC_API_KEY` counts only for `--provider anthropic`: having it set does not satisfy `--provider openai` (or any other provider), because yoyo no longer sends your Anthropic key to other vendors (#1170).
 
 ## "No input on stdin"
 
