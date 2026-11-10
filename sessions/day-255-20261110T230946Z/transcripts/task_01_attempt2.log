@@ -1,0 +1,39 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | head && git… ✓ (17ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+The task was committed before the interruption. Running the full gate to confirm it's green.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (4m 1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (7m 45s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 11m 57s (2 ✓)
+
+The task was already committed (2b59935c) before the interruption. I re-ran every check on that commit and it all passes, so I didn't redo anything.
+
+What it does: yoyo now warns when a config file has a key it never reads. If .yoyo.toml says modle = "gpt-4o", yoyo prints one line to stderr:
+```
+warning: .yoyo.toml line 1: `modle` is not a key yoyo reads, so it has no effect; did you mean `model`?
+```
+It only warns, never refuses, and the exit code doesn't change. That way a key from a newer yoyo, or one your own tooling reads, doesn't break the run. The "did you mean" suggestion uses the existing commands::closest_match helper. The code is in the new src/config_unknown_keys.rs, and config.rs gained only a one-line call. config get and config show warn too, because they read the file themselves.
+
+Checks run just now:
+• cargo fmt --check and cargo clippy --all-targets -- -D warnings: clean.
+• cargo test: 7,414 passed, 0 failed.
+• tests/harness_logic.sh: 336 passed, 0 failed.
+• I ran the built binary in a temp directory with a temp HOME and a .yoyo.toml containing modle = "gpt-4o". It printed the warning above, then model is not set in config file (using default), and exited 0.
+
+Recorded in the commit:
+• The list of known keys came from the code that reads config values, not from memory: 30 of 30 found. A test re-runs that search, and I confirmed it fails if a key is removed from the list.
+• This repo's own .yoyo.toml produces zero warnings, and a test checks that.
+• The search turned up two cases that were silently ignored before and now warn. A [hooks] table was never read, because hooks are written as dotted top-level keys like hooks.pre.bash. And a header with a comment after it, like [permissions] # comment, left the keys under it unread.
+
+Issues: the commit says Fixes #1171. The out-of-scope problem (model = "" shows as set in config get but the run ignores it) is filed separately as #1172.
+  watch: no files changed this turn — skipping

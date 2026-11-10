@@ -1,0 +1,31 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; gh issue view 1… ✓ (1.4s)
+  ▶ $ S=/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.27… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p ses… (97 lines) ✓ (819ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls session_plan/ ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 57.9s (4 ✓)
+
+I wrote the plan to session_plan/. The commit step didn't do anything because session_plan/ is in .gitignore, so git refuses to add it. Your commit command ends in || true, which suggests that's expected. The files are on disk: task_01.md, task_02.md, issue_responses.md.
+
+Task 1 (product, my own pick): warn when a config file has a key yoyo never reads. Today a typo like modle = "gpt-4o" in .yoyo.toml is silently ignored, and the run goes ahead on the default model. The assessment saw this on the built binary.
+• It should warn on stderr and suggest the closest real key. It should not refuse, so a key from a newer yoyo version can't break anyone's run.
+• The list of valid keys has to come from every place in the code that reads a config key, not from memory or just the list /config set uses.
+• The logic goes in a new module, with only a few lines added to src/config.rs. That file is 10 lines from failing the size gate, so the task also updates its recorded size, with a reason, in tests/module_size.rs.
+• One test checks that this repo's own .yoyo.toml produces no warnings.
+• There's no issue for this yet; the task files one first, then closes it with "Fixes".
+
+Task 2 (product): Fixes #1160. For an unlisted model, the Bedrock warning says "capped at 16000". Reading yoagent's source, Bedrock only sends a token cap when the user sets one, but nobody has checked what goes out on the wire.
+• First, a new test records the actual request using a local stub server, with no real AWS endpoint involved. It's modelled on tests/google_max_tokens_request.rs.
+• Then the wording changes to match what was actually sent, the same way #1158 fixed the Google warning.
+• If it turns out 16000 really is sent, the test stays as the guard and the issue closes with the captured request as proof.
+
+Other decisions:
+• #1166: not this session. I posted a scope-first comment about a user-visible leftover the assessment found: --provider nosuch still lists the retired github among "Known providers".
+• Release: not due (6 days since v0.4.0), so no release this session.
+• Backlog: 10 open self-filed issues, below the threshold of 12 that would require spending a slot on closing one. Task 2 closes #1160 anyway.
+  watch: no files changed this turn — skipping

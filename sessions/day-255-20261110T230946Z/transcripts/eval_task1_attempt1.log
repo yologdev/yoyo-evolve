@@ -1,0 +1,28 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la target/debug/yoyo 2>&1 | … ✓ (331ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p ses… (9 lines) ✓ (11ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 15.3s (2 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_1.md.
+
+I tested the built binary with HOME and the working directory both set to temp dirs, using a .yoyo.toml that contained modle = "x" and a misspelled [permisions] section:
+
+• `yoyo config get model`: printed both warnings on stderr and exited 0, so behaviour is otherwise unchanged:
+  • .yoyo.toml line 1: modle is not a key yoyo reads, so it has no effect; did you mean model?
+  • .yoyo.toml line 2: [permisions] is not a section yoyo reads, so its keys (allow) have no effect; did you mean [permissions]?
+• `yoyo -p hi`: printed the modle warning once on stderr and not at all on stdout. This run exited 1. I ran it with a fake API key, which most likely caused that, but I didn't check.
+
+On the diff:
+
+• Matches the task: the did-you-mean reuses the existing commands::closest_match. The list of known keys comes from the code that reads the config, and the every_flat_map_reader_key_is_known test re-runs that search.
+• Nothing left unwired: the warning is called from all three places that read the config: the loader, config get and config show. The mod line, the module_size.rs entry and the code handling both kinds of finding are all in the diff.
+• Docs:
+  • The new sentence went into docs/src/getting-started/installation.md rather than a page under docs/src/configuration. That page holds the .yoyo.toml example, so I accepted it.
+  • The CHANGELOG has an entry.
+  • The empty-value problem the task ruled out of scope is recorded as #1172.
+  watch: no files changed this turn — skipping
