@@ -795,6 +795,7 @@ fn slash_command_refusal(input: &str, door: PromptDoor) -> Option<String> {
 /// * `had_error`  — `last_tool_error` or `last_api_error` from the last turn.
 /// * `budget_exhausted` — `prompt_budget::session_budget_exhausted(30)`.
 /// * `predicate`  — `repl::should_auto_continue(..)`, the shared decision.
+/// * `checkpoint_stopped` — `CHECKPOINT_TRIGGERED` (sticky: one run). #1161.
 fn piped_should_continue(
     opted_in: bool,
     count: u32,
@@ -802,8 +803,13 @@ fn piped_should_continue(
     had_error: bool,
     budget_exhausted: bool,
     predicate: bool,
+    checkpoint_stopped: bool,
 ) -> bool {
-    opted_in && count < max && !had_error && !budget_exhausted && predicate
+    opted_in
+        && count < max
+        && !had_error
+        && !budget_exhausted
+        && repl::auto_continue_allowed(checkpoint_stopped, predicate)
 }
 
 async fn run_piped_mode(
@@ -956,6 +962,7 @@ async fn run_piped_mode(
                 ran_tools,
                 opted_in,
             ),
+            CHECKPOINT_TRIGGERED.load(Ordering::SeqCst),
         ) {
             auto_continue_count += 1;
             if !print_mode && !format::is_quiet() {

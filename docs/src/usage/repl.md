@@ -135,6 +135,11 @@ notice the flag; if it goes silent mid-task, this is the knob.
 With the flag off, behaviour is exactly what it was before the flag existed
 (pinned by a default-off invariance test in `src/repl.rs`).
 
+**A checkpoint stop is never auto-continued.** Under `--context-strategy
+checkpoint`, the turn that hits the 70% stop is left stopped (in the REPL and in
+piped mode with `--continue-on-silence`), and the REPL prints
+`auto-continue skipped: the checkpoint stop asked for a restart, not more turns`.
+
 ## Shell passthrough
 
 Prefix a line with `!` to run a shell command directly — no API call, no tokens, no confirmation prompt:

@@ -276,3 +276,69 @@ async fn checkpoint_reply_is_not_classified_as_a_stopped_sub_agent() {
     );
     assert!(crate::tool_wrappers::sub_agent_partial_notice(&checkpoint_marker()).is_some());
 }
+
+// ── #1161: auto-continue never undoes a checkpoint stop ──
+//
+// `--context-strategy checkpoint` is the user's explicit choice of
+// stop-and-restart over compaction. Auto-continue (on by default in the REPL,
+// opt-in for piped mode via `--continue-on-silence`) used to send "Continue
+// with the remaining work" right after the stop, so the next turn ran on and
+// compacted at the same threshold: the default the user opted out of.
+
+/// The real stopped run's outcome is exactly the shape auto-continue's silence
+/// branch fires on (a tool ran, nothing said after it), so without the gate it
+/// WOULD be continued. That makes the blocked rows below non-vacuous.
+#[tokio::test]
+async fn a_real_checkpoint_stop_would_otherwise_be_auto_continued() {
+    let (_, outcome) = checkpoint_stopped_run().await;
+    let wants = crate::repl::should_auto_continue(
+        &outcome.text,
+        &outcome.text_since_last_tool,
+        0,
+        true,
+        true,
+    );
+    assert!(
+        wants,
+        "precondition: the silence branch should want to continue this turn \
+         (text={:?}, closing={:?})",
+        outcome.text, outcome.text_since_last_tool
+    );
+    assert!(!crate::repl::auto_continue_allowed(true, wants));
+}
+
+#[test]
+fn repl_checkpoint_stop_blocks_auto_continue_even_with_work_pending() {
+    // Heuristic says incomplete, and the follow-up queue is non-empty.
+    let wants =
+        crate::repl::should_auto_continue("Now let me also update", "Now let me", 2, true, false);
+    assert!(wants, "precondition: this turn looks unfinished");
+    assert!(!crate::repl::auto_continue_allowed(true, wants));
+}
+
+#[test]
+fn repl_without_a_checkpoint_stop_auto_continue_is_unchanged() {
+    for wants in [true, false] {
+        assert_eq!(crate::repl::auto_continue_allowed(false, wants), wants);
+    }
+    // A checkpoint stop never turns "nothing pending" into a continue.
+    assert!(!crate::repl::auto_continue_allowed(true, false));
+}
+
+#[test]
+fn piped_continue_on_silence_refuses_after_a_checkpoint_stop() {
+    // Every other condition says continue.
+    assert!(crate::piped_should_continue(
+        true, 0, 5, false, false, true, false
+    ));
+    assert!(!crate::piped_should_continue(
+        true, 0, 5, false, false, true, true
+    ));
+}
+
+#[test]
+fn checkpoint_skip_note_says_why() {
+    let note = crate::repl::CHECKPOINT_SKIPS_AUTO_CONTINUE;
+    assert!(note.contains("auto-continue skipped"), "{note}");
+    assert!(note.contains("checkpoint"), "{note}");
+}

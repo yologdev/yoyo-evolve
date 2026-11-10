@@ -655,26 +655,36 @@ fn test_main_never_calls_the_tracker_less_prompt_wrappers() {
 #[test]
 fn piped_should_continue_requires_every_condition() {
     // All conditions met -> continue.
-    assert!(piped_should_continue(true, 0, 5, false, false, true));
-    assert!(piped_should_continue(true, 4, 5, false, false, true));
+    assert!(piped_should_continue(true, 0, 5, false, false, true, false));
+    assert!(piped_should_continue(true, 4, 5, false, false, true, false));
 
     // Not opted in -> never continues, whatever else is true.
-    assert!(!piped_should_continue(false, 0, 5, false, false, true));
+    assert!(!piped_should_continue(
+        false, 0, 5, false, false, true, false
+    ));
 
     // Budget spent: count == max stops, and so does count > max.
-    assert!(!piped_should_continue(true, 5, 5, false, false, true));
-    assert!(!piped_should_continue(true, 6, 5, false, false, true));
+    assert!(!piped_should_continue(
+        true, 5, 5, false, false, true, false
+    ));
+    assert!(!piped_should_continue(
+        true, 6, 5, false, false, true, false
+    ));
     // max == 0 (auto_continue disabled in config) stops immediately.
-    assert!(!piped_should_continue(true, 0, 0, false, false, true));
+    assert!(!piped_should_continue(
+        true, 0, 0, false, false, true, false
+    ));
 
     // An error on the previous turn stops.
-    assert!(!piped_should_continue(true, 0, 5, true, false, true));
+    assert!(!piped_should_continue(true, 0, 5, true, false, true, false));
 
     // A spent session wall-clock budget stops.
-    assert!(!piped_should_continue(true, 0, 5, false, true, true));
+    assert!(!piped_should_continue(true, 0, 5, false, true, true, false));
 
     // The shared predicate says there's nothing pending -> stop.
-    assert!(!piped_should_continue(true, 0, 5, false, false, false));
+    assert!(!piped_should_continue(
+        true, 0, 5, false, false, false, false
+    ));
 }
 
 /// Source-level connectivity check: the piped path must still consult the

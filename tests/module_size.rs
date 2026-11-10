@@ -668,7 +668,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 251 (#1145): 3358 -> 3388 -- +20 earlier unregistered drift, +10 for the
     // banner saying "(not sent)" when the model rejects temperature (logic in
     // src/temperature_support.rs).
-    ("src/repl.rs", 3388),
+    ("src/repl.rs", 3411), // Day 255 (00:19): +23 (from 3388; HEAD was already 3391), a checkpoint stop blocks auto-continue: helper, skip note, per-turn reset (#1161).
     // Day 174: raised 3269 -> 3490 for `git_redirection_refusal_message` +
     // `classify_redirection_reason` (~76 lines) and their emission-point tests
     // (~146) — the worktree-confinement refusal now names the accepted

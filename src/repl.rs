@@ -1143,6 +1143,8 @@ pub async fn run_repl(
         // #794 half (a): the auto-continue gate needs "did this turn run any
         // tool", which the edit counter cannot answer.
         let tools_before = session_changes.tool_call_count();
+        // #1161: per-turn in the REPL (nothing here reads it as an exit code).
+        crate::CHECKPOINT_TRIGGERED.store(false, std::sync::atomic::Ordering::SeqCst);
         let mut turn_snap = TurnSnapshot::new();
         for path in &changes_before {
             turn_snap.snapshot_file(path);
@@ -1348,20 +1350,28 @@ pub async fn run_repl(
 
             while auto_continue_count < max_continues
                 && !had_error
-                && should_auto_continue(
-                    &last_text,
-                    // #808: the silence branch judges CLOSING text, not the
-                    // whole turn — a pre-tool narration must not mask a
-                    // post-tool abstention.
-                    &last_closing,
-                    agent.follow_up_queue_len(),
-                    // #794 half (a): a real tool-call count, not the edit
-                    // counter — a turn of read-only tools then silence is the
-                    // abstention case this gate exists for.
-                    session_changes.tool_call_count() > tools_before,
-                    crate::cli::is_continue_on_silence(),
-                )
                 && !crate::prompt_budget::session_budget_exhausted(30)
+                && {
+                    let wants = should_auto_continue(
+                        &last_text,
+                        // #808: the silence branch judges CLOSING text, not the
+                        // whole turn — a pre-tool narration must not mask a
+                        // post-tool abstention.
+                        &last_closing,
+                        agent.follow_up_queue_len(),
+                        // #794 half (a): a real tool-call count, not the edit
+                        // counter — a turn of read-only tools then silence is the
+                        // abstention case this gate exists for.
+                        session_changes.tool_call_count() > tools_before,
+                        crate::cli::is_continue_on_silence(),
+                    );
+                    let stopped =
+                        crate::CHECKPOINT_TRIGGERED.load(std::sync::atomic::Ordering::SeqCst);
+                    if wants && stopped {
+                        eprintln!("{DIM}  {CHECKPOINT_SKIPS_AUTO_CONTINUE}{RESET}");
+                    }
+                    auto_continue_allowed(stopped, wants)
+                }
             {
                 auto_continue_count += 1;
                 eprintln!(
@@ -1620,6 +1630,16 @@ pub(crate) fn should_auto_continue(
         && ran_tools
         && text_since_last_tool.trim().chars().count() < MIN_SUMMARY_CHARS
 }
+
+/// #1161: a `--context-strategy checkpoint` stop is the user's explicit
+/// stop-and-restart; auto-continue must not run past it into compaction.
+pub(crate) fn auto_continue_allowed(checkpoint_stopped: bool, wants_continue: bool) -> bool {
+    wants_continue && !checkpoint_stopped
+}
+
+/// Shown when [`auto_continue_allowed`] blocks a continue the turn wanted.
+pub(crate) const CHECKPOINT_SKIPS_AUTO_CONTINUE: &str =
+    "auto-continue skipped: the checkpoint stop asked for a restart, not more turns";
 
 /// Why a turn ended, as far as yoyo can tell.
 ///

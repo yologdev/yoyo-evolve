@@ -107,6 +107,6 @@ yoyo --context-strategy checkpoint -p "do some long task"
 # Exit code 2 means "context was getting full — restart me"
 ```
 
-The calling script can then restart yoyo with fresh context. This is useful for multi-phase pipelines where a structured restart produces better results than lossy compaction.
+Auto-continue never runs past a checkpoint stop, so the stop is not turned back into compaction. The calling script can then restart yoyo with fresh context. This is useful for multi-phase pipelines where a structured restart produces better results than lossy compaction.
 
 The default strategy is `compaction`, which uses auto-compaction as described above.
