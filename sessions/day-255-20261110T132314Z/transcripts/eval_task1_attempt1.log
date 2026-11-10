@@ -1,0 +1,25 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn 'env::var("ANTHROPIC_AP… ✓ (23ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1105,… (8 lines) ✓ (8ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 16.5s (2 ✓)
+
+PASS. The fix does what the task asked: ANTHROPIC_API_KEY is now read only when the provider is anthropic. I've written the verdict to session_plan/eval_task_1.md.
+
+• Both key lookups are fixed. The old fallback is gone from the main path in src/cli.rs and from the separate lookup yoyo review uses in src/dispatch_sub.rs. The task only listed the first. The generic API_KEY and a config-file api_key still work for every provider, as the task decided.
+• Setup check fixed too. The setup check in src/setup.rs that decides whether a key already exists no longer counts ANTHROPIC_API_KEY for other providers. Without that change, the setup wizard would be skipped and the run would start with no key.
+• Checked on the built binary: with only ANTHROPIC_API_KEY set and --provider openai, it stops with No API key found. Set OPENAI_API_KEY env var… and exits 1.
+• New test: tests/provider_key_canary.rs runs a fake local server and records which key each request carries. It covers:
+  • custom and ollama, for both -p and yoyo review: the Anthropic key never arrives.
+  • anthropic: the key does arrive, in the x-api-key header.
+  • the API_KEY fallback still being sent.
+  • openai refusing before sending anything.
+  • I didn't rerun it separately; the harness's passing test run covers it.
+• No missing pieces: the one new helper is used and tested in the same diff, and no enum variants were added. The only other place in src/ that reads ANTHROPIC_API_KEY is test code in src/setup.rs that clears and restores the variable.
+• Docs: installation.md, common-issues.md, CLAUDE.md (old claim kept and marked superseded), ARCHITECTURE.md and a CHANGELOG Security line were all updated in the same diff.
+• Evolve loop: .yoyo.toml uses provider anthropic, so the loop is unaffected.
+  watch: no files changed this turn — skipping

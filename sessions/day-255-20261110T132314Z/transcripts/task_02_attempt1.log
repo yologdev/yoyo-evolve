@@ -1,0 +1,161 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --short | head;…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat src/bash_output_cap.rs | head … ✓ (11ms)
+ ✓ (11ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.5s (2 ✓)
+
+Step 1 first.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (15 lines) ✓ (6.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now yoagent's BashTool.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.27.7; grep -… ✓ (4ms)
+  ▶ $ cd ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.27.7; sed -n… ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 8.0s (2 ✓)
+
+BashTool's text is "Exit code: N\n" + Capture::text (stdout only, when stderr is empty); head = cap/2, tail = cap − cap/2. Let me see how existing yoyo tests invoke a yoagent tool's execute.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "ToolContext\b\|fn ctx\|\… ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "fn .*ctx\|ToolContext {" … ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.6s (2 ✓)
+
+Now the behavioural test. Check whether bash_output_cap.rs has a module-size cap first.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "bash_output_cap" src/mod… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1,16p src/bash_output_cap.r… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/bash_output_cap.rs (16 lines) ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 12.6s (3 ✓)
+
+Now write the behavioural test, replacing the literal one.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/bash_output_cap.rs (6 → 41 lines)
+  -     #[test]
+  -     fn marker_text_is_yoagents() {
+  -         // Hand copy of yoagent 0.27.5 src/tools/bash.rs `Capture::text`.
+  -         let out = capped(4, "abcdefgh");
+  -         assert_eq!(out, "ab\n... (output truncated: 4 bytes omitted) ...\ngh");
+  +     /// Runs yoagent's own public `BashTool` and this cap over the same bytes
+  +     /// and requires the same text, so the copy is pinned to its authority
+  +     /// rather than to a string typed here. `BashTool`'s content is
+  +     /// `"Exit code: N\n"` + the stdout capture's text when stderr is empty
+  +     /// (`render_output` in yoagent's src/tools/bash.rs); the header is
+  +     /// stripped and only the capped body is compared: kept head, marker line
+  +     /// with its omitted count, kept tail. ASCII only: yoagent cuts bytes and
+  +     /// this cuts at char boundaries, which agree exactly on ASCII.
+  +     #[tokio::test]
+  +     async fn head_tail_and_marker_match_yoagent_bash_tool() {
+  +         use yoagent::types::{AgentTool, Content, ToolContext};
+  +         let command = "seq 1 2000";
+  +         let full = std::process::Command::new("bash")
+  +             .args(["-c", command])
+  +             .output()
+  ... (26 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "pub mod bash\|pub use bas… ✓ (3m 57s)
+  -     #[test]
+  -     fn marker_text_is_yoagents() {
+  -         // Hand copy of yoagent 0.27.5 src/tools/bash.rs `Capture::text`.
+  -         let out = capped(4, "abcdefgh");
+  -         assert_eq!(out, "ab\n... (output truncated: 4 bytes omitted) ...\ngh");
+  +     /// Runs yoagent's own public `BashTool` and this cap over the same bytes
+  +     /// and requires the same text, so the copy is pinned to its authority
+  +     /// rather than to a string typed here. `BashTool`'s content is
+  ... (13 more lines)
+ ✗ (3m 57s)
+    │ Command timed out after 120s. Output so far:
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 580 cargo test --bin yoyo … ✓ (168ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 4m 4s (2 ✓, 1 ✗)
+
+They agree. Confirm the new test actually ran, then a positive control (mutate render's marker, check marker count before running, restore in the same command):
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test --bin yoyo head_tail_an… ✓ (53.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control fails by name with the marker mutated and passes after restore (marker count 1 before, 0 after). Now the module doc:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/bash_output_cap.rs (5 → 6 lines)
+  - //! Mirrors yoagent 0.27.5's own `bash` (`Capture` in `src/tools/bash.rs`,
+  - //! ~455-530 of the registry copy: `head_cap = cap / 2`, `tail_cap = cap -
+  - //! head_cap`). That struct is private, so this is a hand copy, and the marker
+  - //! text in [`HeadTailCap::render`] is a hand copy of its `format!` string: it
+  - //! CAN drift if yoagent changes its wording. Unlike yoagent (bytes, lossy
+  + //! Mirrors yoagent's own `bash` (`Capture` in `src/tools/bash.rs`:
+  + //! `head_cap = cap / 2`, `tail_cap = cap - head_cap`). That struct is
+  + //! private, so this is a hand copy, but the copy is pinned to yoagent's
+  + //! public `BashTool` by `head_tail_and_marker_match_yoagent_bash_tool`, which
+  + //! runs both on the same output: a yoagent change to the cut points or the
+  + //! marker text fails it. Unlike yoagent (bytes, lossy
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "marker_text_is_yoagents\… ✓ (4m 4s)
+  - //! Mirrors yoagent 0.27.5's own `bash` (`Capture` in `src/tools/bash.rs`,
+  - //! ~455-530 of the registry copy: `head_cap = cap / 2`, `tail_cap = cap -
+  - //! head_cap`). That struct is private, so this is a hand copy, and the marker
+  - //! text in [`HeadTailCap::render`] is a hand copy of its `format!` string: it
+  - //! CAN drift if yoagent changes its wording. Unlike yoagent (bytes, lossy
+  + //! Mirrors yoagent's own `bash` (`Capture` in `src/tools/bash.rs`:
+  + //! `head_cap = cap / 2`, `tail_cap = cap - head_cap`). That struct is
+  + //! private, so this is a hand copy, but the copy is pinned to yoagent's
+  ... (3 more lines)
+ ✓ (4m 4s)
+  2 tools completed in 4m 10s (2 ✓)
+
+ARCHITECTURE.md now states something false ("pins the literal, not yoagent's live behaviour"). Fixing it in place, marking the superseded claim:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (9 lines) ✓ (2.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clippy returned in 0.07s — likely cached by a watcher; forcing a re-lint to be sure it actually checked the edited file:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; touch src/main.rs src/bash_output_… ✓ (18.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo build 2>&1 | tail -1 && carg… ✓ (3m 51s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test 2>&1 | grep -cE "FAILED… ✓ (3m 27s)
+  3 tools completed in 7m 47s (3 ✓)
+
+All gates green: build, cargo test (0 failures), clippy -D warnings (forced re-lint), fmt --check, and harness_logic.sh (336/0).
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add -A && … (27 lines) ✓ (36ms)
+
+I made both fixes and committed them as 4e13f65d. All checks pass: cargo build, cargo test with 0 failures, clippy with -D warnings (I forced a re-lint because the first run came back from cache in 0.07s), cargo fmt -- --check, and tests/harness_logic.sh at 336 passed, 0 failed.
+
+1. CI flake (`tests/harness_logic.sh`). The "budget: numeric honored" check expected exactly 500. The budget calculation reads the clock twice, so if a second ticks over between the two reads it returns 499, which is what turned CI run 42736547831 red. The check now accepts 499 or 500, like the three similar checks below it, with a comment citing the 2026-11-10 CI failure.
+
+2. Testing my copy against yoagent's real code (`src/bash_output_cap.rs`). The old test marker_text_is_yoagents compared my code against a string I had typed myself, so its name claimed a match with yoagent that it never checked. I replaced it with head_tail_and_marker_match_yoagent_bash_tool:
+• It runs seq 1 2000 through yoagent 0.27.7's public BashTool with small output caps (100, 101 and 257 bytes).
+• It strips the Exit code: 0\n line yoagent puts first, then requires the rest to match HeadTailCap byte for byte on the same output.
+• It uses ASCII-only output. With multi-byte characters the two can legitimately differ, because yoagent cuts at a byte and mine moves the cut to a character boundary.
+
+Result: they agree. Same cut points, same omitted-byte count, same marker line. So no upstream issue was needed, and the module doc's "CAN drift" sentence now names the test that pins the copy.
+
+Checking the new test can fail: I changed my marker wording ("omitted" → "dropped") and confirmed the edit had actually applied before running. The test went red; after restoring the code it went green, and the temporary marker was gone.
+
+I also updated ARCHITECTURE.md, which still said the old test "pins the literal, not yoagent's live behaviour". That entry now describes the new test, and the old sentence is kept there marked as superseded.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

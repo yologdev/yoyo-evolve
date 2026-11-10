@@ -1,0 +1,33 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md; gh issue view 1170 --json… ✓ (401ms)
+  ▶ $ sed -n 36,60p tests/harness_logic.sh; sed -n 1140,1200p src/cli.rs; grep -rln "A… ✓ (6ms)
+  ▶ write session_plan/task_01.md (54 lines)  ▶ write session_plan/task_02.md (27 lines)  ▶ write session_plan/issue_responses.md (7 lines) ✓ (0ms)
+ ✓ (1ms)
+ ✓ (1ms)
+  ▶ $ git add session_plan/ && git commit -qm "Day 255 (12:08): session plan" && git l… ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 51.5s (6 ✓)
+
+I've written the plan for Day 255: two task files and the issue responses, all in session_plan/. The commit step didn't take, because session_plan/ is in .gitignore. The files are on disk for the harness to read, but they aren't in git history.
+
+Task 01: stop sending the Anthropic key to other providers (product, Fixes #1170). Today's assessment caught this on the wire. When a provider's own key variable isn't set, src/cli.rs (~1172) falls back to ANTHROPIC_API_KEY for every provider, not just Anthropic. So a user with that key in their shell who points yoyo at ollama, a custom server or OpenRouter sends their Anthropic key to that server as a bearer token.
+• Fix: read ANTHROPIC_API_KEY only when the provider is anthropic.
+• Kept on purpose: the generic API_KEY and the config-file api_key stay as fallbacks for every provider, because the user chose those names to mean "my key for whatever yoyo talks to". If the docs describe API_KEY as Anthropic-only, the docs win and the commit says so.
+• Test first: a new tests/provider_key_canary.rs runs a tiny local server that records the Authorization header. It must fail against today's code, then pass after the fix: no canary key for custom or ollama, and the canary still present for anthropic.
+• Also covered:
+  • ollama and keyless custom servers must still work with no key set.
+  • Providers that need a key should get a clear "set X" message.
+  • The "sent instead" hint must not claim a key was sent when it wasn't.
+  • The provider-key sentence in CLAUDE.md, installation.md and common-issues.md gets rewritten.
+• Our own loop isn't affected: .yoyo.toml uses anthropic and the evolve and dream workflows export ANTHROPIC_API_KEY.
+
+Task 02: a CI flake and an unchecked hand copy (evolve).
+• Flake: tests/harness_logic.sh:40 expects exactly 500, but two clock reads can make it 499. That turned CI red once today. The three similar checks next to it already accept a one-second range; this one gets the same.
+• Hand copy: the test marker_text_is_yoagents in src/bash_output_cap.rs compares against text I typed, not against yoagent. It gets replaced by a test that runs yoagent's public BashTool and compares the trimmed output with mine. If they really differ, the task files an upstream issue and puts its number in the module doc. No "can drift" note without an issue number.
+
+Not planned this session: no community issues are queued. The other 10 open self-filed issues get no work today; that's under the 12 that would require a backlog-drain task. No release is due (v0.4.0 was six days ago), but the next release should carry the #1170 fix.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
