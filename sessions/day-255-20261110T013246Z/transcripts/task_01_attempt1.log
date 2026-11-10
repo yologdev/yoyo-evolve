@@ -1,0 +1,75 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; grep -n "OVERFL… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; Y=~/.cargo/registry/src/index.crat… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "is_overflow_error" -r src… ✓ (19ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1340,1346p src/prompt_retry… ✓ (22ms)
+  ▶ $ Y=~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.27.7/src; sed… ✓ (11ms)
+  ▶ $ Y=~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.27.7/src; gre… ✓ (8ms)
+  ▶ $ Y=~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.27.7/src; gre… ✓ (7ms)
+  ▶ $ Y=~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.27.7/src; sed… ✓ (4ms)
+  ▶ $ Y=~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.27.7/src; sed… ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  9 tools completed in 1m 14s (9 ✓)
+
+Writing the test file first.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ write src/prompt_retry_overflow_tests.rs (117 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (47 lines) ✓ (4m 48s)
+ ✓ (4m 48s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; wc -l src/prompt_retry.rs; cargo t… ✓ (144ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test --bin yoyo prompt_retry… ✓ (107ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 4m 59s (4 ✓)
+
+Now the positive control, atomically: bypass the delegation with the old broad phrase, marker checked before running.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cp src/prompt_… (15 lines) ✓ (1m 3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (8 lines) ✓ (22.9s)
+  ▶ $ Y=~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.27.7/src; sed… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "exceeds the maximum\|ove… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "^### " ARCHITECTURE.md | … ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat >> ARCHITE… (10 lines) ✗ (2m 0s)
+    │ Command timed out after 120s
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test 2>&1 | grep -E "test re… ✓ (4m 0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test 2>&1 | grep -cE "FAILED… ✓ (4m 7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add -A && … (44 lines) ✓ (46ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  9 tools completed in 12m 14s (8 ✓, 1 ✗)
+
+I fixed #1167 and committed it as 63e47415. Build, the full test suite, clippy with -D warnings and the fmt check all pass.
+
+The change: I deleted yoyo's hand-copied list of overflow phrases (OVERFLOW_PHRASES). is_overflow_error now builds an assistant error message from the text and asks yoagent's public Message::is_context_overflow(). That is the same check yoagent runs on the error_message field that prompt.rs reads. So Azure's peak-load rate limit no longer counts as a context overflow, and model_context_window_exceeded now does.
+
+Where I didn't follow the plan: it suggested ProviderError::classify(400, msg). I read that code first, as the plan asked, and it doesn't fit:
+• It treats whitespace-only text as an overflow, because of a rule meant for empty HTTP bodies.
+• It doesn't recognise the "Context overflow: " prefix, which is how an empty-body 400/413 overflow actually shows up in error_message.
+
+The Message check handles both. As a side effect, empty-body overflows are now caught too; the old list missed them.
+
+Tests: they're in the new src/prompt_retry_overflow_tests.rs, and every expected value comes from calling yoagent rather than from a list I typed:
+• Azure's text, copied from yoagent's own test fixture → not an overflow.
+• model_context_window_exceeded → overflow.
+• The empty-body overflow text → overflow.
+• One real overflow message per provider → overflow, matching both of yoagent's checks.
+• Near-misses (a rate-limit message, "Request exceeds the maximum allowed size", empty and blank text) → not an overflow.
+
+No existing test changed or failed.
+
+Check that the tests catch the bug: I put the old broad phrase "exceeds the maximum" back in with a NEUTERED marker, counting the marker before running. The Azure test and the near-miss test both failed by name. After restoring, there were 0 markers and all 5 tests passed.
+
+How much this mattered before (from reading yoagent 0.27.7's code, not from a real run): yoagent turns HTTP 429/503/529 into a rate-limit error whose text doesn't include the response body. It also flags Azure's mid-stream payload as a rate limit before checking for overflow. So the Azure text would only have reached yoyo if a provider sent it with some other status code, or in a payload yoagent doesn't recognise as a rate limit. I don't know of any user who actually got compacted because of this.
+
+Other edits: I lowered prompt_retry.rs's registered size in tests/module_size.rs from 2804 to 2800 lines. I also added an ARCHITECTURE.md entry that marks the Day 194 note citing OVERFLOW_PHRASES as superseded.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 0/1 changed files were in top-10 predictions (0.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/1 (0.0%) — reactive was 0.0%
+     Surprises (not predicted): src/prompt_retry_overflow_tests.rs

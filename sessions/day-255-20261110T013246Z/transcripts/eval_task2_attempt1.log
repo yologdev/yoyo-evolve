@@ -1,0 +1,21 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "CHECKPOINT_TRIGGERED" … ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 700,712p src/main.rs; sed… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p ses… (9 lines) ✓ (10ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 21.6s (3 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_2.md. The REPL path is covered only by unit tests on the new helper; nobody, including me, has seen it work in a live REPL session.
+
+• REPL: before each user turn, the REPL now clears the checkpoint flag (CHECKPOINT_TRIGGERED). The auto-continue loop then goes through a small new function, auto_continue_allowed. When a checkpoint stop blocks a continue, it prints one dim line saying auto-continue was skipped and why.
+• Clearing the flag is safe: I searched for every reader of CHECKPOINT_TRIGGERED. Only the -p and piped exit-code paths read it (main.rs:708 and :1050); the REPL never does, so clearing it per turn can't change an exit code.
+• Piped mode: piped_should_continue now refuses to continue after a checkpoint stop when --continue-on-silence is on. Its call site in main.rs:965 and all the existing test calls in main_tests.rs were updated for the extra argument.
+• Tests: one of the new tests takes a real checkpoint-stopped run and first shows that, without the fix, auto-continue would have continued it. The tests that the stop blocks it are therefore checking something real.
+• Unused definitions: none. Both new definitions (auto_continue_allowed and the skip message constant) are used in this diff. The repl.rs line-count limit in tests/module_size.rs was raised to 3411, with a reason.
+• Docs: updated in docs/src/features/context.md and docs/src/usage/repl.md.
+• Product safety: behaviour only changes for users who chose --context-strategy checkpoint. No defaults or flags changed.
+  watch: no files changed this turn — skipping

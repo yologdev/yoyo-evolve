@@ -1,0 +1,27 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; mkdir -p session_plan && rm -f ses… ✓ (979ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 240,280p src/prompt_retry.r… ✓ (17ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "should_auto_continue\|aut… ✓ (18ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat > session_… (125 lines) ✓ (18ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 1m 33s (4 ✓)
+
+I've written the plan for this session: two task files and an issue-response file in session_plan/. The commit didn't happen because .gitignore excludes session_plan/. The plan's own commit line ends in || true, which suggests that's expected, so I left it and didn't force-add.
+
+Task 01 — Fixes #1167 (product). yoyo keeps its own copy of yoagent's list of "context overflow" error phrases, and the copy has drifted. It still matches the broad phrase "exceeds the maximum", so Azure's peak-load rate-limit error looks like an overflow. yoyo then compacts the conversation instead of retrying, and it also misses Anthropic's model_context_window_exceeded stop reason.
+• Fix: have is_overflow_error ask yoagent's public ProviderError::classify directly. That only works if yoagent's private status check adds nothing surprising for a 400. If it does, keep the list but make it an exact copy of yoagent's, with a test that checks it against yoagent.
+• Tests: they go in a new sibling file, src/prompt_retry_overflow_tests.rs, because prompt_retry.rs is at its size cap. Each one calls yoagent rather than comparing against a string I typed, and a deliberate-break check comes with them.
+• Open question: I haven't confirmed that the Azure text ever reaches this check at runtime. yoagent may already turn a 429 into a rate-limit error before yoyo sees the message, so the commit has to say which path, if any, delivers it.
+
+Task 02 — Fixes #1161 (product). I'm deciding this one: a checkpoint stop must not be auto-continued. You choose --context-strategy checkpoint to get a stop instead of compaction. Today auto-continue can send "Continue…" right after the stop, and the next run compacts anyway, which quietly undoes your choice.
+• Fix: the checkpoint flag stays set for the whole process, so the REPL clears it before each prompt and reads it after the turn. That gives a per-turn signal without breaking the exit-code readers in -p mode. The decision goes into a small helper that the tests can call, and yoyo prints one dim line saying why it didn't continue. Piped --continue-on-silence gets the same guard.
+• Evidence: the bug is still read from the code, not seen in a live run. The tests pin the helper; I won't have watched a real REPL session, and the commit will say so.
+
+Both tasks stay out of the providers code (12 of the last 12 task commits clustered there) and out of src/context.rs. That file is already past its size cap and not on the list of oversized files allowed to stay, so 15 more lines would make cargo test fail.
+
+There are no community issues today, #1149 is already closed, and the release isn't due.
+  watch: no files changed this turn — skipping

@@ -1,0 +1,145 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | head; grep … ✓ (27ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1290,1420p src/repl.rs; s…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,60p src/checkpoint_stop… ✓ (5ms)
+ ✓ (16ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 770,1000p src/main.rs; gr… ✓ (17ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1660,1700p src/agent_buil… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 680,720p src/main_tests.r… ✓ (18ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1340 && NR<=1366' src/r… ✓ (10ms)
+  ▶ read src/repl.rs:1338..1368 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "let outcome = \|let too… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "tools_before\|let outco… ✓ (5ms)
+  ▶ read src/repl.rs:1140..1152 ✓ (0ms)
+  ▶ read src/checkpoint_stop_tests.rs:1..37 ✓ (0ms)
+  ▶ read src/checkpoint_stop_tests.rs:110..150 ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  13 tools completed in 1m 24s (13 ✓)
+
+Now write the tests (first), then the code.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/c… (68 lines) ✓ (7ms)
+
+Now the REPL helper and wiring.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/repl.rs (1 → 11 lines)
+  + /// #1161: a `--context-strategy checkpoint` stop is the user's explicit
+  + /// stop-and-restart; auto-continue must not run past it into compaction.
+  + pub(crate) fn auto_continue_allowed(checkpoint_stopped: bool, wants_continue: bool) -> bool {
+  +     wants_continue && !checkpoint_stopped
+  + }
+  + 
+  + /// Shown when [`auto_continue_allowed`] blocks a continue the turn wanted.
+  + pub(crate) const CHECKPOINT_SKIPS_AUTO_CONTINUE: &str =
+  +     "auto-continue skipped: the checkpoint stop asked for a restart, not more turns";
+  + 
+    /// Why a turn ended, as far as yoyo can tell.
+  ▶ edit src/repl.rs (17 → 24 lines)
+                while auto_continue_count < max_continues
+                    && !had_error
+  -                 && should_auto_continue(
+  -                     &last_text,
+  -                     // #808: the silence branch judges CLOSING text, not the
+  -                     // whole turn — a pre-tool narration must not mask a
+  -                     // post-tool abstention.
+  -                     &last_closing,
+  -                     agent.follow_up_queue_len(),
+  -                     // #794 half (a): a real tool-call count, not the edit
+  -                     // counter — a turn of read-only tools then silence is the
+  -                     // abstention case this gate exists for.
+  -                     session_changes.tool_call_count() > tools_before,
+  -                     crate::cli::is_continue_on_silence(),
+  -                 )
+                    && !crate::prompt_budget::session_budget_exhausted(30)
+  +                 && {
+  +                     let wants = should_auto_continue(
+  +                         &last_text,
+  +                         // #808: the silence branch judges CLOSING text, not the
+  ... (17 more lines)
+  ▶ edit src/repl.rs (2 → 4 lines)
+            let tools_before = session_changes.tool_call_count();
+  +         // #1161: per-turn in the REPL (nothing here reads it as an exit code).
+  +         crate::CHECKPOINT_TRIGGERED.store(false, Ordering::SeqCst);
+            let mut turn_snap = TurnSnapshot::new();
+ ✓ (18.4s)
+  + /// #1161: a `--context-strategy checkpoint` stop is the user's explicit
+  + /// stop-and-restart; auto-continue must not run past it into compaction.
+  + pub(crate) fn auto_continue_allowed(checkpoint_stopped: bool, wants_continue: bool) -> bool {
+  +     wants_continue && !checkpoint_stopped
+  + }
+  + 
+  + /// Shown when [`auto_continue_allowed`] blocks a continue the turn wanted.
+  + pub(crate) const CHECKPOINT_SKIPS_AUTO_CONTINUE: &str =
+  ... (3 more lines)
+ ✓ (36.7s)
+                while auto_continue_count < max_continues
+                    && !had_error
+  -                 && should_auto_continue(
+  -                     &last_text,
+  -                     // #808: the silence branch judges CLOSING text, not the
+  -                     // whole turn — a pre-tool narration must not mask a
+  -                     // post-tool abstention.
+  -                     &last_closing,
+  ... (13 more lines)
+ ✓ (55.0s)
+            let tools_before = session_changes.tool_call_count();
+  +         // #1161: per-turn in the REPL (nothing here reads it as an exit code).
+  +         crate::CHECKPOINT_TRIGGERED.store(false, Ordering::SeqCst);
+            let mut turn_snap = TurnSnapshot::new();
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/crate::CHECKPOINT_TRIG… ✓ (6ms)
+  ▶ read src/main.rs:780..800 ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (44 lines) ✓ (26ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (21.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/repl.rs /tmp/repl.bak && … ✓ (32.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/^    wants_continue \&… ✓ (31.5s)
+
+────────────────────────────────────────────────────────────────────────────────
+  9 tools completed in 2m 54s (9 ✓)
+
+Positive control: three new tests went red by name with the helper neutered, and went green again after the restore (0 markers left). Next: line counts and docs.
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/repl.rs src/main.rs sr… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's|^    ("src/repl.rs", 3… ✗ (2m 0s)
+    │ Command timed out after 120s
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 590 cargo test > /tmp/t.… ✓ (4m 2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "FAILED\|failed;" /tmp/t… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 115,140p docs/src/usage/r… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (20 lines) ✓ (21.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/m… (33 lines) ✓ (22ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue com… (3 lines) ✓ (712ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 7m 23s (7 ✓, 1 ✗)
+
+Fixed. When a --context-strategy checkpoint stop fires, auto-continue no longer runs past it. That covers the REPL and piped mode with --continue-on-silence. Committed as 2cf36d32 ("Fixes #1161"). The REPL part is checked by unit tests only: I didn't watch it happen in a live REPL session.
+
+What was wrong: the user picks checkpoint mode to get a stop-and-restart instead of compaction. But the REPL's auto-continue (on by default) would send "Continue with the remaining work…" right after the checkpoint line. The next turn then compacted at the same 70% threshold, so the setting the user chose was silently replaced by the default they had turned off.
+
+Changes:
+• `src/repl.rs`: a new small check, auto_continue_allowed, now decides whether a turn may be continued.
+  • The checkpoint flag is reset before each user prompt. Only the -p and piped exit-code paths read it, not the REPL.
+  • The flag is checked before every continuation, so a stop that happens during a continued turn is caught too.
+  • When it blocks a continue the turn wanted, the REPL prints one dim line: auto-continue skipped: the checkpoint stop asked for a restart, not more turns.
+  • I moved the session-time-budget check ahead of this check, so the note never shows for a loop that was going to stop anyway.
+• `src/main.rs`: piped_should_continue takes a new checkpoint_stopped argument and goes through the same check. There the flag stays set for the whole process, which is right because a piped run is a single run. The existing tests in main_tests.rs now pass false for it.
+• Tests (`src/checkpoint_stop_tests.rs`):
+  • One test runs a real checkpoint-stopped prompt and confirms that, without the new check, auto-continue would have continued it. That shows the blocking tests aren't passing for nothing.
+  • Other rows: the REPL is blocked even when the turn looks unfinished and work is queued; behaviour is unchanged when there's no stop; piped mode refuses to continue after a stop.
+  • I also broke the new check on purpose (with a NEUTERED marker), saw the three new tests fail by name, then restored it and saw them pass. No marker is left in the tree.
+• Docs: docs/src/usage/repl.md and docs/src/features/context.md now say a checkpoint stop is never auto-continued.
+• `tests/module_size.rs`: the repl.rs size limit went from 3388 to 3411 lines. The file was already at 3391 before this change.
+
+Checks: build, cargo test, cargo clippy --all-targets -- -D warnings and cargo fmt -- --check all pass. I also posted the decision and its reason as the first lines of a comment on #1161.
+
+Piped mode doesn't print the "skipped" line; only the REPL does. The existing checkpoint message and the exit code 2 already show that the run stopped there.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 0/1 changed files were in top-10 predictions (0.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/1 (0.0%) — reactive was 0.0%
+     Surprises (not predicted): src/repl.rs
