@@ -61,7 +61,10 @@ fn anthropic_id_without_preset_warns_with_the_generic_guess() {
 
 /// Day 247 (#1116): the row flipped. The bedrock default is a Claude id, so
 /// it takes the anthropic preset and is silent; a non-Claude bedrock id still
-/// runs on the 200K / yoagent-default guess, and saying so is still true.
+/// runs on the 200K window guess and warns. #1160 (Day 255): the guessed
+/// max_tokens is never sent (tests/bedrock_max_tokens_request.rs), so the note
+/// names the window and says no cap goes out; the full string is pinned in
+/// `model_limits_note::tests::bedrock_note_names_the_window_and_claims_no_cap`.
 #[test]
 fn bedrock_default_is_silent_and_other_ids_warn_because_they_run_on_a_guess() {
     let default = crate::providers::default_model_for_provider("bedrock");
@@ -75,11 +78,15 @@ fn bedrock_default_is_silent_and_other_ids_warn_because_they_run_on_a_guess() {
     ] {
         let c = create_model_config("bedrock", id, None);
         assert_eq!(c.context_window, 200_000, "{id}");
-        assert_eq!(
-            note_for("bedrock", id),
-            Some(expected("bedrock", id, 200_000, c.max_tokens)),
-            "{id}"
+        let out = note_for("bedrock", id).unwrap_or_else(|| panic!("{id} must warn"));
+        assert!(
+            out.starts_with(&format!(
+                "warning: no preset is known for bedrock model '{id}', so yoyo is using a \
+guessed 200000-token context window. yoyo sends no output cap"
+            )),
+            "{out}"
         );
+        assert!(!out.contains("capped at"), "{out}");
     }
 }
 

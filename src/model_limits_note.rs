@@ -7,8 +7,9 @@
 //! reasoning plus answer on every turn and used to say nothing. This module
 //! does not invent limits for unknown ids (there is no source for them); it
 //! makes the fallback say what it is assuming. `AgentConfig::build_agent`'s
-//! OpenAI-compatible and google branches are the consumers (google since
-//! Day 238, #1021, when membership moved from values to provenance).
+//! arms are the consumers: OpenAI-compatible, google (since Day 238, #1021,
+//! when membership moved from values to provenance), anthropic and bedrock
+//! (since Day 241).
 
 /// Providers whose server the user runs and configures themselves, so their
 /// limits are the user's to set there: never warned about, though
@@ -60,7 +61,9 @@ const UNKNOWN_MODEL_ID_MAX_BYTES: usize = 200;
 /// the user set `max_tokens` themselves (`user_max_tokens`: they chose, do not
 /// nag), or [`runs_on_guessed_limits`] is false. When the user set
 /// `context_window` but not `max_tokens`, only the output cap is reported,
-/// because claiming a guessed window would be false.
+/// because claiming a guessed window would be false. On google and bedrock
+/// (#1158, #1160) the guessed `max_tokens` is never sent, so the note says
+/// no output cap goes out instead of naming one.
 ///
 /// The id is user/config-authored, so it is sanitized and capped on a char
 /// boundary with an ASCII marker. Glyph-free (pure ASCII apart from the id's
@@ -87,15 +90,28 @@ pub(crate) fn unknown_model_limits_note(
     let marker = if plain { "warning: " } else { "⚠ " };
     // #1158: GoogleProvider sends `maxOutputTokens` only from a user cap
     // (observed in tests/google_max_tokens_request.rs: no `generationConfig`
-    // at all without one), so ModelConfig's guessed `max_tokens` never goes
+    // at all without one), so the 8192 guess in ModelConfig never goes
     // out and "capped at {max_tokens}" would be false for google.
-    if provider == "google" {
-        let no_cap = "yoyo sends no output cap, so Google applies the model's own default \
-output limit; set max_tokens in .yoyo.toml (or pass --max-tokens) to cap replies";
+    // #1160: BedrockProvider likewise sets `inferenceConfig.maxTokens` only
+    // from a user cap (tests/bedrock_max_tokens_request.rs: no
+    // `inferenceConfig` at all without one), so bedrock's 16000 guess is held,
+    // not sent. The window guess IS used (compaction), so it is still named.
+    let vendor = match provider {
+        "google" => Some("Google"),
+        "bedrock" => Some("Bedrock"),
+        _ => None,
+    };
+    if let Some(vendor) = vendor {
+        let no_cap = format!(
+            "yoyo sends no output cap, so {vendor} applies the model's own default \
+output limit; set max_tokens in .yoyo.toml (or pass --max-tokens) to cap replies"
+        );
         return Some(match user_context_window {
-            Some(_) => format!("{marker}no preset is known for google model '{shown}'. {no_cap}."),
+            Some(_) => {
+                format!("{marker}no preset is known for {provider} model '{shown}'. {no_cap}.")
+            }
             None => format!(
-                "{marker}no preset is known for google model '{shown}', so yoyo is using a \
+                "{marker}no preset is known for {provider} model '{shown}', so yoyo is using a \
 guessed {window}-token context window. {no_cap}, and context_window (or --context-window) if \
 the model's window differs."
             ),
@@ -393,6 +409,57 @@ pass --max-tokens) to cap replies."
         ];
         expected.sort_unstable();
         assert_eq!(guessing, expected);
+    }
+
+    /// #1160 (Day 255): BedrockProvider sends `inferenceConfig.maxTokens` only
+    /// from a user cap; with none the Converse body has no `inferenceConfig`
+    /// at all (observed in tests/bedrock_max_tokens_request.rs, which also
+    /// fails if the note claims a cap again). So bedrock's 16000 guess is held,
+    /// not sent, and the note says no cap goes out, like google's (#1158).
+    #[test]
+    fn bedrock_note_names_the_window_and_claims_no_cap() {
+        let c = create_model_config("bedrock", "amazon.nova-pro-v1:0", None);
+        assert_eq!((c.context_window, c.max_tokens), (200_000, 16_000));
+        assert_eq!(
+            note_for("bedrock", "amazon.nova-pro-v1:0", true).as_deref(),
+            Some(
+                "warning: no preset is known for bedrock model 'amazon.nova-pro-v1:0', so yoyo \
+is using a guessed 200000-token context window. yoyo sends no output cap, so Bedrock applies the \
+model's own default output limit; set max_tokens in .yoyo.toml (or pass --max-tokens) to cap \
+replies, and context_window (or --context-window) if the model's window differs."
+            )
+        );
+        // With the window set by the user, only the no-cap fact remains.
+        assert_eq!(
+            unknown_model_limits_note(
+                "bedrock",
+                "amazon.nova-pro-v1:0",
+                c.context_window,
+                c.max_tokens,
+                None,
+                Some(300_000),
+                true,
+            )
+            .as_deref(),
+            Some(
+                "warning: no preset is known for bedrock model 'amazon.nova-pro-v1:0'. yoyo sends \
+no output cap, so Bedrock applies the model's own default output limit; set max_tokens in \
+.yoyo.toml (or pass --max-tokens) to cap replies."
+            )
+        );
+        // A user cap silences it (that cap IS sent, row (b) of the wire test).
+        assert_eq!(
+            unknown_model_limits_note(
+                "bedrock",
+                "amazon.nova-pro-v1:0",
+                c.context_window,
+                1234,
+                Some(1234),
+                None,
+                true,
+            ),
+            None
+        );
     }
 
     /// Consumer-side register (#1037, Day 231): which providers' OWN built-in

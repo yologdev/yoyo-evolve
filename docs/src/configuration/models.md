@@ -203,7 +203,10 @@ of AWS's cross-region prefixes (`global.`, `us.`, `us-gov.`, `eu.`, `apac.`, `jp
 runs on a 1,000,000 window with `max_tokens = 64000` and is not warned about. Your `base_url` (the
 Region) is kept. Any other `bedrock` id (`amazon.nova-pro-v1:0`, a Claude id yoagent has no preset
 for, or a Claude id spelled with a prefix or version suffix AWS doesn't use, such as
-`xx.anthropic.claude-sonnet-4-6`) runs on the 200,000 / 16000 guess and warns.
+`xx.anthropic.claude-sonnet-4-6`) runs on a guessed 200,000-token window and warns. As on `google`,
+the 16000 `max_tokens` in that guess is not sent: the Converse request carries no
+`inferenceConfig.maxTokens` unless you set `max_tokens`, so Bedrock applies the model's own default
+output limit, and the warning says that instead of naming a cap.
 
 A value for `--max-tokens`, `--temperature`, `--max-turns` or `--context-window` that is not a
 number (`--max-tokens abc`) is refused at startup with exit 2, before any request is sent; it no
