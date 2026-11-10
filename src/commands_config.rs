@@ -513,6 +513,10 @@ pub fn handle_config_show() -> bool {
         Some(p) => match crate::non_regular_read::read_regular_to_string(p) {
             Ok(content) => {
                 crate::config_syntax::warn_config_syntax_once(&p.display().to_string(), &content);
+                crate::config_unknown_keys::warn_unknown_config_keys_once(
+                    &p.display().to_string(),
+                    &content,
+                );
                 crate::cli::parse_config_file(&content)
             }
             Err(e) => {
@@ -878,6 +882,10 @@ pub fn handle_config_get_status(input: &str, surface: crate::commands_dev::Docto
         Some(p) => match crate::non_regular_read::read_config_or_warn(p) {
             Some(content) => {
                 crate::config_syntax::warn_config_syntax_once(&p.display().to_string(), &content);
+                crate::config_unknown_keys::warn_unknown_config_keys_once(
+                    &p.display().to_string(),
+                    &content,
+                );
                 crate::cli::parse_config_file(&content)
             }
             None => std::collections::HashMap::new(),

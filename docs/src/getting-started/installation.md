@@ -144,6 +144,8 @@ allow = ["./src", "./tests"]
 deny = ["~/.ssh", "/etc"]
 ```
 
+A key yoyo does not read (a typo such as `modle = "gpt-4o"`, or a misspelled section such as `[permisions]`) is not an error: the run goes ahead without it, and yoyo prints one stderr warning per such key naming the file, the line and the closest key it does read. Hook keys are top-level dotted keys (`hooks.pre.bash = "..."`); a `[hooks]` table is warned about because yoyo never reads it.
+
 CLI flags always override config file values. For example, `--model gpt-4o` overrides `model = "claude-sonnet-5-5"` from the config file.
 
 For more details on model configuration, see [Models](../configuration/models.md). For thinking levels, see [Thinking](../configuration/thinking.md).
