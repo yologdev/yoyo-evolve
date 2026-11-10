@@ -242,38 +242,31 @@ pub fn tool_recovery_hint(tool_name: &str, attempt: u32) -> &'static str {
     }
 }
 
-/// Known phrases that indicate context overflow across LLM providers.
-/// Mirrors the upstream yoagent patterns so we can detect overflow from
-/// error *strings* (e.g., in RetriableError messages or raw API output)
-/// even when the structured `ProviderError::ContextOverflow` isn't available.
-const OVERFLOW_PHRASES: &[&str] = &[
-    "prompt is too long",
-    "input is too long",
-    "exceeds the context window",
-    "exceeds the maximum",
-    "maximum prompt length",
-    "reduce the length of the messages",
-    "maximum context length",
-    "exceeds the limit of",
-    "exceeds the available context size",
-    "greater than the context length",
-    "context window exceeds limit",
-    "exceeded model token limit",
-    "context length exceeded",
-    "context_length_exceeded",
-    "too many tokens",
-    "token limit exceeded",
-];
-
 /// Check if an error message indicates a context overflow / prompt-too-long error.
-/// Uses phrase matching against `OVERFLOW_PHRASES` since we often only have the raw
-/// structured `ProviderError`. Case-insensitive.
+///
+/// Delegates to yoagent's own reader of an assistant error message
+/// (`Message::is_context_overflow`): its overflow phrase list plus the
+/// `ProviderError::ContextOverflow` display prefix (which is how an empty-body
+/// 400/413 overflow arrives, with no phrase in it). Until #1167 this was a hand
+/// copy of yoagent's private phrase list, and it drifted twice: it kept the
+/// broad "exceeds the maximum", which matches Azure's peak-load rate limit, and
+/// never gained "model_context_window_exceeded". `prompt_retry_overflow_tests.rs`
+/// pins the verdicts against yoagent. Empty or whitespace-only text is never an
+/// overflow here: yoagent's empty-body rule keys on an HTTP status this string
+/// does not carry.
 pub fn is_overflow_error(msg: &str) -> bool {
-    if msg.is_empty() {
+    if msg.trim().is_empty() {
         return false;
     }
-    let lower = msg.to_lowercase();
-    OVERFLOW_PHRASES.iter().any(|phrase| lower.contains(phrase))
+    yoagent::Message::assistant(
+        Vec::new(),
+        StopReason::Error,
+        "",
+        "",
+        yoagent::Usage::default(),
+    )
+    .with_error_message(msg)
+    .is_context_overflow()
 }
 
 /// Build a retry prompt after auto-compacting due to context overflow.
@@ -579,6 +572,9 @@ mod prompt_retry_auth_tests;
 #[cfg(test)]
 #[path = "prompt_retry_dns_tests.rs"]
 mod prompt_retry_dns_tests;
+#[cfg(test)]
+#[path = "prompt_retry_overflow_tests.rs"]
+mod prompt_retry_overflow_tests;
 
 /// Diagnose a non-retriable API error and return a user-friendly message
 /// with actionable suggestions. Returns `None` for errors that don't match

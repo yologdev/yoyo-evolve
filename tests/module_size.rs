@@ -661,7 +661,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 241 (20:26): 2785 -> 2786 -- +1 for REFUSAL_STEM_PARTIAL_READ in is_deterministic_tool_error.
     // +1 Day 248 (#1120): the reserved-DNS fast-fail pointer beside the classifier.
     // +6 Day 249 (#1126): DNS matcher takes reqwest's real text; tests in a sibling file.
-    ("src/prompt_retry.rs", 2804), // Day 254 (13:34): +1, xAI 400 "Incorrect API key provided" is an auth failure (#1165); before: +10 at 12:00 for Google 400 API_KEY_INVALID (#1163).
+    ("src/prompt_retry.rs", 2800), // Day 255 (00:19): -4, is_overflow_error delegates to yoagent; OVERFLOW_PHRASES hand copy deleted (#1167); before: Day 254 (13:34): +1, xAI 400 "Incorrect API key provided" is an auth failure (#1165); before: +10 at 12:00 for Google 400 API_KEY_INVALID (#1163).
     // Day 162 (#689): +14 lines — double Ctrl+C at the idle REPL prompt now
     // exits (consecutive-flag `ctrl_c_armed`, dim hint on first press).
     // Day 174: +91 absorbed since Day 166.
