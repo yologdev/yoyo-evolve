@@ -476,27 +476,10 @@ pub fn glob_match(pattern: &str, text: &str) -> bool {
 }
 
 /// Parse a TOML-style array value like `["pattern1", "pattern2"]` into a Vec<String>.
+/// Quote-aware and comment-tolerant (#1177). An unreadable list is empty here and
+/// named by `config_value::warn_unreadable_values_once` when the file is loaded.
 pub fn parse_toml_array(value: &str) -> Vec<String> {
-    let trimmed = value.trim();
-    if !trimmed.starts_with('[') || !trimmed.ends_with(']') {
-        return Vec::new();
-    }
-    let inner = &trimmed[1..trimmed.len() - 1];
-    inner
-        .split(',')
-        .map(|s| {
-            let s = s.trim();
-            // Strip quotes
-            if (s.starts_with('"') && s.ends_with('"'))
-                || (s.starts_with('\'') && s.ends_with('\''))
-            {
-                s[1..s.len() - 1].to_string()
-            } else {
-                s.to_string()
-            }
-        })
-        .filter(|s| !s.is_empty())
-        .collect()
+    crate::config_value::read_array(value).unwrap_or_default()
 }
 
 /// Parse a `[permissions]` section from a TOML config file content.
@@ -1880,32 +1863,6 @@ pub(crate) fn escape_toml_basic_string(value: &str) -> String {
     out
 }
 
-/// Inverse of [`escape_toml_basic_string`]. An unrecognised escape is kept
-/// verbatim (backslash included) rather than silently dropped.
-pub(crate) fn unescape_toml_basic_string(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    let mut chars = value.chars();
-    while let Some(c) = chars.next() {
-        if c != '\\' {
-            out.push(c);
-            continue;
-        }
-        match chars.next() {
-            Some('\\') => out.push('\\'),
-            Some('"') => out.push('"'),
-            Some('n') => out.push('\n'),
-            Some('r') => out.push('\r'),
-            Some('t') => out.push('\t'),
-            Some(other) => {
-                out.push('\\');
-                out.push(other);
-            }
-            None => out.push('\\'),
-        }
-    }
-    out
-}
-
 // ---------------------------------------------------------------------------
 // Config-file path resolution and loading
 // ---------------------------------------------------------------------------
@@ -2026,22 +1983,16 @@ pub fn parse_config_file(content: &str) -> HashMap<String, String> {
         }
         if let Some((key, value)) = line.split_once('=') {
             let key = key.trim().to_string();
-            let value = value.trim();
-            // Strip surrounding quotes if present. Basic strings ("..") get
-            // escape processing; TOML literal strings ('..') do not (#732).
-            // `chars()` not byte slicing — a multi-byte body would panic.
-            let value = if value.chars().count() >= 2 {
-                let mut inner = value.chars();
-                let first = inner.next().unwrap_or_default();
-                let last = inner.next_back().unwrap_or_default();
-                match (first, last) {
-                    ('"', '"') => unescape_toml_basic_string(inner.as_str()),
-                    ('\'', '\'') => inner.as_str().to_string(),
-                    _ => value.to_string(),
-                }
+            // TOML's reading or nothing (#1177): an array stays raw for
+            // `parse_toml_array`; an unreadable value is left out, and
+            // `config_value::warn_unreadable_values_once` names it at load.
+            let value = crate::config_value::strip_trailing_comment(value);
+            let read = if value.starts_with('[') {
+                Ok(value.to_string())
             } else {
-                value.to_string()
+                crate::config_value::read_scalar(value)
             };
+            let Ok(value) = read else { continue };
             map.insert(key, value);
         }
     }
@@ -2171,6 +2122,7 @@ fn accept_loaded_config(
     }
     crate::config_syntax::check_loaded_config(shown, &content);
     crate::config_unknown_keys::warn_unknown_config_keys_once(shown, &content); // #1171
+    crate::config_value::warn_unreadable_values_once(shown, &content); // #1177
     crate::config_paths::warn_home_config_shadow_once(); // Day 253: two user-level files
     record_loaded_config_path(path);
     let map = parse_config_file(&content);
@@ -2825,9 +2777,15 @@ env = { API_KEY = "secret" }
 
     #[test]
     fn test_parse_config_file_lone_quote_does_not_panic() {
-        // `value[1..value.len() - 1]` panicked on a one-char value.
+        // `value[1..value.len() - 1]` panicked on a one-char value. Since
+        // #1177 an unterminated string is refused (left out, warned about at
+        // load) rather than read as the quote character itself.
         let parsed = parse_config_file("k = \"");
-        assert_eq!(parsed.get("k").map(String::as_str), Some("\""));
+        assert_eq!(parsed.get("k"), None);
+        assert_eq!(
+            crate::config_value::read_scalar("\""),
+            Err("an unterminated string")
+        );
     }
 
     #[test]

@@ -119,6 +119,7 @@ mod config;
 mod config_paths;
 mod config_syntax;
 mod config_unknown_keys;
+mod config_value;
 mod context;
 #[cfg(test)]
 mod context_fence_tests;
