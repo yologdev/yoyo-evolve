@@ -511,8 +511,8 @@ pub fn parse_permissions_from_config(content: &str) -> PermissionConfig {
             continue;
         }
         // Check for section headers
-        if trimmed.starts_with('[') && trimmed.ends_with(']') {
-            in_permissions = trimmed == "[permissions]";
+        if let Some(header) = crate::config_unknown_keys::toml_section_header(trimmed) {
+            in_permissions = header == "permissions";
             continue;
         }
         if !in_permissions {
@@ -542,8 +542,8 @@ pub fn parse_directories_from_config(content: &str) -> DirectoryRestrictions {
         if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
         }
-        if trimmed.starts_with('[') && trimmed.ends_with(']') {
-            in_directories = trimmed == "[directories]";
+        if let Some(header) = crate::config_unknown_keys::toml_section_header(trimmed) {
+            in_directories = header == "directories";
             continue;
         }
         if !in_directories {
@@ -725,7 +725,7 @@ pub fn parse_mcp_servers_from_config(content: &str) -> Vec<McpServerConfig> {
         }
 
         // Detect section headers
-        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+        if let Some(section) = crate::config_unknown_keys::toml_section_header(trimmed) {
             // Flush any previous MCP server
             flush(
                 &mut current_name,
@@ -735,7 +735,6 @@ pub fn parse_mcp_servers_from_config(content: &str) -> Vec<McpServerConfig> {
                 &mut servers,
             );
 
-            let section = &trimmed[1..trimmed.len() - 1];
             if let Some(name) = section.strip_prefix("mcp_servers.") {
                 let name = name.trim();
                 if !name.is_empty() {
@@ -1332,7 +1331,7 @@ pub fn parse_model_pricing_from_config(content: &str) -> ModelPricingOverrides {
             continue;
         }
 
-        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+        if let Some(section) = crate::config_unknown_keys::toml_section_header(trimmed) {
             flush(
                 &mut current,
                 &mut input,
@@ -1340,7 +1339,6 @@ pub fn parse_model_pricing_from_config(content: &str) -> ModelPricingOverrides {
                 &mut saw_bad_value,
                 &mut out,
             );
-            let section = &trimmed[1..trimmed.len() - 1];
             if let Some(id) = section.strip_prefix("model_pricing.") {
                 let id = strip_quotes(id.trim());
                 if !id.is_empty() {
@@ -1748,8 +1746,8 @@ fn set_permissions_allow(content: &str, patterns: &[String]) -> String {
 
     for (i, line) in lines.iter_mut().enumerate() {
         let trimmed = line.trim();
-        if trimmed.starts_with('[') && trimmed.ends_with(']') {
-            if trimmed == "[permissions]" {
+        if let Some(header) = crate::config_unknown_keys::toml_section_header(trimmed) {
+            if header == "permissions" {
                 permissions_section_exists = true;
                 in_permissions = true;
             } else {
@@ -1777,7 +1775,7 @@ fn set_permissions_allow(content: &str, patterns: &[String]) -> String {
         let mut result = Vec::new();
         for line in &lines {
             result.push(line.clone());
-            if line.trim() == "[permissions]" {
+            if crate::config_unknown_keys::toml_section_header(line) == Some("permissions") {
                 result.push(allow_line.clone());
             }
         }

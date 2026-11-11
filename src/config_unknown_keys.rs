@@ -164,6 +164,43 @@ fn bracket_balance(text: &str) -> i32 {
     depth
 }
 
+/// The one header reader every section parser of the config file goes through
+/// (#1174): the text between the outer `[` and `]` of a header line, or `None`
+/// for a line that is not a header. A trailing `# comment` is legal TOML and is
+/// dropped first, but only outside quotes, so `[mcp_servers."a#b"]` keeps its
+/// name. `[[t]]` yields `[t]`, as the old `ends_with(']')` readers saw it, and
+/// `[x] y = 1` (not TOML) is still `None`. Before #1174 each parser required the
+/// line to END in `]`, so `[directories] # keep out` was no header at all and
+/// its `deny` list was dropped: a fence that failed open.
+pub(crate) fn toml_section_header(line: &str) -> Option<&str> {
+    let line = line.trim();
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let mut end = line.len();
+    for (i, c) in line.char_indices() {
+        match quote {
+            Some('"') if escaped => escaped = false,
+            Some('"') if c == '\\' => escaped = true,
+            Some(q) if c == q => quote = None,
+            Some(_) => {}
+            None => match c {
+                '"' | '\'' => quote = Some(c),
+                '#' => {
+                    end = i;
+                    break;
+                }
+                _ => {}
+            },
+        }
+    }
+    let head = line[..end].trim_end();
+    if head.len() >= 2 && head.starts_with('[') && head.ends_with(']') {
+        Some(&head[1..head.len() - 1])
+    } else {
+        None
+    }
+}
+
 /// Every key (and section) in `contents` that no reader of the config file
 /// looks at. Empty for a file that only uses keys yoyo reads.
 pub(crate) fn unknown_config_keys(contents: &str) -> Vec<UnknownKey> {
@@ -191,10 +228,10 @@ pub(crate) fn unknown_config_keys(contents: &str) -> Vec<UnknownKey> {
             continue;
         }
         if line.starts_with('[') {
-            // The section parsers' own rule: a header ends with `]`. Anything
-            // else starting with `[` is config_syntax's business, not a key.
-            if line.ends_with(']') {
-                let inner = line
+            // The section parsers' own reader (#1174). Anything else starting
+            // with `[` is config_syntax's business, not a key.
+            if let Some(header) = toml_section_header(line) {
+                let inner = header
                     .trim_start_matches('[')
                     .trim_end_matches(']')
                     .to_string();
@@ -454,15 +491,94 @@ mod tests {
         assert_eq!(keys(text), vec!["allow_x".to_string()]);
     }
 
+    /// Inverted by #1174: this test used to be
+    /// `a_header_with_a_trailing_comment_is_not_a_header_to_the_parsers` and
+    /// pinned the parser bug (the `allow` reported as an unread top-level key).
     #[test]
-    fn a_header_with_a_trailing_comment_is_not_a_header_to_the_parsers() {
-        // parse_permissions_from_config needs `]` at the end, so this `allow`
-        // is read by nothing and is reported at top level.
-        let found = unknown_config_keys("[permissions] # mine\nallow = [\"x\"]\n");
+    fn a_header_with_a_trailing_comment_is_a_header_to_the_parsers() {
+        assert_eq!(
+            unknown_config_keys("[permissions] # mine\nallow = [\"x\"]\n"),
+            Vec::new()
+        );
+        assert_eq!(
+            unknown_config_keys("[directories] # keep out\ndeny = [\"/tmp\"]\n"),
+            Vec::new()
+        );
+        // The section is still checked: a typo under it is still named.
         assert!(matches!(
-            &found[..],
-            [UnknownKey::Key { key, section: None, .. }] if key == "allow"
+            &unknown_config_keys("[directories] # keep out\ndeyn = [\"/tmp\"]\n")[..],
+            [UnknownKey::Key { key, section: Some(s), .. }] if key == "deyn" && s == "directories"
         ));
+    }
+
+    #[test]
+    fn toml_section_header_table() {
+        let rows: &[(&str, Option<&str>)] = &[
+            ("[directories]", Some("directories")),
+            ("  [directories]  ", Some("directories")),
+            ("[directories] # keep out", Some("directories")),
+            ("[directories]   #", Some("directories")),
+            ("[directories]#tight", Some("directories")),
+            // Old predicate: ends in `]`, so a header named `directories] # see [x`.
+            ("[directories] # see [x]", Some("directories")),
+            ("[mcp_servers.\"a#b\"]", Some("mcp_servers.\"a#b\"")),
+            ("[mcp_servers.\"a#b\"] # c", Some("mcp_servers.\"a#b\"")),
+            ("[mcp_servers.'a#b'] # c", Some("mcp_servers.'a#b'")),
+            (
+                "[model_pricing.\"a\\\"#b\"] # c",
+                Some("model_pricing.\"a\\\"#b\""),
+            ),
+            // Array tables: the old readers saw `[t]` as the inner text; unchanged.
+            ("[[array]]", Some("[array]")),
+            ("[[array]] # c", Some("[array]")),
+            ("[x] y = 1", None),
+            ("[x] = 1", None),
+            ("# [directories]", None),
+            ("deny = [\"[a]\"]", None),
+            ("[", None),
+            ("]", None),
+            ("", None),
+            ("[ñ] # ✓", Some("ñ")),
+        ];
+        for (line, want) in rows {
+            assert_eq!(toml_section_header(line), *want, "line {line:?}");
+        }
+    }
+
+    /// End to end through every section parser in config.rs (#1174): a
+    /// trailing comment on the header no longer drops the section.
+    #[test]
+    fn every_section_parser_reads_a_header_with_a_trailing_comment() {
+        use crate::config::*;
+        let dirs = parse_directories_from_config("[directories] # keep out\ndeny = [\"/tmp\"]\n");
+        assert_eq!(dirs.deny, vec!["/tmp".to_string()]);
+
+        let perms = parse_permissions_from_config("[permissions] # mine\ndeny = [\"rm -rf *\"]\n");
+        assert_eq!(perms.deny, vec!["rm -rf *".to_string()]);
+
+        let mcp = parse_mcp_servers_from_config(
+            "[mcp_servers.fs] # files\ncommand = \"npx\"\nargs = [\"x\"]\n",
+        );
+        assert_eq!(mcp.len(), 1, "{mcp:?}");
+        assert_eq!(
+            (mcp[0].name.as_str(), mcp[0].command.as_str()),
+            ("fs", "npx")
+        );
+
+        let prices = parse_model_pricing_from_config(
+            "[model_pricing.\"m\"] # mine\ninput = 1.5\noutput = 2\n",
+        );
+        let p = prices.lookup("m").expect("priced");
+        assert_eq!((p.input_per_million, p.output_per_million), (1.5, 2.0));
+
+        // The writer: before #1174 it did not see the commented header, so it
+        // appended a second `[permissions]` table (invalid TOML).
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".yoyo.toml");
+        std::fs::write(&path, "[permissions] # mine\nallow = [\"a\"]\n").unwrap();
+        append_allow_pattern_to("b", &path).unwrap();
+        let after = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(after, "[permissions] # mine\nallow = [\"a\", \"b\"]\n");
     }
 
     #[test]
