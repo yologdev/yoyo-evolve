@@ -1,0 +1,114 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | head && gre… ✓ (21ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 325,380p src/providers.rs…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1195,1260p src/cli.rs && … ✓ (8ms)
+ ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 380,440p src/providers.rs… ✓ (24ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1130,1160p src/cli.rs; gr… ✓ (17ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -ln '127.0.0.1:9\b\|127.0.0… ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat tests/unknown_provider_warni… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -ln '"custom"\|nosuch\|--ba… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^/// #1103" src/provide… ✓ (6ms)
+  ▶ edit src/providers.rs (3 → 28 lines)
+        msg.push_str("\nfor an OpenAI-compatible server use: --provider custom --base-url <url>");
+        Some(msg)
+  + }
+  + 
+  + /// #1175: true when `provider` is a user-run OpenAI-compatible server whose
+  + /// models yoyo cannot know: `custom`, or any name outside [`KNOWN_PROVIDERS`]
+  + /// (which `unknown_provider_refusal` lets through only with a base URL). For
+  + /// these, `default_model_for_provider` has no honest answer (its `_` arm is an
+  + /// Anthropic id), so a run with no model named refuses instead of guessing.
+  + /// `ollama` is not here: its default `llama3.2` is a model ollama serves.
+  + pub fn provider_requires_named_model(provider: &str) -> bool {
+  +     provider == "custom" || !KNOWN_PROVIDERS.contains(&provider)
+  + }
+  + 
+  + /// #1175: the refusal for [`provider_requires_named_model`] with no model named.
+  + /// `base_url` is the URL the run would use (the user's, or `custom`'s
+  + /// localhost default); the listing hint is `<base_url>/models`, the
+  + /// OpenAI-compatible model list, so the user can see which ids their server has.
+  + pub fn named_model_required_refusal(provider: &str, base_url: &str) -> String {
+  +     let shown = crate::cli::sanitize_for_display(provider);
+  ... (8 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn sanitize_for_display… ✓ (25.7s)
+        msg.push_str("\nfor an OpenAI-compatible server use: --provider custom --base-url <url>");
+        Some(msg)
+  + }
+  + 
+  + /// #1175: true when `provider` is a user-run OpenAI-compatible server whose
+  + /// models yoyo cannot know: `custom`, or any name outside [`KNOWN_PROVIDERS`]
+  + /// (which `unknown_provider_refusal` lets through only with a base URL). For
+  + /// these, `default_model_for_provider` has no honest answer (its `_` arm is an
+  ... (13 more lines)
+ ✓ (25.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (41 lines) ✓ (18ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  12 tools completed in 1m 27s (12 ✓)
+
+Now the cli.rs call site.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/cli.rs (5 → 15 lines)
+  -     let model = flag_value(args, &["--model"])
+  +     let named_model = flag_value(args, &["--model"])
+            .or_else(|| file_config.get("model").cloned())
+            .map(|s| s.trim().to_string())
+  -         .filter(|s| !s.is_empty())
+  -         .unwrap_or_else(|| default_model_for_provider(&provider));
+  +         .filter(|s| !s.is_empty());
+  +     // #1175: a user-run server's models are the user's to name, not ours to guess.
+  +     let refusal = crate::providers::named_model_required_refusal(
+  +         &provider,
+  +         named_model.as_deref(),
+  +         base_url.as_deref(),
+  +     );
+  +     if let Some(msg) = refusal {
+  +         eprintln!("{RED}error:{RESET} {msg}");
+  +         std::process::exit(2);
+  +     }
+  +     let model = named_model.unwrap_or_else(|| default_model_for_provider(&provider));
+ ✓ (5m 34s)
+  -     let model = flag_value(args, &["--model"])
+  +     let named_model = flag_value(args, &["--model"])
+            .or_else(|| file_config.get("model").cloned())
+            .map(|s| s.trim().to_string())
+  -         .filter(|s| !s.is_empty())
+  -         .unwrap_or_else(|| default_model_for_provider(&provider));
+  +         .filter(|s| !s.is_empty());
+  +     // #1175: a user-run server's models are the user's to name, not ours to guess.
+  ... (10 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (4m 28s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (4m 28s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (20 lines) ✓ (4m 28s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'providers.rs\|"src/cli.… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn flag_value" src/cli.… ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn flag_value\b\|fn fl… ✓ (16ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 19m 37s (7 ✓)
+
+Now the pure tests in providers.rs.
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/p… (91 lines) ✓ (39.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 980,1010p src/dispatch_su… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (9 lines) ✓ (40.1s)
+  ▶ $ cd /tmp && mkdir -p nmtest && cd nmtest && B=/home/runner/work/yoyo-evolve/yoyo-… ✓ (13.8s)
+  ▶ write tests/named_model_required.rs (131 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test --test n… ✓ (5m 17s)
+ ✓ (5m 17s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/cli.rs /tmp/cli.bak && se… ✓ (48.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "WIZARD_PROVIDERS" -A20 … ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fallback-model\|fallbac… ✓ (805ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1145,1175p src/dispatch_s… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 1175 --json body,c… ✓ (286ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -i "custom" docs/src/con… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 38,60p docs/src/configura… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (14 lines) ✓ (17ms)
+
+  (interrupted)

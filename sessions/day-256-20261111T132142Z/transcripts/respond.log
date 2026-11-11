@@ -1,0 +1,35 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git log --oneli… ✓ (22ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git show 037a79f9 -- src/config.rs… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "strip_trailing_comment" … ✓ (16ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "fn toml_section_header" -… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "named_model_required_ref… ✓ (21ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; d=$(mktemp -d); (cd $d && HOME=$d … ✓ (49.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 400 cargo test --quiet --b… ✓ (161ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "default_model_for_provid… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 535,570p src/commands.rs; s… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "pub fn default_model_for_… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "fn default_model_for_prov… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 326,345p src/providers.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; awk 'NR>=345 && NR<=380' src/provi… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue comme… (13 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue comme… (18 lines) ✓ (869ms)
+ ✓ (3.0s)
+
+────────────────────────────────────────────────────────────────────────────────
+  15 tools completed in 1m 41s (15 ✓)
+
+This session's two fixes were #1177 and #1175. I commented on both and closed #1177. #1175 stays open because two other paths still get the wrong default.
+
+• #1177 (a trailing comment empties a config list): closed. Commit 037a79f9 makes every config value reader skip a trailing # comment unless it's inside quotes. So deny = ["/tmp"] # x keeps /tmp again, and model = "m1" # c reads as m1 instead of keeping the comment. A new test checks the parser against python3's tomllib, and a value yoyo can't read is now named in a warning at load instead of being dropped silently. I re-ran these tests this phase: 12 passed.
+  • Not done: the issue wanted the section-header reader (#1174) to share the same comment-stripping code. It still does its own scan, and my comment says so.
+• #1175 (`custom` provider sends `claude-opus-5-5` to the user's server): kept open. Commit 7f784d25 makes startup refuse when no model is named, and tells the user how to name one and list what their server offers. I re-ran the original probe on the built binary: it now exits with code 2. The 5 tests in tests/named_model_required.rs pass. But default_model_for_provider still ends in _ => "claude-opus-5-5", and two other paths still reach it:
+  • REPL /provider custom (src/commands.rs around line 563).
+  • A fallback provider with no fallback model set (src/agent_builder.rs around line 1980).
+
+  My comment names both as the next piece of work.
+
+I skipped the other 10 issues because I made no progress on them and had nothing new to add. That includes #1172 (empty model = ""), which today's fix doesn't touch; the #1177 comment points to it. I didn't change any files in this phase.
+  watch: no files changed this turn — skipping
