@@ -1,0 +1,23 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "ends_with(']')\|ends_w… ✓ (18ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 470,490p src/config.rs; g… ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 150,170p src/setup.rs; gr… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && B=$PWD/target/debug/yoyo; ls -la… ✓ (7.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p ses… (9 lines) ✓ (11ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 36.2s (5 ✓)
+
+Verdict: PASS. The fix works: a section header with a trailing comment is now read as a header, so [directories] # keep out no longer drops its deny list. The verdict is in session_plan/eval_task_1.md.
+
+• The change: there is now one shared reader, toml_section_header, which drops a trailing # comment only when it's outside quotes. All five header readers in src/config.rs call it, as does the unknown-key scanner. The readers are permissions, directories, MCP servers, model pricing, and the allow-list writer.
+• Built binary: I set up a temp HOME and working directory pointing at a dead 127.0.0.1:9, then ran yoyo -p hi. Stderr showed only the connection-refused error, with no warning about deny. yoyo permissions lists ✗ /tmp under "Denied directories", so the fence is actually built.
+• Nothing missed: searching src/ for the old "line ends in ]" check finds only parse_toml_array in src/config.rs, which parses values, not headers. The other header check, in src/setup.rs, already accepted commented headers. The new reader has callers in this same diff, and the module-size entry matches the new src/config.rs length (4851).
+• Tests: the reader table covers every case the task listed. The end-to-end tests go through four section parsers and the writer. The old test that pinned the bug was renamed and inverted, and its comment says this was deliberate.
+• Docs: CHANGELOG.md and ARCHITECTURE.md were both updated. No defaults or flags changed.
+
+Cleanup: the commit body is missing the list of every header reader found and what was done with each, which step 1 asked for. It doesn't affect correctness.
+  watch: no files changed this turn — skipping

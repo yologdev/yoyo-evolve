@@ -1,0 +1,196 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -1 && grep -rn… ✓ (17ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 470,560p src/config.rs; e…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,60p src/config_unknown_… ✓ (9ms)
+ ✓ (16ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn '== "\[\|starts_with("\… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1235,1270p src/hooks.rs; … ✓ (19ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn parse_config_fil… ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "'\['" src/*.rs src/**/… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "trim\|\[mcp" src/comman… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 1174 --json title,… ✓ (275ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  9 tools completed in 54.1s (9 ✓)
+
+Census done. Now the shared reader, then its test table.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^fn \|^pub\|^#\[cfg(tes… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 95,170p src/config_unknow… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit src/config_unknown_keys.rs (2 → 39 lines)
+  + /// The one header reader every section parser of the config file goes through
+  + /// (#1174): the text between the outer `[` and `]` of a header line, or `None`
+  + /// for a line that is not a header. A trailing `# comment` is legal TOML and is
+  + /// dropped first, but only outside quotes, so `[mcp_servers."a#b"]` keeps its
+  + /// name. `[[t]]` yields `[t]`, as the old `ends_with(']')` readers saw it, and
+  + /// `[x] y = 1` (not TOML) is still `None`. Before #1174 each parser required the
+  + /// line to END in `]`, so `[directories] # keep out` was no header at all and
+  + /// its `deny` list was dropped: a fence that failed open.
+  + pub(crate) fn toml_section_header(line: &str) -> Option<&str> {
+  +     let line = line.trim();
+  +     let mut quote: Option<char> = None;
+  +     let mut escaped = false;
+  +     let mut end = line.len();
+  +     for (i, c) in line.char_indices() {
+  +         match quote {
+  +             Some('"') if escaped => escaped = false,
+  +             Some('"') if c == '\\' => escaped = true,
+  +             Some(q) if c == q => quote = None,
+  +             Some(_) => {}
+  +             None => match c {
+  ... (19 more lines)
+  ▶ edit src/config_unknown_keys.rs (5 → 5 lines)
+  -             // The section parsers' own rule: a header ends with `]`. Anything
+  -             // else starting with `[` is config_syntax's business, not a key.
+  -             if line.ends_with(']') {
+  -                 let inner = line
+  +             // The section parsers' own reader (#1174). Anything else starting
+  +             // with `[` is config_syntax's business, not a key.
+  +             if let Some(header) = toml_section_header(line) {
+  +                 let inner = header
+                        .trim_start_matches('[')
+ ✓ (20.6s)
+  + /// The one header reader every section parser of the config file goes through
+  + /// (#1174): the text between the outer `[` and `]` of a header line, or `None`
+  + /// for a line that is not a header. A trailing `# comment` is legal TOML and is
+  + /// dropped first, but only outside quotes, so `[mcp_servers."a#b"]` keeps its
+  + /// name. `[[t]]` yields `[t]`, as the old `ends_with(']')` readers saw it, and
+  + /// `[x] y = 1` (not TOML) is still `None`. Before #1174 each parser required the
+  + /// line to END in `]`, so `[directories] # keep out` was no header at all and
+  + /// its `deny` list was dropped: a fence that failed open.
+  ... (13 more lines)
+ ✓ (3m 0s)
+  -             // The section parsers' own rule: a header ends with `]`. Anything
+  -             // else starting with `[` is config_syntax's business, not a key.
+  -             if line.ends_with(']') {
+  -                 let inner = line
+  +             // The section parsers' own reader (#1174). Anything else starting
+  +             // with `[` is config_syntax's business, not a key.
+  +             if let Some(header) = toml_section_header(line) {
+  +                 let inner = header
+                        .trim_start_matches('[')
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 3m 22s (4 ✓)
+
+Now the five header readers in config.rs, replacing the predicate in place.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (34 lines) ✓ (1.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -3; grep… ✓ (10.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1700,1726p src/config.rs;… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "tempfile" Cargo.toml; g… ✓ (5ms)
+  ▶ edit src/config_unknown_keys.rs (10 → 84 lines)
+  +     /// Inverted by #1174: this test used to be
+  +     /// `a_header_with_a_trailing_comment_is_not_a_header_to_the_parsers` and
+  +     /// pinned the parser bug (the `allow` reported as an unread top-level key).
+        #[test]
+  -     fn a_header_with_a_trailing_comment_is_not_a_header_to_the_parsers() {
+  -         // parse_permissions_from_config needs `]` at the end, so this `allow`
+  -         // is read by nothing and is reported at top level.
+  -         let found = unknown_config_keys("[permissions] # mine\nallow = [\"x\"]\n");
+  +     fn a_header_with_a_trailing_comment_is_a_header_to_the_parsers() {
+  +         assert_eq!(
+  +             unknown_config_keys("[permissions] # mine\nallow = [\"x\"]\n"),
+  +             Vec::new()
+  +         );
+  +         assert_eq!(
+  +             unknown_config_keys("[directories] # keep out\ndeny = [\"/tmp\"]\n"),
+  +             Vec::new()
+  +         );
+  +         // The section is still checked: a typo under it is still named.
+            assert!(matches!(
+  -             &found[..],
+  ... (70 more lines)
+ ✓ (4m 43s)
+  +     /// Inverted by #1174: this test used to be
+  +     /// `a_header_with_a_trailing_comment_is_not_a_header_to_the_parsers` and
+  +     /// pinned the parser bug (the `allow` reported as an unread top-level key).
+        #[test]
+  -     fn a_header_with_a_trailing_comment_is_not_a_header_to_the_parsers() {
+  -         // parse_permissions_from_config needs `]` at the end, so this `allow`
+  -         // is read by nothing and is reported at top level.
+  -         let found = unknown_config_keys("[permissions] # mine\nallow = [\"x\"]\n");
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test --bin yo… ✓ (33.3s)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 6m 6s (6 ✓)
+
+Positive control — atomic, serial, marker counted before running:
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/config_unknown_keys.rs /t… ✓ (1m 4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/config_unknown_keys.rs /t… ✓ (31.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 45s (2 ✓)
+
+Built-binary probe (after build returns, same command, local dead port only):
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -1 && BI… ✓ (16.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+No deny warning. Now the full gate:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (4m 42s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (7m 29s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 12m 22s (2 ✓)
+
+All green. config.rs shrank 4853 → 4851, so I'll update its module_size entry:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's|    ("src/config.rs", … ✓ (1.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Check ARCHITECTURE.md / docs for a now-false sentence about this behaviour:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "trailing comment\|trai… ✓ (31ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "config_unknown_keys\|#1… ✓ (8ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 12.3s (2 ✓)
+
+The ARCHITECTURE.md entry still states the old rule as current; marking it superseded in place, plus a CHANGELOG line.
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (14 lines) ✓ (30ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/p… (3 lines) ✓ (736ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 13.0s (2 ✓)
+
+Let me confirm on the built binary's parser via a throwaway test run rather than by reading:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/confi… (11 lines) ✓ (31.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue cre… (7 lines) ✓ (2.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue comment 1177 --body 'Gr… ✓ (1.4s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 52.0s (3 ✓)
+
+Final gate after the doc edits, then commit:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "NEUTERED\|scratch_prob…
+  (interrupted)
+

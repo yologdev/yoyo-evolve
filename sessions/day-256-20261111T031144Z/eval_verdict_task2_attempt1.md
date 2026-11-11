@@ -1,0 +1,6 @@
+Verdict: PASS
+Reason: The diff gates the only remaining emitter (the `_ =>` arm of create_model_config) behind a per-(provider, url) once-guard, reusing the existing model_limits_note::first_unknown_limits_warning helper. I ran the built binary with the task's probe (`--provider nosuch --base-url http://127.0.0.1:9 -p hi`) and the warning line appeared once, where the assessment had counted 5.
+Checked: intent_alignment: PASS: grep of src/ finds exactly one "treating unknown provider" emitter, now behind the once-guard (the task names no library feature to reuse). The real-binary test covers the flag door, the .yoyo.toml door and the known-provider near-miss with count 0. The probe printed 1.
+Checked: forgotten_touchpoints: PASS: the new static WARNED_UNKNOWN_PROVIDERS is read in the same diff at its only call site. first_unknown_limits_warning already exists with the matching signature (Mutex<Vec<(String,String)>>, &str, &str). module_size.rs is updated to 5009, which matches the current agent_builder.rs line count.
+Checked: doc_sync: N/A: the only change is fewer copies of the same stderr warning, and the task says no documented behaviour changes.
+Checked: product_surface: PASS: this is a product-kind task that only stops a repeated warning. No defaults, flags, wizard or config semantics change.
