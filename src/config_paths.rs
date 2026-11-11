@@ -533,6 +533,12 @@ pub(crate) fn project_trust_grants(
         grants.push("shell hooks (commands run on tool calls)");
     }
 
+    // #1179: the host the user's API key is sent to (`project_base_url`'s gate).
+    let parsed = crate::config::parse_config_file(config_text);
+    if parsed.get("base_url").is_some_and(|u| !u.trim().is_empty()) {
+        grants.push("base_url (the host your API key is sent to)");
+    }
+
     if goal_verify_exists {
         grants.push(".yoyo/goal_verify.md (a shell command /goal check runs)");
     }
@@ -1370,6 +1376,10 @@ and CI have nobody to answer, so they take the safe answer silently"
             project_trust_grants("[hooks.post]\nbash = \"echo hi\"\n", false, false, false),
             vec!["shell hooks (commands run on tool calls)"]
         );
+        assert_eq!(
+            project_trust_grants("base_url = \"http://h/v1\"\n", false, false, false),
+            vec!["base_url (the host your API key is sent to)"]
+        );
         // The fourth surface has no config key at all — it is a file on disk.
         assert_eq!(
             project_trust_grants("", true, false, false),
@@ -1409,6 +1419,8 @@ continue_on_silence = true\nwait_for_reset = true\nquiet = true\n",
 
         // An empty config asks nothing.
         assert!(project_trust_grants("", false, false, false).is_empty());
+        // #1179: a blank base_url names no host.
+        assert!(project_trust_grants("base_url = \"\"\n", false, false, false).is_empty());
     }
 
     #[test]

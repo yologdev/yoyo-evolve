@@ -92,7 +92,8 @@ fn unknown_provider_flag_warns_exactly_once() {
 fn unknown_provider_from_config_file_warns_exactly_once() {
     // #1175: `model` named, or the run refuses before the warning can fire.
     let toml = format!("provider = \"nosuch\"\nbase_url = \"{DEAD_URL}\"\nmodel = \"m\"\n");
-    let err = run(&["-p", "hi"], Some(&toml));
+    // #1179: a project file's base_url is used only in a trusted run.
+    let err = run(&["--trust-project", "-p", "hi"], Some(&toml));
     assert_eq!(count(&err), 1, "stderr: {err}");
     assert!(err.contains("'nosuch'"), "{err}");
 }

@@ -247,6 +247,29 @@ it, with a different default per kind of program:
   [#1064](https://github.com/yologdev/yoyo-evolve/issues/1064)).
 - `GITHUB_TOKEN` and `GH_TOKEN` are always kept, so `gh` still works.
 
+## A repository cannot choose where your API key goes
+
+`base_url` decides which host receives your API key. A `.yoyo.toml` in the
+directory you launch yoyo from comes with the repository, so its `base_url`
+is a trust grant, like its MCP servers, `permissions.allow`, hooks and
+`notify_command` (see [Permissions](../configuration/permissions.md)).
+Without `--trust-project`, `--trust-project-always`, a remembered trusted
+directory or a yes at the trust prompt:
+
+- for a provider with an endpoint of its own (`anthropic`, `openai`,
+  `ollama`, ...), the project's `base_url` is not used: yoyo prints a warning
+  naming the file and the URL and talks to that provider's own endpoint;
+- for `--provider custom` or a provider name yoyo does not know, there is no
+  endpoint of its own to fall back to, so yoyo stops with exit 2 and
+  "Nothing was sent".
+
+To use the project's URL, re-run with `--trust-project`, or pass
+`--base-url <url>` yourself. A `base_url` in your user-level config
+(`~/.config/yoyo/config.toml`) is used as before when no project
+`.yoyo.toml` is present; a project `.yoyo.toml` replaces the user-level
+file entirely, so inside such a repository use the flag. `yoyo review`
+applies the same rule.
+
 ## What happens in practice
 
 A typical evolution session:

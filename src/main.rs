@@ -190,6 +190,7 @@ mod hooks;
 #[cfg(test)]
 mod main_tests;
 mod memory;
+mod project_base_url;
 mod prompt;
 mod prompt_budget;
 mod prompt_retry;

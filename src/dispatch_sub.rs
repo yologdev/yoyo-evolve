@@ -1171,8 +1171,10 @@ fn run_review_subcommand(args: &[String], review: &crate::verb_flags::ReviewArgs
         }
     };
 
+    // #1179: a project file's URL needs trust; review runs before parse_args decides it.
+    let trusted = crate::project_base_url::early_door_trusted(args);
     let base_url =
-        flag_value(args, &["--base-url"]).or_else(|| file_config.get("base_url").cloned());
+        crate::project_base_url::resolve_base_url(args, &file_config, &provider, trusted);
 
     let agent_config = crate::agent_builder::AgentConfig {
         model,

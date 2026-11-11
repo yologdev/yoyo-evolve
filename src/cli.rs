@@ -1133,9 +1133,9 @@ fn parse_model_config(
         .unwrap_or_else(|| "anthropic".into())
         .to_lowercase();
 
-    // Parse --base-url flag (CLI > config file)
+    // --base-url flag > config file; a project file's URL needs trust (#1179)
     let base_url =
-        flag_value(args, &["--base-url"]).or_else(|| file_config.get("base_url").cloned());
+        crate::project_base_url::resolve_base_url(args, file_config, &provider, is_trust_project());
 
     // #1103: an unknown provider with no base URL is a typo, not a choice; refuse
     // before any network call instead of sending the fallback key to localhost:8080.

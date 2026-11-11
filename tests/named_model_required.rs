@@ -101,7 +101,9 @@ fn unknown_provider_with_no_model_refuses_and_sends_nothing() {
 fn custom_from_config_file_with_no_model_refuses() {
     let (l, url) = quiet_server();
     let toml = format!("provider = \"custom\"\nbase_url = \"{url}\"\n");
-    let (code, err) = run(&["-p", "hi"], Some(&toml));
+    // #1179: a project file's base_url is used only in a trusted run; without
+    // the flag the base_url gate refuses first (tests/project_base_url_trust.rs).
+    let (code, err) = run(&["--trust-project", "-p", "hi"], Some(&toml));
     assert_refused(code, &err, "custom", &url, &l);
 }
 
@@ -131,7 +133,7 @@ fn printed_remedy_appended_to_the_same_argv_proceeds_on_that_model() {
 #[test]
 fn config_file_model_satisfies_the_requirement() {
     let toml = format!("provider = \"custom\"\nbase_url = \"{DEAD_URL}\"\nmodel = \"my-model\"\n");
-    let (_, err) = run(&["-p", "hi"], Some(&toml));
+    let (_, err) = run(&["--trust-project", "-p", "hi"], Some(&toml)); // #1179
     assert!(err.contains("model: my-model"), "{err}");
     assert!(!err.contains("needs a model name"), "{err}");
 }

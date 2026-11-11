@@ -508,6 +508,16 @@ command. The refusal names the command verbatim, in the shape it has in the file
   all project customizations.
 ```
 
+Since issue #1179, **a `base_url` declared by a project-local `.yoyo.toml` is not used
+either.** `base_url` is the host your API key is sent to, so a repository that set it could
+collect the key of everyone who ran yoyo in it. For a provider with an endpoint of its own
+(`anthropic`, `openai`, `ollama`, ...) yoyo warns and uses that endpoint instead; for
+`custom` or a provider name yoyo does not know, which has no endpoint of its own, yoyo stops
+with exit 2 before sending anything. Either way the message names the file and the URL.
+`--base-url` on the command line and `base_url` in your user-level config are yours and are
+used as before (but note that a project `.yoyo.toml` shadows your user-level file entirely,
+so inside such a repository use `--base-url` or `--trust-project`).
+
 To opt in for that run:
 
 ```bash
