@@ -413,6 +413,49 @@ pub fn unknown_provider_refusal(provider: &str, base_url_given: bool) -> Option<
     Some(msg)
 }
 
+/// #1175: true when `provider` is a user-run OpenAI-compatible server whose
+/// models yoyo cannot know: `custom`, or any name outside [`KNOWN_PROVIDERS`]
+/// (which `unknown_provider_refusal` lets through only with a base URL). For
+/// these, `default_model_for_provider` has no honest answer (its `_` arm is an
+/// Anthropic id), so a run with no model named refuses instead of guessing.
+/// `ollama` is not here: its default `llama3.2` is a model ollama serves.
+pub fn provider_requires_named_model(provider: &str) -> bool {
+    provider == "custom" || !KNOWN_PROVIDERS.contains(&provider)
+}
+
+/// Where `custom` (and an unknown provider) send requests with no base URL:
+/// a copy of `create_model_config`'s fallback in agent_builder.rs, pinned to
+/// it by `named_model_refusal_default_url_is_create_model_configs`.
+const LOCAL_SERVER_DEFAULT_URL: &str = "http://localhost:8080/v1";
+
+/// #1175: `Some(refusal)` when `provider` [requires a named
+/// model](provider_requires_named_model) and `model` (the `--model` flag or
+/// config `model`, already trimmed; `None` when neither names one) is absent.
+/// `base_url` is the user's; the listing hint is `<base_url>/models`, the
+/// OpenAI-compatible model list, so the user can see which ids their server has.
+pub fn named_model_required_refusal(
+    provider: &str,
+    model: Option<&str>,
+    base_url: Option<&str>,
+) -> Option<String> {
+    if model.is_some() || !provider_requires_named_model(provider) {
+        return None;
+    }
+    let shown = crate::cli::sanitize_for_display(provider);
+    let url = base_url
+        .map(str::trim)
+        .filter(|u| !u.is_empty())
+        .unwrap_or(LOCAL_SERVER_DEFAULT_URL)
+        .trim_end_matches('/');
+    let url = crate::cli::sanitize_for_display(url);
+    Some(format!(
+        "provider '{shown}' needs a model name: yoyo cannot know which models your \
+server at {url} serves, so it does not guess one\n\
+name the model with: --model <id>   (or model = \"<id>\" in .yoyo.toml)\n\
+to list the ids your server serves: curl {url}/models"
+    ))
+}
+
 /// #1166: GitHub retired GitHub Models on 2026-07-30, and every path on
 /// models.github.ai now answers `200 text/plain "OK"`, which surfaced as an
 /// opaque `Invalid header value: "text/plain"`. So `github` with no base URL
@@ -1103,3 +1146,117 @@ mod providers_key_tests;
 #[cfg(test)]
 #[path = "openrouter_preset_tests.rs"]
 mod openrouter_preset_tests;
+
+/// #1175: `custom` / unknown providers refuse when no model is named.
+#[cfg(test)]
+mod named_model_tests {
+    use super::*;
+
+    #[test]
+    fn requires_named_model_only_for_user_run_servers_with_no_honest_default() {
+        let rows: &[(&str, bool)] = &[
+            ("custom", true),
+            ("nosuch", true),
+            ("my-vllm", true),
+            // ollama's default (llama3.2) is a model ollama serves.
+            ("ollama", false),
+            ("openai", false),
+            ("anthropic", false),
+            ("openrouter", false),
+            ("bedrock", false),
+        ];
+        for (p, want) in rows {
+            assert_eq!(provider_requires_named_model(p), *want, "{p}");
+        }
+        // Every known provider except custom has a default that names a
+        // model the provider serves.
+        for p in KNOWN_PROVIDERS.iter().filter(|p| **p != "custom") {
+            assert!(!provider_requires_named_model(p), "{p}");
+        }
+    }
+
+    #[test]
+    fn refusal_full_text_names_provider_and_the_users_base_url() {
+        let msg = named_model_required_refusal("custom", None, Some("http://127.0.0.1:9/v1/"))
+            .expect("custom with no model refuses");
+        assert_eq!(
+            msg,
+            "provider 'custom' needs a model name: yoyo cannot know which models your \
+server at http://127.0.0.1:9/v1 serves, so it does not guess one\n\
+name the model with: --model <id>   (or model = \"<id>\" in .yoyo.toml)\n\
+to list the ids your server serves: curl http://127.0.0.1:9/v1/models"
+        );
+        let unknown = named_model_required_refusal("nosuch", None, Some("http://h:1"))
+            .expect("unknown provider with no model refuses");
+        assert!(
+            unknown.starts_with("provider 'nosuch' needs a model name"),
+            "{unknown}"
+        );
+        assert!(unknown.ends_with("curl http://h:1/models"), "{unknown}");
+    }
+
+    #[test]
+    fn a_named_model_or_a_provider_with_a_real_default_never_refuses() {
+        assert_eq!(
+            named_model_required_refusal("custom", Some("qwen3"), None),
+            None
+        );
+        assert_eq!(
+            named_model_required_refusal("nosuch", Some("m"), Some("http://h")),
+            None
+        );
+        assert_eq!(named_model_required_refusal("ollama", None, None), None);
+        assert_eq!(named_model_required_refusal("anthropic", None, None), None);
+    }
+
+    #[test]
+    fn named_model_refusal_default_url_is_create_model_configs() {
+        // With no base URL the hint names where the run would have gone: the
+        // same fallback `create_model_config` uses for custom and unknown.
+        for p in ["custom", "nosuch"] {
+            let cfg = crate::agent_builder::create_model_config(p, "m", None);
+            assert_eq!(cfg.base_url, LOCAL_SERVER_DEFAULT_URL, "{p}");
+        }
+        let msg = named_model_required_refusal("custom", None, Some("  ")).unwrap();
+        assert!(
+            msg.contains("curl http://localhost:8080/v1/models"),
+            "{msg}"
+        );
+    }
+
+    /// The remedy round-trips: the motivating #1175 argv plus the printed
+    /// `--model <id>` puts the id in the model slot (and nowhere else), and
+    /// the refusal then lets the run through.
+    #[test]
+    fn printed_model_remedy_round_trips_through_the_parser() {
+        let mut argv: Vec<String> = [
+            "yoyo", // argv[0]: flag lookups start at 1
+            "--provider",
+            "custom",
+            "--base-url",
+            "http://127.0.0.1:9",
+            "-p",
+            "hi",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert_eq!(crate::dispatch_sub::flag_value(&argv, &["--model"]), None);
+        argv.extend(["--model".to_string(), "my-model".to_string()]);
+        let model = crate::dispatch_sub::flag_value(&argv, &["--model"]);
+        assert_eq!(model.as_deref(), Some("my-model"));
+        // The other words keep their slots.
+        assert_eq!(
+            crate::dispatch_sub::flag_value(&argv, &["--provider"]).as_deref(),
+            Some("custom")
+        );
+        assert_eq!(
+            crate::dispatch_sub::flag_value(&argv, &["-p"]).as_deref(),
+            Some("hi")
+        );
+        assert_eq!(
+            named_model_required_refusal("custom", model.as_deref(), Some("http://127.0.0.1:9")),
+            None
+        );
+    }
+}

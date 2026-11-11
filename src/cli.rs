@@ -1213,11 +1213,21 @@ fn parse_model_config(
         crate::prompt_retry::set_key_source(key_source);
     }
 
-    let model = flag_value(args, &["--model"])
+    let named_model = flag_value(args, &["--model"])
         .or_else(|| file_config.get("model").cloned())
         .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| default_model_for_provider(&provider));
+        .filter(|s| !s.is_empty());
+    // #1175: a user-run server's models are the user's to name, not ours to guess.
+    let refusal = crate::providers::named_model_required_refusal(
+        &provider,
+        named_model.as_deref(),
+        base_url.as_deref(),
+    );
+    if let Some(msg) = refusal {
+        eprintln!("{RED}error:{RESET} {msg}");
+        std::process::exit(2);
+    }
+    let model = named_model.unwrap_or_else(|| default_model_for_provider(&provider));
 
     // Warn if model isn't known for this provider. The check goes through
     // `providers::model_is_known_for_provider` — the same resolution rule the

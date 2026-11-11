@@ -44,7 +44,13 @@ Use `--provider <name>` to select a provider. Each provider has a default model 
 | `cerebras` | `llama-3.3-70b` | `CEREBRAS_API_KEY` |
 | `zai` | `glm-5.3` | `ZAI_API_KEY` |
 | `minimax` | `MiniMax-M2.7` | `MINIMAX_API_KEY` |
-| `custom` | `claude-opus-5-5` | *(none — bring your own)* |
+| `custom` | *(none — `--model` required)* | *(none — bring your own)* |
+
+> **`custom` and unknown providers need a model:** yoyo can't know which
+> models your own OpenAI-compatible server serves, so `--provider custom`
+> (or an unknown provider name with `--base-url`) and no `--model` / `model =`
+> stops with exit 2 before sending anything. `curl <base_url>/models` lists
+> the ids your server has. (Before #1175 it silently sent `claude-opus-5-5`.)
 
 > **Note:** the table shows each provider's *default* model — others are
 > available. For example, MiniMax's flagship `MiniMax-M3` can be selected via
