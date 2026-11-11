@@ -204,7 +204,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 249 (#1122): +4, the openrouter arm's second lookup (yoagent routed presets).
     // Day 250 (#1026): +3, `incomplete: None` in three existing PromptOutcome test literals.
     // Day 251 (#1145): 4984 -> 4980, temperature wiring moved to src/temperature_support.rs.
-    ("src/agent_builder.rs", 4997), // Day 254: #1168 — google_limits_beyond_preset and its run-path/ceiling readers deleted (yoagent 0.27.7 presets cover every Gemini id): 5011 -> 4997; the register had been 34 behind HEAD inside the grace band. Day 251: #1144 — anthropic_output_maximum reads yoagent 0.27.2 max_output first.
+    ("src/agent_builder.rs", 5009), // Day 256: #1176 — unknown-provider warning once per (provider, url) via WARNED_UNKNOWN_PROVIDERS: 4997 -> 5009. Day 254: #1168 — google_limits_beyond_preset and its run-path/ceiling readers deleted (yoagent 0.27.7 presets cover every Gemini id): 5011 -> 4997; the register had been 34 behind HEAD inside the grace band. Day 251: #1144 — anthropic_output_maximum reads yoagent 0.27.2 max_output first.
     // Day 164 (#728): +98 lines — `/skill install`'s destination becomes a third
     // auto-discovery source, so an explicitly installed skill actually loads.
     // The two near-identical per-directory blocks were collapsed into one loop

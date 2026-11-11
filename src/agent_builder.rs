@@ -1140,16 +1140,24 @@ pub fn create_model_config(provider: &str, model: &str, base_url: Option<&str>) 
         }
         _ => {
             // Unknown provider — treat as OpenAI-compatible with custom base URL.
-            // Note: parse_args and /provider already warn about unknown names,
-            // but log here too as defense-in-depth for any future call sites.
+            // This is the only place that says so: parse_args refuses an unknown
+            // name only without a URL (#1103) and /provider refuses it outright,
+            // so the flag and .yoyo.toml doors reach only this line. It runs on
+            // every config build (5 per `-p hi`), hence once per pair (#1176).
             let url = base_url.unwrap_or("http://localhost:8080/v1");
-            eprintln!(
-                "{}warning:{} treating unknown provider '{}' as OpenAI-compatible ({})",
-                crate::format::YELLOW,
-                crate::format::RESET,
+            if crate::model_limits_note::first_unknown_limits_warning(
+                &WARNED_UNKNOWN_PROVIDERS,
                 provider,
-                url
-            );
+                url,
+            ) {
+                eprintln!(
+                    "{}warning:{} treating unknown provider '{}' as OpenAI-compatible ({})",
+                    crate::format::YELLOW,
+                    crate::format::RESET,
+                    provider,
+                    url
+                );
+            }
             let mut config = ModelConfig::local(url, model);
             config.provider = provider.to_string();
             config
@@ -1158,6 +1166,10 @@ pub fn create_model_config(provider: &str, model: &str, base_url: Option<&str>) 
     insert_client_headers(&mut config);
     config
 }
+
+/// `(provider, base_url)` pairs already warned about as unknown providers (#1176).
+static WARNED_UNKNOWN_PROVIDERS: std::sync::Mutex<Vec<(String, String)>> =
+    std::sync::Mutex::new(Vec::new());
 
 /// Factual grounding so the model doesn't confabulate a vendor identity when
 /// asked what it is. A model with no such context answers from training priors
