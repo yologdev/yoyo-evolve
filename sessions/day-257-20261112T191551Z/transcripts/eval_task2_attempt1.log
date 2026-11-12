@@ -1,0 +1,24 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || true; grep -n "pub f… ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 576,600… (8 lines) ✓ (9ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 15.2s (2 ✓)
+
+Verdict: PASS. I've written it to session_plan/eval_task_2.md. I judged this from the diff and the surrounding code. I didn't run the binary: the new tests call the handler directly, and the build and tests had already passed.
+
+• The fix: handle_provider_switch now calls provider_switch_refusal after the existing refusals for unknown and retired providers. That call comes before the model is overwritten. So /provider custom, and /provider github when the session already has a base URL, print a refusal and leave the provider, model and agent unchanged.
+• Message: the new function reuses the first and last lines of providers::named_model_required_refusal rather than rewriting them. /provider takes no model argument, so the remedy points to the startup routes (yoyo --provider custom --model <id>, or the keys in .yoyo.toml) and doesn't invent REPL syntax.
+• `github`: without a base URL it is still refused earlier by the #1166 check, and nothing changes. With a base URL it reaches the new refusal.
+• Tests:
+  • The census of providers that need a named model is built from KNOWN_PROVIDERS plus RETIRED_PROVIDERS, so a provider added later is covered.
+  • The full refusal text for custom is checked both with and without a base URL.
+  • Providers that don't need a named model (such as openai) still switch and get their default.
+  • The remedy command is split by a real shell and fed back through parse_args_with_config, and the provider, model and base URL land where intended.
+• Nothing left dangling: the new function is used by the handler and the tests. The test file is wired in through #[path], and no enums or names changed. The only #1183 references left are code and test comments, none of them user-facing.
+• Docs: docs/src/usage/commands.md and the /provider help in help_data.rs are both updated. The help's provider list now says custom instead of local, which isn't a provider name.
+• Product safety: this is a product-kind task, and it only refuses a switch that used to send the wrong default model to the user's own server. No config defaults or flags changed.
+  watch: no files changed this turn — skipping

@@ -1,0 +1,124 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | head && gre…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn provider_requires_na… ✓ (8ms)
+ ✓ (20ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 1183 --json title,… ✓ (386ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "handle_provider_switch… ✓ (16ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 750,780p src/dispatch.rs;… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn shell_quote\|fn sh_… ✓ (21ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn parse_args\b\|pu… ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1200,1240p src/cli.rs; gr… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,60p src/cli_flag_slot_t… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^\[dependencies\]" -A40… ✓ (16ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 530,541p src/commands.rs;… ✓ (9ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  11 tools completed in 59.5s (11 ✓)
+
+Now the code change.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands.rs (4 → 8 lines)
+  +         eprintln!("{RED}  {}{RESET}\n", msg.replace('\n', "\n  "));
+  +         return;
+  +     }
+  +     if let Some(msg) = provider_switch_refusal(new_provider, agent_config) {
+            eprintln!("{RED}  {}{RESET}\n", msg.replace('\n', "\n  "));
+            return;
+        }
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands.rs (1 → 32 lines)
+  + /// #1183: `/provider` takes no model, so a provider that needs a named model
+  + /// (#1175: `custom`, or `github` with a base URL) is refused here with
+  + /// startup's reason and listing hint, a remedy in startup terms, and nothing
+  + /// changed. `None` means the switch may go ahead.
+  + pub(crate) fn provider_switch_refusal(new: &str, cfg: &crate::AgentConfig) -> Option<String> {
+  +     let url = cfg.base_url.as_deref().map(str::trim);
+  +     let url = url.filter(|u| !u.is_empty());
+  +     let msg = crate::providers::named_model_required_refusal(new, None, url)?;
+  +     let (first, last) = (msg.lines().next()?, msg.lines().last()?);
+  +     let word = |s: &str| {
+  +         let s = crate::cli::sanitize_for_display(s);
+  +         let bare = |c: char| c.is_ascii_alphanumeric() || "-_./:@%+=,".contains(c);
+  +         match s.chars().all(bare) && !s.is_empty() {
+  +             true => s,
+  +             false => format!("'{}'", s.replace('\'', r"'\''")),
+  +         }
+  +     };
+  +     let flag = url.map(|u| format!(" --base-url {}", word(u)));
+  +     let (show_p, show_m) = (&cfg.provider, &cfg.model);
+  +     let (show_p, show_m) = (show_p.as_str(), show_m.as_str());
+  ... (12 more lines)
+ ✓ (18.6s)
+  +         eprintln!("{RED}  {}{RESET}\n", msg.replace('\n', "\n  "));
+  +         return;
+  +     }
+  +     if let Some(msg) = provider_switch_refusal(new_provider, agent_config) {
+            eprintln!("{RED}  {}{RESET}\n", msg.replace('\n', "\n  "));
+            return;
+        }
+ ✓ (5m 29s)
+  + /// #1183: `/provider` takes no model, so a provider that needs a named model
+  + /// (#1175: `custom`, or `github` with a base URL) is refused here with
+  + /// startup's reason and listing hint, a remedy in startup terms, and nothing
+  + /// changed. `None` means the switch may go ahead.
+  + pub(crate) fn provider_switch_refusal(new: &str, cfg: &crate::AgentConfig) -> Option<String> {
+  +     let url = cfg.base_url.as_deref().map(str::trim);
+  +     let url = url.filter(|u| !u.is_empty());
+  +     let msg = crate::providers::named_model_required_refusal(new, None, url)?;
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/commands.rs (4 → 3 lines)
+  -     let (show_p, show_m) = (&cfg.provider, &cfg.model);
+  -     let (show_p, show_m) = (show_p.as_str(), show_m.as_str());
+  -     let (sp, sm) = (crate::cli::sanitize_for_display(show_p), crate::cli::sanitize_for_display(show_m));
+  +     let sp = crate::cli::sanitize_for_display(&cfg.provider);
+  +     let sm = crate::cli::sanitize_for_display(&cfg.model);
+        let keys
+ ✓ (5m 1s)
+  -     let (show_p, show_m) = (&cfg.provider, &cfg.model);
+  -     let (show_p, show_m) = (show_p.as_str(), show_m.as_str());
+  -     let (sp, sm) = (crate::cli::sanitize_for_display(show_p), crate::cli::sanitize_for_display(show_m));
+  +     let sp = crate::cli::sanitize_for_display(&cfg.provider);
+  +     let sm = crate::cli::sanitize_for_display(&cfg.model);
+        let keys
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub fn sanitize_for_dis… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn sanitize_for_displa… ✓ (11ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 10m 38s (5 ✓)
+
+Now the test file and its include.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (7 lines) ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn .*agent_config.*() … ✓ (15ms)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/src/provider_switch_tests.rs (140 lines) ✓ (5m 9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test --bin yo… ✓ (37.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i '/std::env::set_var("API_… ✓ (34.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn printed_model_remed… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (8 lines) ✓ (36.8s)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 7m 39s (7 ✓)
+
+Positive control, one atomic mutate→run→restore:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/commands.rs /tmp/c.rs && … ✓ (31.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control fired by name (before-fix: /provider custom switched), and restored. Now the help text, which says /provider always resets to a default:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1090,1105p src/help_data.… ✓ (8ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (22 lines) ✓ (32ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (5m 13s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test…
+  (interrupted)
+
