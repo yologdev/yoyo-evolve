@@ -96,6 +96,9 @@ pub(crate) enum UnknownKey {
         header: bool,
         spelling: String,
         fence: bool,
+        /// For an inline table at a table name (#1180), the same table in
+        /// the header form yoyo reads, built from the user's own line.
+        rewrite: Option<String>,
     },
     /// A section no parser reads, with the keys under it that nothing reads
     /// either (a top-level name under it is still read: the map is flat).
@@ -166,13 +169,7 @@ fn spelling_yoyo_reads(parts: &[String]) -> Option<(String, bool)> {
     if !TABLE_STEMS.contains(&stem) {
         return None;
     }
-    let part = |p: &String| {
-        if toml_key_segments(p).is_some_and(|s| s.len() == 1 && &s[0] == p) {
-            p.clone()
-        } else {
-            format!("\"{}\"", p.replace('\\', "\\\\").replace('"', "\\\""))
-        }
-    };
+    let part = |p: &String| toml_key_part(p);
     Some(match (stem, parts) {
         ("permissions" | "directories", [.., k]) if k == "allow" || k == "deny" => {
             (format!("`[{stem}]` then `{k} = [...]`"), true)
@@ -191,6 +188,107 @@ fn spelling_yoyo_reads(parts: &[String]) -> Option<(String, bool)> {
         ("model_pricing", _) => (format!("`[{stem}.<id>]` then `input = ...`"), false),
         _ => return None,
     })
+}
+
+/// One TOML key part as written in a header: bare when it can be, else quoted.
+fn toml_key_part(p: &str) -> String {
+    if toml_key_segments(p).is_some_and(|s| s.len() == 1 && s[0] == p) {
+        p.to_string()
+    } else {
+        format!("\"{}\"", p.replace('\\', "\\\\").replace('"', "\\\""))
+    }
+}
+
+/// Byte offsets in `text` of each `stop` char outside quotes, `[]` and `{}`
+/// (`None` if a quote or bracket is left open).
+fn top_level_positions(text: &str, stop: char) -> Option<Vec<usize>> {
+    let (mut depth, mut quote, mut escaped) = (0i32, None::<char>, false);
+    let mut out = Vec::new();
+    for (i, c) in text.char_indices() {
+        match quote {
+            Some('"') if escaped => escaped = false,
+            Some('"') if c == '\\' => escaped = true,
+            Some(q) if c == q => quote = None,
+            Some(_) => {}
+            None => match c {
+                '"' | '\'' => quote = Some(c),
+                '[' | '{' => depth += 1,
+                ']' | '}' => depth -= 1,
+                _ if c == stop && depth == 0 => out.push(i),
+                _ => {}
+            },
+        }
+    }
+    (quote.is_none() && depth == 0).then_some(out)
+}
+
+/// The inside of `value` when the whole value is one inline table closed on
+/// this line (`{ ... }`, a trailing comment allowed).
+fn inline_table_inner(value: &str) -> Option<&str> {
+    let inner = value.strip_prefix('{')?;
+    // The closing brace is the first top-level `}` once the `{` is counted.
+    let (mut depth, mut quote, mut escaped) = (1i32, None::<char>, false);
+    for (i, c) in inner.char_indices() {
+        match quote {
+            Some('"') if escaped => escaped = false,
+            Some('"') if c == '\\' => escaped = true,
+            Some(q) if c == q => quote = None,
+            Some(_) => {}
+            None => match c {
+                '"' | '\'' => quote = Some(c),
+                '[' | '{' => depth += 1,
+                ']' | '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        let rest = inner[i + 1..].trim();
+                        return (rest.is_empty() || rest.starts_with('#')).then_some(&inner[..i]);
+                    }
+                }
+                _ => {}
+            },
+        }
+    }
+    None
+}
+
+/// The inline table `value` set at `path`, rewritten in the header form
+/// yoyo's readers read (`[path]` then one key per line, sub-tables after),
+/// keeping the user's own keys and values. `None` if it is not one inline
+/// table on one line, so the warning falls back to naming the spelling.
+fn inline_table_rewrite(path: &[String], value: &str) -> Option<String> {
+    fn table(path: &[String], value: &str, out: &mut Vec<String>) -> Option<()> {
+        let inner = inline_table_inner(value)?;
+        let (mut keys, mut subs) = (Vec::new(), Vec::new());
+        let mut start = 0;
+        let commas = top_level_positions(inner, ',')?;
+        for end in commas.into_iter().chain([inner.len()]) {
+            let pair = inner[start..end].trim();
+            start = (end + 1).min(inner.len());
+            if pair.is_empty() {
+                continue;
+            }
+            let eq = *top_level_positions(pair, '=')?.first()?;
+            let (k, v) = (pair[..eq].trim(), pair[eq + 1..].trim());
+            let segs = toml_key_segments(k)?;
+            if v.starts_with('{') {
+                subs.push((path.iter().cloned().chain(segs).collect::<Vec<_>>(), v));
+            } else {
+                keys.push(format!("{k} = {v}"));
+            }
+        }
+        if !keys.is_empty() {
+            let header: Vec<String> = path.iter().map(|p| toml_key_part(p)).collect();
+            out.push(format!("[{}]", header.join(".")));
+            out.append(&mut keys);
+        }
+        for (p, v) in subs {
+            table(&p, v, out)?;
+        }
+        Some(())
+    }
+    let mut out = Vec::new();
+    table(path, value, &mut out)?;
+    (!out.is_empty()).then(|| out.join("\n"))
 }
 
 /// Net `[` minus `]` outside quoted strings on `text`, used to skip the
@@ -394,6 +492,7 @@ pub(crate) fn unknown_config_keys(contents: &str) -> Vec<UnknownKey> {
                             header: true,
                             spelling,
                             fence,
+                            rewrite: None,
                         },
                         None => UnknownKey::Section {
                             line: idx + 1,
@@ -418,7 +517,8 @@ pub(crate) fn unknown_config_keys(contents: &str) -> Vec<UnknownKey> {
             .find(|d| value.starts_with(d) && !value[d.len()..].contains(d))
         {
             open_multiline = Some(delim);
-        } else if value.starts_with('[') {
+        } else if value.starts_with('[') || value.starts_with('{') {
+            // An inline table may hold a multi-line array too (#1180).
             array_depth = bracket_balance(value).max(0);
         }
         let name = config_key_name(key);
@@ -427,6 +527,25 @@ pub(crate) fn unknown_config_keys(contents: &str) -> Vec<UnknownKey> {
         }
         // The whole TOML path this line sets, when it is a TOML key.
         let segs = toml_key_segments(key);
+        // An inline table at one of yoyo's table names (#1180): valid TOML
+        // the readers never see, so name it, and for a fence say it is off.
+        let inline = section.is_none() && value.starts_with('{');
+        if let Some(path) = segs.as_ref().filter(|_| inline) {
+            if let Some((spelling, fence)) = spelling_yoyo_reads(path) {
+                let shown: Vec<String> = path.iter().map(|p| toml_key_part(p)).collect();
+                out.push(UnknownKey::Unread {
+                    line: idx + 1,
+                    written: format!("{key} = {{ ... }}"),
+                    path: shown.join("."),
+                    keys: Vec::new(),
+                    header: false,
+                    spelling,
+                    fence,
+                    rewrite: inline_table_rewrite(path, value),
+                });
+                continue;
+            }
+        }
         if let Some(segs) = segs.as_ref().filter(|s| s.len() > 1) {
             let here = section
                 .as_ref()
@@ -449,6 +568,7 @@ pub(crate) fn unknown_config_keys(contents: &str) -> Vec<UnknownKey> {
                     header: false,
                     spelling,
                     fence,
+                    rewrite: None,
                 });
                 continue;
             }
@@ -522,6 +642,7 @@ pub(crate) fn unknown_config_key_warnings(shown: &str, findings: &[UnknownKey]) 
                 header,
                 spelling,
                 fence,
+                rewrite,
             } => {
                 let fence = if *fence {
                     " This rule is NOT in force."
@@ -533,7 +654,11 @@ pub(crate) fn unknown_config_key_warnings(shown: &str, findings: &[UnknownKey]) 
                 } else {
                     format!("does not read that spelling of `{path}`, so it has no effect")
                 };
-                format!("{shown} line {line}: `{written}` is valid TOML, but yoyo {what}.{fence} yoyo reads {spelling}.")
+                let rewrite = match rewrite {
+                    Some(r) => format!(" Write it as:\n    {}", r.replace('\n', "\n    ")),
+                    None => String::new(),
+                };
+                format!("{shown} line {line}: `{written}` is valid TOML, but yoyo {what}.{fence} yoyo reads {spelling}.{rewrite}")
             }
             UnknownKey::Section {
                 line,
@@ -980,10 +1105,15 @@ mod tests {
     /// spelled with names yoyo uses, so no warning may say "did you mean".
     /// Slots varied: whitespace inside brackets, header comment, quoted and
     /// dotted headers, array tables, quoted keys, dotted keys (top level and in a table),
-    /// whitespace around `=` and around the key. Held constant: the value is
-    /// always a one-line string or array (config_value.rs varies that slot),
-    /// keys and headers are ASCII, no key contains `=`, and no table is
-    /// declared twice.
+    /// whitespace around `=` and around the key, and (#1180) the key x value
+    /// pair neither corpus had: a table name (bare, quoted, dotted) holding an
+    /// inline table, nested, with quoted inner keys, a comma inside a string,
+    /// a trailing comment and an array spanning lines. Held constant: outside
+    /// those rows the value is a one-line string or array (config_value.rs
+    /// varies values, but only under the key `k`, so it says nothing about a
+    /// value at a name yoyo reads); an inline table never sits under a header
+    /// (`[mcp_servers]` then `fs = { ... }`: not covered, #1182); keys and
+    /// headers are ASCII; no key contains `=`; no table is declared twice.
     const SHAPE_CORPUS: &[&str] = &[
         "[directories]\ndeny = [\"/etc\"]",
         "[ directories ]\ndeny = [\"/etc\"]",
@@ -1022,6 +1152,19 @@ mod tests {
         "[ model_pricing.\"gpt-4.1\" ]\ninput = 1.0\noutput = 2.0",
         "[model_pricing.'m']\n\"input\" = 1.0\n\"output\" = 2.0",
         "model_pricing.m.input = 1.0\nmodel_pricing.m.output = 2.0",
+        // #1180: a table-name key x an inline-table value.
+        "directories = { deny = [\"/etc\"] }",
+        "directories = { \"deny\" = [\"/etc\"] }",
+        "directories={allow=[\"/w\"],deny=[\"/etc\"]} # c",
+        "\"directories\" = { deny = [\"/etc\"] }",
+        "directories = { deny = [\n  \"/etc\",\n] }",
+        "permissions = { deny = [\"rm *\"] }",
+        "permissions = { allow = [\"git *\"], 'deny' = [\"rm, *\"] }",
+        "mcp_servers = { fs = { command = \"npx\" } }",
+        "mcp_servers = { \"my server\" = { command = \"npx\", args = [\"-y\"] } }",
+        "mcp_servers.fs = { command = \"npx\" }",
+        "model_pricing = { m = { input = 1.0, output = 2.0 } }",
+        "model_pricing.m = { input = 1.0, output = 2.0 }",
     ];
 
     /// What tomllib reads for each document, projected onto the things
@@ -1172,6 +1315,89 @@ print(json.dumps(res))
             disagree.join("\n")
         );
         // Refusal is the escape hatch: pin it so widening it is a decision.
-        assert_eq!(refused, 3, "refused rows changed");
+        // 3 header/key spellings (#1178) + 12 inline tables at a table name (#1180).
+        assert_eq!(refused, 15, "refused rows changed");
+    }
+
+    /// #1180: the rewrite an inline-table refusal prints is a command the
+    /// user will paste, so it is run: put it in place of their line, read it
+    /// with yoyo's readers, and it must build exactly what tomllib reads from
+    /// the line they wrote, with no warning left.
+    #[test]
+    fn every_inline_table_rewrite_builds_what_tomllib_reads() {
+        let rows: Vec<&str> = SHAPE_CORPUS
+            .iter()
+            .copied()
+            .filter(|d| {
+                d.split_once('=')
+                    .is_some_and(|(_, v)| v.trim().starts_with('{'))
+            })
+            .collect();
+        assert_eq!(rows.len(), 12, "the #1180 rows");
+        let wanted = shape_oracle(&rows);
+        let mut rewritten = 0;
+        for (doc, want) in rows.iter().zip(&wanted) {
+            let findings = unknown_config_keys(doc);
+            let [UnknownKey::Unread { line, rewrite, .. }] = findings.as_slice() else {
+                panic!("{doc:?}: expected one Unread finding, got {findings:?}");
+            };
+            let Some(rewrite) = rewrite else {
+                // Only the inline table that spans lines gets no rewrite.
+                assert!(
+                    doc.contains('\n'),
+                    "{doc:?}: one-line inline table, no rewrite"
+                );
+                continue;
+            };
+            let warning = unknown_config_key_warnings(".yoyo.toml", &findings).join("\n");
+            assert!(
+                warning.contains(&format!(
+                    "Write it as:\n    {}",
+                    rewrite.replace('\n', "\n    ")
+                )),
+                "{doc:?}: the warning does not print the rewrite: {warning}"
+            );
+            let mut lines: Vec<&str> = doc.lines().collect();
+            lines[line - 1] = rewrite;
+            let fixed = lines.join("\n");
+            assert_eq!(
+                &yoyo_view(&fixed, want),
+                want,
+                "{doc:?}: its rewrite {fixed:?} does not build what tomllib reads"
+            );
+            assert!(
+                unknown_config_keys(&fixed).is_empty(),
+                "{doc:?}: its rewrite {fixed:?} is warned about itself"
+            );
+            rewritten += 1;
+        }
+        assert_eq!(rewritten, 11, "rows with a rewrite");
+    }
+
+    #[test]
+    fn an_inline_directories_table_is_a_fence_not_in_force_never_an_unknown_key() {
+        let w = unknown_config_key_warnings(
+            ".yoyo.toml",
+            &unknown_config_keys("directories = { deny = [\"/etc\"] }"),
+        );
+        assert_eq!(
+            w,
+            vec![
+                ".yoyo.toml line 1: `directories = { ... }` is valid TOML, but yoyo does not \
+                  read that spelling of `directories`, so it has no effect. This rule is NOT in \
+                  force. yoyo reads `[directories]` then `allow = [...]` / `deny = [...]`. \
+                  Write it as:\n    [directories]\n    deny = [\"/etc\"]"
+                    .to_string()
+            ]
+        );
+        // Nested: each server becomes its own header, keys kept as written.
+        let f = unknown_config_keys(
+            "mcp_servers = { \"my server\" = { command = \"npx\", args = [\"-y\"] } }",
+        );
+        assert!(
+            matches!(f.as_slice(), [UnknownKey::Unread { fence: false, rewrite: Some(r), .. }]
+                if r == "[mcp_servers.\"my server\"]\ncommand = \"npx\"\nargs = [\"-y\"]"),
+            "{f:?}"
+        );
     }
 }

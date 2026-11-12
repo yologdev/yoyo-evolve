@@ -380,6 +380,8 @@ CLI flags override config file values:
 - If you pass any `--allow-dir` or `--deny-dir` flag, the entire `[directories]` section from the config file is ignored.
 - `--yes` / `-y` overrides everything — all tools are auto-approved regardless of permission patterns.
 
+Write these tables with a header (`[permissions]`, `[directories]`, then one key per line) or as dotted keys (`directories.deny = [...]`). An inline table such as `directories = { deny = ["/etc"] }` is valid TOML, but yoyo does not read it: the rule is **not in force**, and yoyo warns at startup with the header form of your own line to paste instead.
+
 Config file search order (first found wins):
 1. `.yoyo.toml` in the current directory
 2. `~/.yoyo.toml` in your home directory
