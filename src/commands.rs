@@ -539,6 +539,40 @@ pub fn thinking_level_name(level: ThinkingLevel) -> &'static str {
 
 // ── /model ───────────────────────────────────────────────────────────────
 
+/// #1183: `/provider` takes no model, so a provider that needs a named model
+/// (#1175: `custom`, or `github` with a base URL) is refused here with
+/// startup's reason and listing hint, a remedy in startup terms, and nothing
+/// changed. `None` means the switch may go ahead.
+pub(crate) fn provider_switch_refusal(new: &str, cfg: &crate::AgentConfig) -> Option<String> {
+    let url = cfg.base_url.as_deref().map(str::trim);
+    let url = url.filter(|u| !u.is_empty());
+    let msg = crate::providers::named_model_required_refusal(new, None, url)?;
+    let (first, last) = (msg.lines().next()?, msg.lines().last()?);
+    let word = |s: &str| {
+        let s = crate::cli::sanitize_for_display(s);
+        let bare = |c: char| c.is_ascii_alphanumeric() || "-_./:@%+=,".contains(c);
+        match s.chars().all(bare) && !s.is_empty() {
+            true => s,
+            false => format!("'{}'", s.replace('\'', r"'\''")),
+        }
+    };
+    let flag = url.map(|u| format!(" --base-url {}", word(u)));
+    let sp = crate::cli::sanitize_for_display(&cfg.provider);
+    let sm = crate::cli::sanitize_for_display(&cfg.model);
+    let keys = if url.is_some() {
+        ", model and base_url"
+    } else {
+        " and model"
+    };
+    Some(format!(
+        "{first}\nnothing was changed: still provider '{sp}', model '{sm}'\n\
+/provider takes no model name, so start yoyo with one:\n  \
+yoyo --provider {}{} --model <id>\n  (or set provider{keys} in .yoyo.toml)\n{last}",
+        word(new),
+        flag.unwrap_or_default()
+    ))
+}
+
 pub fn handle_provider_switch(
     new_provider: &str,
     agent_config: &mut crate::AgentConfig,
@@ -558,6 +592,10 @@ pub fn handle_provider_switch(
         .as_deref()
         .is_some_and(|u| !u.trim().is_empty());
     if let Some(msg) = crate::providers::unknown_provider_refusal(new_provider, url_given) {
+        eprintln!("{RED}  {}{RESET}\n", msg.replace('\n', "\n  "));
+        return;
+    }
+    if let Some(msg) = provider_switch_refusal(new_provider, agent_config) {
         eprintln!("{RED}  {}{RESET}\n", msg.replace('\n', "\n  "));
         return;
     }
@@ -1017,6 +1055,10 @@ pub fn custom_command_names() -> Vec<String> {
         .map(|(name, _)| name)
         .collect()
 }
+
+#[cfg(test)]
+#[path = "provider_switch_tests.rs"]
+mod provider_switch_tests;
 
 #[cfg(test)]
 mod tests {

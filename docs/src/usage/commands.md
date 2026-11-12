@@ -127,7 +127,7 @@ Bookmarks are stored in memory for the current session. Overwriting a bookmark w
 | Command | Description |
 |---------|-------------|
 | `/model <name\|list\|info>` | Switch, list, or inspect models |
-| `/provider <name>` | Switch provider and reset model to the provider's default |
+| `/provider <name>` | Switch provider and reset model to the provider's default (`custom` is refused: it has no default, so pick it at start with `--provider custom --model <id>`) |
 | `/think [level]` | Show or change thinking level: `off`, `minimal`, `low`, `medium`, `high` |
 | `/teach [on\|off]` | Toggle teach mode — yoyo explains its reasoning as it works |
 
@@ -142,7 +142,7 @@ Examples:
 /think off
 ```
 
-The `/model` command preserves conversation when switching models. Use `/model list` to browse all available models grouped by provider, or `/model list <provider>` to show models for a specific provider. The `/provider` command switches to a different API provider (e.g., `anthropic`, `openai`, `google`, `openrouter`, `ollama`, `xai`, `groq`, `deepseek`, `mistral`, `cerebras`, `custom`) and automatically sets the model to the provider's default. Use `/provider` without arguments to see the current provider and available options. The `/think` command adjusts the thinking level.
+The `/model` command preserves conversation when switching models. Use `/model list` to browse all available models grouped by provider, or `/model list <provider>` to show models for a specific provider. The `/provider` command switches to a different API provider (e.g., `anthropic`, `openai`, `google`, `openrouter`, `ollama`, `xai`, `groq`, `deepseek`, `mistral`, `cerebras`, `custom`) and automatically sets the model to the provider's default. `custom` (a server you run) has no default model, so `/provider custom` is refused and nothing changes; start yoyo with `--provider custom --model <id>` (or set `provider` and `model` in `.yoyo.toml`). Use `/provider` without arguments to see the current provider and available options. The `/think` command adjusts the thinking level.
 
 The `/teach` command toggles teach mode on or off. When teach mode is active, yoyo explains *why* it's making each change before showing code, uses clear and readable patterns, adds comments on non-obvious lines, and summarizes what you should learn after completing a task. Great for learning while the agent codes. This is a session-only toggle — it resets when you exit.
 

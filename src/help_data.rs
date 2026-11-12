@@ -1095,8 +1095,11 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              Usage:\n\
              \x20 /provider <name>    Switch to the specified provider\n\n\
              Changes the active AI provider and resets the model to that\n\
-             provider's default. Tab-completion is available.\n\n\
-             Providers: anthropic, openai, google, deepseek, openrouter, local\n\n\
+             provider's default. Tab-completion is available.\n\
+             `custom` has no default (your server's models are yours to\n\
+             name), so it is refused here and nothing changes; start yoyo\n\
+             with --provider custom --model <id> instead.\n\n\
+             Providers: anthropic, openai, google, deepseek, openrouter, custom\n\n\
              Examples:\n\
              \x20 /provider openai\n\
              \x20 /provider google",
