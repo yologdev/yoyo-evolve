@@ -269,13 +269,18 @@ pub(crate) fn unreadable_values(content: &str) -> Vec<(usize, String, &'static s
             continue;
         }
         if let Some(h) = crate::config_unknown_keys::toml_section_header(line) {
-            section = h.trim().to_string();
+            section = h;
             continue;
         }
         let Some((key, value)) = line.split_once('=') else {
             continue;
         };
-        let (key, v) = (key.trim(), strip_trailing_comment(value));
+        let v = strip_trailing_comment(value);
+        // A top-level `directories.deny` is the fence list too (#1178).
+        let dotted = ["directories", "permissions"].into_iter().find_map(|t| {
+            crate::config_unknown_keys::key_in_table(None, key, t).map(|k| format!("[{t}] {k}"))
+        });
+        let key = crate::config_unknown_keys::config_key_name(key);
         if key == "env" && section.starts_with("mcp_servers.") && v.starts_with('{') {
             continue;
         }
@@ -286,7 +291,7 @@ pub(crate) fn unreadable_values(content: &str) -> Vec<(usize, String, &'static s
         };
         if let Err(reason) = result {
             let name = if section.is_empty() {
-                key.to_string()
+                dotted.unwrap_or(key)
             } else {
                 format!("[{section}] {key}")
             };
@@ -567,6 +572,24 @@ print(json.dumps(out))
             "{}",
             w[0]
         );
+    }
+
+    /// #1178: a top-level dotted fence list is the fence, so an unreadable
+    /// one says the rule is not in force, like the `[directories]` spelling.
+    #[test]
+    fn unreadable_dotted_fence_list_is_named_as_the_fence() {
+        let text = "directories.deny = [\n  \"/etc\",\n]\n";
+        let found = unreadable_values(text);
+        assert_eq!(
+            found,
+            vec![(
+                1,
+                "[directories] deny".to_string(),
+                "an array over several lines"
+            )]
+        );
+        let w = unreadable_value_warnings(".yoyo.toml", text);
+        assert!(w[0].contains("This rule is NOT in force."), "{}", w[0]);
     }
 
     #[test]

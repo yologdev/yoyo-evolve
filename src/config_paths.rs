@@ -510,7 +510,7 @@ pub(crate) fn project_trust_grants(
             // section header cannot double-count.
             line.trim()
                 .split_once('=')
-                .is_some_and(|(k, _)| k.trim() == "mcp")
+                .is_some_and(|(k, _)| crate::config_unknown_keys::config_key_name(k) == "mcp")
         })
     {
         grants.push("MCP servers (external processes yoyo would start)");
@@ -572,9 +572,9 @@ pub(crate) fn project_trust_grants(
     // a bare key so a longer key that merely ends in `notify_command` cannot
     // count.
     if config_text.lines().any(|line| {
-        line.trim()
-            .split_once('=')
-            .is_some_and(|(k, _)| k.trim() == "notify_command")
+        line.trim().split_once('=').is_some_and(|(k, _)| {
+            crate::config_unknown_keys::config_key_name(k) == "notify_command"
+        })
     }) {
         grants.push("notify_command (a shell command run when a prompt finishes)");
     }

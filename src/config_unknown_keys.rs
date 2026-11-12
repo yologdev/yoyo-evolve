@@ -84,6 +84,19 @@ pub(crate) enum UnknownKey {
         section: Option<String>,
         suggestion: Option<String>,
     },
+    /// Valid TOML that names one of yoyo's tables in a spelling no reader
+    /// reads (#1178): a dotted key, a sub-table, an array of tables. Not a
+    /// typo, so no did-you-mean: the warning names the spelling yoyo reads.
+    /// `header` findings collect the keys under them, like `Section`.
+    Unread {
+        line: usize,
+        written: String,
+        path: String,
+        keys: Vec<String>,
+        header: bool,
+        spelling: String,
+        fence: bool,
+    },
     /// A section no parser reads, with the keys under it that nothing reads
     /// either (a top-level name under it is still read: the map is flat).
     Section {
@@ -132,14 +145,51 @@ fn section_suggestion(section: &str) -> Option<String> {
         Some((s, r)) => (s, Some(r)),
         None => (section, None),
     };
-    let stems = ["permissions", "directories", "mcp_servers", "model_pricing"];
-    let best = closest_match(stem, &stems, max_edits(stem))?;
+    let best = closest_match(stem, &TABLE_STEMS, max_edits(stem))?;
     Some(match (best, rest) {
         ("mcp_servers" | "model_pricing", Some(r)) if !r.trim().is_empty() => {
             format!("[{best}.{r}]")
         }
         ("mcp_servers" | "model_pricing", _) => format!("[{best}.<name>]"),
         _ => format!("[{best}]"),
+    })
+}
+
+/// The tables yoyo reads by header; a valid TOML name under one of them in
+/// another spelling is [`UnknownKey::Unread`], not a typo.
+const TABLE_STEMS: [&str; 4] = ["permissions", "directories", "mcp_servers", "model_pricing"];
+
+/// For a TOML path (`parts`) under one of [`TABLE_STEMS`], the spelling yoyo
+/// does read, and whether the table is a fence. `None` for any other path.
+fn spelling_yoyo_reads(parts: &[String]) -> Option<(String, bool)> {
+    let stem = parts.first()?.as_str();
+    if !TABLE_STEMS.contains(&stem) {
+        return None;
+    }
+    let part = |p: &String| {
+        if toml_key_segments(p).is_some_and(|s| s.len() == 1 && &s[0] == p) {
+            p.clone()
+        } else {
+            format!("\"{}\"", p.replace('\\', "\\\\").replace('"', "\\\""))
+        }
+    };
+    Some(match (stem, parts) {
+        ("permissions" | "directories", [.., k]) if k == "allow" || k == "deny" => {
+            (format!("`[{stem}]` then `{k} = [...]`"), true)
+        }
+        ("permissions" | "directories", _) => (
+            format!("`[{stem}]` then `allow = [...]` / `deny = [...]`"),
+            true,
+        ),
+        ("mcp_servers", [_, name, k]) => {
+            (format!("`[{stem}.{}]` then `{k} = ...`", part(name)), false)
+        }
+        ("mcp_servers", _) => (format!("`[{stem}.<name>]` then `command = ...`"), false),
+        ("model_pricing", [_, id, k]) => {
+            (format!("`[{stem}.{}]` then `{k} = ...`", part(id)), false)
+        }
+        ("model_pricing", _) => (format!("`[{stem}.<id>]` then `input = ...`"), false),
+        _ => return None,
     })
 }
 
@@ -172,7 +222,22 @@ fn bracket_balance(text: &str) -> i32 {
 /// `[x] y = 1` (not TOML) is still `None`. Before #1174 each parser required the
 /// line to END in `]`, so `[directories] # keep out` was no header at all and
 /// its `deny` list was dropped: a fence that failed open.
-pub(crate) fn toml_section_header(line: &str) -> Option<&str> {
+///
+/// The name comes back the way TOML reads it (#1178): `[ directories ]`,
+/// `["directories"]` and `[mcp_servers . "fs"]` are `directories` and
+/// `mcp_servers.fs` (parts unquoted, joined by `.`). Text that is not a TOML
+/// key comes back trimmed, so the unknown-section warning still names it.
+pub(crate) fn toml_section_header(line: &str) -> Option<String> {
+    let inner = header_inner(line)?;
+    if inner.starts_with('[') && inner.ends_with(']') {
+        // An array table: the readers have always seen `[t]`; unchanged.
+        return Some(inner.to_string());
+    }
+    Some(toml_key(inner).unwrap_or_else(|| inner.trim().to_string()))
+}
+
+/// The text between a header line's brackets, as written.
+fn header_inner(line: &str) -> Option<&str> {
     let line = line.trim();
     let mut quote: Option<char> = None;
     let mut escaped = false;
@@ -194,19 +259,94 @@ pub(crate) fn toml_section_header(line: &str) -> Option<&str> {
         }
     }
     let head = line[..end].trim_end();
-    if head.len() >= 2 && head.starts_with('[') && head.ends_with(']') {
-        Some(&head[1..head.len() - 1])
-    } else {
-        None
+    if head.len() < 2 || !head.starts_with('[') || !head.ends_with(']') {
+        return None;
+    }
+    Some(&head[1..head.len() - 1])
+}
+
+/// The parts of a TOML key as TOML reads them (#1178): bare
+/// (`A-Za-z0-9_-`), basic (`"..."`, escapes undone) or literal (`'...'`)
+/// parts joined by `.`, whitespace allowed around each. `None` if `s` is
+/// not a TOML key.
+pub(crate) fn toml_key_segments(s: &str) -> Option<Vec<String>> {
+    let mut segs = Vec::new();
+    let mut rest = s.trim();
+    loop {
+        let (seg, after) = if let Some(body) = rest.strip_prefix('"') {
+            // `"` and `\` are ASCII, so every index compared here is a
+            // char boundary.
+            let bytes = body.as_bytes();
+            let mut i = 0;
+            while i < bytes.len() && bytes[i] != b'"' {
+                i += if bytes[i] == b'\\' { 2 } else { 1 };
+            }
+            if i >= bytes.len() {
+                return None;
+            }
+            let seg = crate::config_value::unescape_toml_basic_string(&body[..i]);
+            (seg, &body[i + 1..])
+        } else if let Some(body) = rest.strip_prefix('\'') {
+            let end = body.find('\'')?;
+            (body[..end].to_string(), &body[end + 1..])
+        } else {
+            let end = rest
+                .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-'))
+                .unwrap_or(rest.len());
+            if end == 0 {
+                return None;
+            }
+            (rest[..end].to_string(), &rest[end..])
+        };
+        segs.push(seg);
+        let after = after.trim_start();
+        if after.is_empty() {
+            return Some(segs);
+        }
+        rest = after.strip_prefix('.')?.trim_start();
     }
 }
+
+/// A TOML key (or header) as one name: its parts joined by `.`.
+pub(crate) fn toml_key(s: &str) -> Option<String> {
+    toml_key_segments(s).map(|segs| segs.join("."))
+}
+
+/// The name a `key = value` line (`raw` is the text before `=`) has in the
+/// flat config map: a one-part key unquoted (`"model"` is `model`), anything
+/// else as written. A dotted key keeps its spelling on purpose: the flat map
+/// matches `hooks.pre.bash` as text, and `"hooks.pre.bash"` (one quoted part)
+/// is not that key to TOML, so unquoting it would invent a hook.
+pub(crate) fn config_key_name(raw: &str) -> String {
+    match toml_key_segments(raw).as_deref() {
+        Some([one]) if !one.contains('.') => one.clone(),
+        _ => raw.trim().to_string(),
+    }
+}
+
+/// The key a line sets inside `table`, TOML's way (#1178): under a
+/// `[table]` header a one-part key, at top level a `table.key` dotted key.
+/// `section` is the current header from [`toml_section_header`] (`None` at
+/// top level). `None` when the line sets anything else.
+pub(crate) fn key_in_table(section: Option<&str>, raw_key: &str, table: &str) -> Option<String> {
+    let segs = toml_key_segments(raw_key)?;
+    match (section, segs.as_slice()) {
+        (Some(s), [k]) if s == table => Some(k.clone()),
+        (None, [t, k]) if t == table => Some(k.clone()),
+        _ => None,
+    }
+}
+
+/// The header being read: its name, the keys its parser reads (`None` if no
+/// parser reads it), and its parts as TOML reads them.
+type OpenSection = (String, Option<&'static [&'static str]>, Vec<String>);
 
 /// Every key (and section) in `contents` that no reader of the config file
 /// looks at. Empty for a file that only uses keys yoyo reads.
 pub(crate) fn unknown_config_keys(contents: &str) -> Vec<UnknownKey> {
     let mut out: Vec<UnknownKey> = Vec::new();
     // Current header (inner text) and whether a parser reads it.
-    let mut section: Option<(String, Option<&'static [&'static str]>)> = None;
+    let mut section: Option<OpenSection> = None;
     // Index into `out` of the open unread-section finding, if any.
     let mut open_section: Option<usize> = None;
     let mut open_multiline: Option<&str> = None;
@@ -231,22 +371,40 @@ pub(crate) fn unknown_config_keys(contents: &str) -> Vec<UnknownKey> {
             // The section parsers' own reader (#1174). Anything else starting
             // with `[` is config_syntax's business, not a key.
             if let Some(header) = toml_section_header(line) {
+                // An array table (`[[t]]`, read as `[t]`) is no table yoyo reads.
+                let array = header.starts_with('[');
                 let inner = header
                     .trim_start_matches('[')
                     .trim_end_matches(']')
                     .to_string();
-                let keys = section_keys(&inner);
+                let raw = header_inner(line).unwrap_or_default();
+                let raw = raw.strip_prefix('[').and_then(|r| r.strip_suffix(']'));
+                let parts =
+                    toml_key_segments(raw.unwrap_or(header_inner(line).unwrap_or_default()));
+                let keys = if array { None } else { section_keys(&inner) };
                 open_section = None;
                 if keys.is_none() {
-                    out.push(UnknownKey::Section {
-                        line: idx + 1,
-                        header: line.to_string(),
-                        keys: Vec::new(),
-                        suggestion: section_suggestion(&inner),
+                    let unread = parts.as_deref().and_then(spelling_yoyo_reads);
+                    out.push(match unread {
+                        Some((spelling, fence)) => UnknownKey::Unread {
+                            line: idx + 1,
+                            written: line.to_string(),
+                            path: header.clone(),
+                            keys: Vec::new(),
+                            header: true,
+                            spelling,
+                            fence,
+                        },
+                        None => UnknownKey::Section {
+                            line: idx + 1,
+                            header: line.to_string(),
+                            keys: Vec::new(),
+                            suggestion: section_suggestion(&inner),
+                        },
                     });
                     open_section = Some(out.len() - 1);
                 }
-                section = Some((inner, keys));
+                section = Some((inner, keys, parts.unwrap_or_default()));
             }
             continue;
         }
@@ -263,9 +421,39 @@ pub(crate) fn unknown_config_keys(contents: &str) -> Vec<UnknownKey> {
         } else if value.starts_with('[') {
             array_depth = bracket_balance(value).max(0);
         }
-        if key.is_empty() || is_top_level_key(key) {
+        let name = config_key_name(key);
+        if key.is_empty() || is_top_level_key(&name) {
             continue;
         }
+        // The whole TOML path this line sets, when it is a TOML key.
+        let segs = toml_key_segments(key);
+        if let Some(segs) = segs.as_ref().filter(|s| s.len() > 1) {
+            let here = section
+                .as_ref()
+                .map(|(_, _, p)| p.clone())
+                .unwrap_or_default();
+            let path: Vec<String> = here.into_iter().chain(segs.iter().cloned()).collect();
+            let read_by_a_fence = section.is_none()
+                && ["permissions", "directories"].into_iter().any(|t| {
+                    key_in_table(None, key, t).is_some_and(|k| k == "allow" || k == "deny")
+                });
+            if read_by_a_fence {
+                continue;
+            }
+            if let Some((spelling, fence)) = spelling_yoyo_reads(&path) {
+                out.push(UnknownKey::Unread {
+                    line: idx + 1,
+                    written: key.to_string(),
+                    path: path.join("."),
+                    keys: Vec::new(),
+                    header: false,
+                    spelling,
+                    fence,
+                });
+                continue;
+            }
+        }
+        let key = name.as_str();
         match &section {
             None => out.push(UnknownKey::Key {
                 line: idx + 1,
@@ -273,7 +461,7 @@ pub(crate) fn unknown_config_keys(contents: &str) -> Vec<UnknownKey> {
                 section: None,
                 suggestion: closest_match(key, TOP_LEVEL_KEYS, max_edits(key)).map(String::from),
             }),
-            Some((name, Some(keys))) => {
+            Some((name, Some(keys), _)) => {
                 if !keys.contains(&key) {
                     let suggestion = closest_match(key, keys, max_edits(key))
                         .or_else(|| closest_match(key, TOP_LEVEL_KEYS, max_edits(key)))
@@ -286,8 +474,8 @@ pub(crate) fn unknown_config_keys(contents: &str) -> Vec<UnknownKey> {
                     });
                 }
             }
-            Some((_, None)) => {
-                if let Some(UnknownKey::Section { keys, .. }) =
+            Some((_, None, _)) => {
+                if let Some(UnknownKey::Section { keys, .. } | UnknownKey::Unread { keys, .. }) =
                     open_section.and_then(|i| out.get_mut(i))
                 {
                     keys.push(key.to_string());
@@ -296,7 +484,10 @@ pub(crate) fn unknown_config_keys(contents: &str) -> Vec<UnknownKey> {
         }
     }
     // An unread section with nothing unread under it costs the user nothing.
-    out.retain(|f| !matches!(f, UnknownKey::Section { keys, .. } if keys.is_empty()));
+    out.retain(|f| {
+        !matches!(f, UnknownKey::Section { keys, .. }
+            | UnknownKey::Unread { keys, header: true, .. } if keys.is_empty())
+    });
     out
 }
 
@@ -322,6 +513,27 @@ pub(crate) fn unknown_config_key_warnings(shown: &str, findings: &[UnknownKey]) 
                 format!(
                     "{shown} line {line}: `{key}`{place} is not a key yoyo reads, so it has no effect{hint}"
                 )
+            }
+            UnknownKey::Unread {
+                line,
+                written,
+                path,
+                keys,
+                header,
+                spelling,
+                fence,
+            } => {
+                let fence = if *fence {
+                    " This rule is NOT in force."
+                } else {
+                    ""
+                };
+                let what = if *header {
+                    format!("does not read `[{path}]`, so its keys ({}) have no effect", keys.join(", "))
+                } else {
+                    format!("does not read that spelling of `{path}`, so it has no effect")
+                };
+                format!("{shown} line {line}: `{written}` is valid TOML, but yoyo {what}.{fence} yoyo reads {spelling}.")
             }
             UnknownKey::Section {
                 line,
@@ -371,6 +583,7 @@ mod tests {
             .map(|f| match f {
                 UnknownKey::Key { key, .. } => key,
                 UnknownKey::Section { header, .. } => header,
+                UnknownKey::Unread { written, .. } => written,
             })
             .collect()
     }
@@ -521,13 +734,20 @@ mod tests {
             ("[directories]#tight", Some("directories")),
             // Old predicate: ends in `]`, so a header named `directories] # see [x`.
             ("[directories] # see [x]", Some("directories")),
-            ("[mcp_servers.\"a#b\"]", Some("mcp_servers.\"a#b\"")),
-            ("[mcp_servers.\"a#b\"] # c", Some("mcp_servers.\"a#b\"")),
-            ("[mcp_servers.'a#b'] # c", Some("mcp_servers.'a#b'")),
+            // The name as TOML reads it (#1178): parts unquoted and joined.
+            ("[mcp_servers.\"a#b\"]", Some("mcp_servers.a#b")),
+            ("[mcp_servers.\"a#b\"] # c", Some("mcp_servers.a#b")),
+            ("[mcp_servers.'a#b'] # c", Some("mcp_servers.a#b")),
             (
                 "[model_pricing.\"a\\\"#b\"] # c",
-                Some("model_pricing.\"a\\\"#b\""),
+                Some("model_pricing.a\"#b"),
             ),
+            ("[ directories ]", Some("directories")),
+            ("[\tdirectories ] # c", Some("directories")),
+            ("[\"directories\"]", Some("directories")),
+            ("[ mcp_servers . 'my fs' ]", Some("mcp_servers.my fs")),
+            // Not a TOML key: trimmed, so the warning can still name it.
+            ("[ my table ]", Some("my table")),
             // Array tables: the old readers saw `[t]` as the inner text; unchanged.
             ("[[array]]", Some("[array]")),
             ("[[array]] # c", Some("[array]")),
@@ -541,7 +761,7 @@ mod tests {
             ("[ñ] # ✓", Some("ñ")),
         ];
         for (line, want) in rows {
-            assert_eq!(toml_section_header(line), *want, "line {line:?}");
+            assert_eq!(toml_section_header(line).as_deref(), *want, "line {line:?}");
         }
     }
 
@@ -579,6 +799,73 @@ mod tests {
         append_allow_pattern_to("b", &path).unwrap();
         let after = std::fs::read_to_string(&path).unwrap();
         assert_eq!(after, "[permissions] # mine\nallow = [\"a\", \"b\"]\n");
+    }
+
+    /// #1178, the writers: `append_allow_pattern_to` keeps a dotted
+    /// `permissions` table dotted (a new `[permissions]` would declare the
+    /// table twice, which TOML refuses), and `set_toml_key` replaces a quoted
+    /// key instead of appending a duplicate.
+    #[test]
+    fn writers_keep_the_users_spelling_of_tables_and_keys() {
+        use crate::config::*;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".yoyo.toml");
+        for (before, after) in [
+            (
+                "permissions.deny = [\"rm *\"]\n",
+                "permissions.deny = [\"rm *\"]\npermissions.allow = [\"b\"]\n",
+            ),
+            (
+                "permissions.allow = [\"a\"]\n",
+                "permissions.allow = [\"a\", \"b\"]\n",
+            ),
+            (
+                "[ permissions ]\n\"allow\" = [\"a\"]\n",
+                "[ permissions ]\nallow = [\"a\", \"b\"]\n",
+            ),
+        ] {
+            std::fs::write(&path, before).unwrap();
+            append_allow_pattern_to("b", &path).unwrap();
+            let got = std::fs::read_to_string(&path).unwrap();
+            assert_eq!(got, after, "from {before:?}");
+            assert_eq!(
+                parse_permissions_from_config(&got)
+                    .allow
+                    .last()
+                    .map(String::as_str),
+                Some("b")
+            );
+        }
+        assert_eq!(
+            set_toml_key("\"model\" = \"a\"\n", "model", "b"),
+            "model = \"b\"\n"
+        );
+    }
+
+    /// #1178: the flat map reads a quoted `"notify_command"` / `"mcp"` and a
+    /// spaced `[ permissions ]` header, so the trust prompt must list them.
+    #[test]
+    fn trust_prompt_sees_every_spelling_the_readers_read() {
+        let grants = |t: &str| crate::config_paths::project_trust_grants(t, false, false, false);
+        let notify = "\"notify_command\" = \"touch /tmp/x\"\n";
+        assert_eq!(
+            crate::config::parse_config_file(notify)
+                .get("notify_command")
+                .map(String::as_str),
+            Some("touch /tmp/x")
+        );
+        assert!(grants(notify)
+            .iter()
+            .any(|g| g.starts_with("notify_command")));
+        assert!(grants("'mcp' = [\"npx x\"]\n")
+            .iter()
+            .any(|g| g.starts_with("MCP")));
+        assert!(grants("[ mcp_servers . fs ]\ncommand = \"npx\"\n")
+            .iter()
+            .any(|g| g.starts_with("MCP")));
+        assert!(grants("permissions.allow = [\"git *\"]\n")
+            .iter()
+            .any(|g| g.starts_with("auto-approved")));
     }
 
     #[test]
@@ -685,5 +972,206 @@ mod tests {
             missing.is_empty(),
             "config readers look up keys TOP_LEVEL_KEYS does not list: {missing:?}"
         );
+    }
+
+    /// #1178's corpus: whole documents that vary the HEADER and KEY slots
+    /// (the #1177 corpus in config_value.rs holds the key at `k` with no
+    /// header, so it only ever certified values). Every row is valid TOML
+    /// spelled with names yoyo uses, so no warning may say "did you mean".
+    /// Slots varied: whitespace inside brackets, header comment, quoted and
+    /// dotted headers, array tables, quoted keys, dotted keys (top level and in a table),
+    /// whitespace around `=` and around the key. Held constant: the value is
+    /// always a one-line string or array (config_value.rs varies that slot),
+    /// keys and headers are ASCII, no key contains `=`, and no table is
+    /// declared twice.
+    const SHAPE_CORPUS: &[&str] = &[
+        "[directories]\ndeny = [\"/etc\"]",
+        "[ directories ]\ndeny = [\"/etc\"]",
+        "[directories ]\ndeny = [\"/etc\"]",
+        "[\tdirectories]\ndeny = [\"/etc\"]",
+        "[directories] # c\ndeny = [\"/etc\"]",
+        "[\"directories\"]\ndeny = [\"/etc\"]",
+        "['directories']\ndeny = [\"/etc\"]",
+        "[directories.x]\ndeny = [\"/etc\"]",
+        "[directories]\n\"deny\" = [\"/etc\"]",
+        "[directories]\n'deny' = [\"/etc\"]",
+        "[directories]\ndeny=[\"/etc\"]",
+        "[directories]\ndeny   =   [\"/etc\"]",
+        "[directories]\n   deny   = [\"/etc\"]",
+        "directories.deny = [\"/etc\"]",
+        "directories . deny = [\"/etc\"]",
+        "\"directories\".deny = [\"/etc\"]",
+        "directories.'deny' = [\"/etc\"]",
+        "\"directories.deny\" = [\"/etc\"]",
+        "[directories]\nx.deny = [\"/etc\"]",
+        "directories.allow = [\"/w\"]\ndirectories.deny = [\"/etc\"]",
+        "[ permissions ]\ndeny = [\"rm *\"]",
+        "[permissions]\n\"deny\" = [\"rm *\"]",
+        "permissions.deny = [\"rm *\"]",
+        "[permissions.x]\ndeny = [\"rm *\"]",
+        "[[directories]]\ndeny = [\"/etc\"]",
+        "[[ mcp_servers.fs ]]\ncommand = \"npx\"",
+        "\"model\" = \"m1\"",
+        "'model' = \"m1\"",
+        "model= \"m1\"",
+        "[ mcp_servers.fs ]\ncommand = \"npx\"",
+        "[mcp_servers . fs]\n\"command\" = \"npx\"",
+        "[mcp_servers.\"my server\"]\ncommand = \"npx\"",
+        "mcp_servers.fs.command = \"npx\"",
+        "[mcp_servers]\nfs.command = \"npx\"",
+        "[ model_pricing.\"gpt-4.1\" ]\ninput = 1.0\noutput = 2.0",
+        "[model_pricing.'m']\n\"input\" = 1.0\n\"output\" = 2.0",
+        "model_pricing.m.input = 1.0\nmodel_pricing.m.output = 2.0",
+    ];
+
+    /// What tomllib reads for each document, projected onto the things
+    /// yoyo's readers build (fence lists, the model, MCP commands, prices).
+    fn shape_oracle(docs: &[&str]) -> Vec<serde_json::Value> {
+        const SCRIPT: &str = r#"
+import json, sys, tomllib
+def proj(d):
+    out = {}
+    for t in ("directories", "permissions"):
+        tab = d.get(t)
+        if isinstance(tab, dict):
+            for k in ("allow", "deny"):
+                v = tab.get(k)
+                if isinstance(v, list) and v: out[t + "." + k] = v
+    if isinstance(d.get("model"), str): out["model"] = d["model"]
+    ms = d.get("mcp_servers")
+    if isinstance(ms, dict):
+        for n, s in ms.items():
+            if isinstance(s, dict) and isinstance(s.get("command"), str):
+                out["mcp:" + n] = s["command"]
+    mp = d.get("model_pricing")
+    if isinstance(mp, dict):
+        for n, s in mp.items():
+            if isinstance(s, dict) and "input" in s and "output" in s:
+                out["price:" + n] = [float(s["input"]), float(s["output"])]
+    return out
+res = []
+for doc in json.load(sys.stdin):
+    try: res.append(proj(tomllib.loads(doc)))
+    except Exception as e: res.append({"error": str(e)})
+print(json.dumps(res))
+"#;
+        use std::io::Write;
+        let mut child = std::process::Command::new("python3")
+            .args(["-c", SCRIPT])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap_or_else(|e| {
+                panic!("the TOML oracle is absent: could not run python3 ({e}); this test needs python3 >= 3.11 (tomllib)")
+            });
+        let input = serde_json::to_string(docs).expect("corpus to json");
+        child
+            .stdin
+            .take()
+            .expect("stdin")
+            .write_all(input.as_bytes())
+            .expect("write corpus");
+        let out = child.wait_with_output().expect("oracle ran");
+        assert!(
+            out.status.success(),
+            "the TOML oracle failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        serde_json::from_slice(&out.stdout).expect("oracle json")
+    }
+
+    /// The same projection over what yoyo's readers build from `doc`.
+    fn yoyo_view(doc: &str, want: &serde_json::Value) -> serde_json::Value {
+        use crate::config::*;
+        let mut m = serde_json::Map::new();
+        let d = parse_directories_from_config(doc);
+        let p = parse_permissions_from_config(doc);
+        for (k, v) in [
+            ("directories.allow", d.allow),
+            ("directories.deny", d.deny),
+            ("permissions.allow", p.allow),
+            ("permissions.deny", p.deny),
+        ] {
+            if !v.is_empty() {
+                m.insert(k.into(), serde_json::json!(v));
+            }
+        }
+        if let Some(v) = parse_config_file(doc).get("model") {
+            m.insert("model".into(), serde_json::json!(v));
+        }
+        for s in parse_mcp_servers_from_config(doc) {
+            m.insert(format!("mcp:{}", s.name), serde_json::json!(s.command));
+        }
+        let prices = parse_model_pricing_from_config(doc);
+        for key in want.as_object().into_iter().flat_map(|o| o.keys()) {
+            if let Some(id) = key.strip_prefix("price:") {
+                if let Some(pr) = prices.lookup(id) {
+                    m.insert(
+                        key.clone(),
+                        serde_json::json!([pr.input_per_million, pr.output_per_million]),
+                    );
+                }
+            }
+        }
+        serde_json::Value::Object(m)
+    }
+
+    /// #1178's done-when: every header/key shape is read the way tomllib
+    /// reads it, or refused: yoyo builds nothing for it AND the warning says
+    /// it is valid TOML yoyo does not read (NOT in force, for a fence). No
+    /// row may be called a typo.
+    #[test]
+    fn every_header_and_key_shape_agrees_with_tomllib_or_is_refused() {
+        let wanted = shape_oracle(SHAPE_CORPUS);
+        assert_eq!(wanted.len(), SHAPE_CORPUS.len(), "oracle row count");
+        let (mut agree, mut refused, mut disagree) = (0, 0, Vec::new());
+        for (doc, want) in SHAPE_CORPUS.iter().zip(&wanted) {
+            assert!(
+                want.get("error").is_none(),
+                "corpus row {doc:?} is not TOML per tomllib: {want}"
+            );
+            let got = yoyo_view(doc, want);
+            let warnings =
+                unknown_config_key_warnings(".yoyo.toml", &unknown_config_keys(doc)).join("\n");
+            if warnings.contains("did you mean") {
+                disagree.push(format!("{doc:?}: valid TOML called a typo: {warnings}"));
+                continue;
+            }
+            if &got == want {
+                if warnings.contains("NOT in force") && !got.as_object().unwrap().is_empty() {
+                    disagree.push(format!("{doc:?}: read, yet warned: {warnings}"));
+                } else {
+                    agree += 1;
+                }
+                continue;
+            }
+            let (g, w) = (got.as_object().unwrap(), want.as_object().unwrap());
+            let read_other = g.iter().any(|(k, v)| w.get(k) != Some(v));
+            let fence = w
+                .keys()
+                .any(|k| k.starts_with("directories.") || k.starts_with("permissions."));
+            let named =
+                warnings.contains("valid TOML") && (!fence || warnings.contains("NOT in force"));
+            if !read_other && named {
+                refused += 1;
+            } else {
+                disagree.push(format!(
+                    "{doc:?}: yoyo read {got}, tomllib read {want}; warnings: {warnings:?}"
+                ));
+            }
+        }
+        eprintln!(
+            "{agree} of {} shapes agree, {refused} refused, {} disagree",
+            SHAPE_CORPUS.len(),
+            disagree.len()
+        );
+        assert!(
+            disagree.is_empty(),
+            "shapes that disagree with tomllib:\n{}",
+            disagree.join("\n")
+        );
+        // Refusal is the escape hatch: pin it so widening it is a decision.
+        assert_eq!(refused, 3, "refused rows changed");
     }
 }

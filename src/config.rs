@@ -486,27 +486,26 @@ pub fn parse_toml_array(value: &str) -> Vec<String> {
 /// Looks for `allow = [...]` and `deny = [...]` lines under `[permissions]`.
 pub fn parse_permissions_from_config(content: &str) -> PermissionConfig {
     let mut config = PermissionConfig::default();
-    let mut in_permissions = false;
+    // The current header, `None` at top level, where `permissions.deny = [...]`
+    // is the same list to TOML (#1178).
+    let mut section: Option<String> = None;
 
     for line in content.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
         }
-        // Check for section headers
         if let Some(header) = crate::config_unknown_keys::toml_section_header(trimmed) {
-            in_permissions = header == "permissions";
-            continue;
-        }
-        if !in_permissions {
+            section = Some(header);
             continue;
         }
         if let Some((key, value)) = trimmed.split_once('=') {
-            let key = key.trim();
+            let key =
+                crate::config_unknown_keys::key_in_table(section.as_deref(), key, "permissions");
             let value = value.trim();
-            match key {
-                "allow" => config.allow = parse_toml_array(value),
-                "deny" => config.deny = parse_toml_array(value),
+            match key.as_deref() {
+                Some("allow") => config.allow = parse_toml_array(value),
+                Some("deny") => config.deny = parse_toml_array(value),
                 _ => {}
             }
         }
@@ -518,7 +517,9 @@ pub fn parse_permissions_from_config(content: &str) -> PermissionConfig {
 /// Looks for `allow = [...]` and `deny = [...]` lines under `[directories]`.
 pub fn parse_directories_from_config(content: &str) -> DirectoryRestrictions {
     let mut config = DirectoryRestrictions::default();
-    let mut in_directories = false;
+    // The current header, `None` at top level, where `directories.deny = [...]`
+    // is the same list to TOML (#1178).
+    let mut section: Option<String> = None;
 
     for line in content.lines() {
         let trimmed = line.trim();
@@ -526,18 +527,16 @@ pub fn parse_directories_from_config(content: &str) -> DirectoryRestrictions {
             continue;
         }
         if let Some(header) = crate::config_unknown_keys::toml_section_header(trimmed) {
-            in_directories = header == "directories";
-            continue;
-        }
-        if !in_directories {
+            section = Some(header);
             continue;
         }
         if let Some((key, value)) = trimmed.split_once('=') {
-            let key = key.trim();
+            let key =
+                crate::config_unknown_keys::key_in_table(section.as_deref(), key, "directories");
             let value = value.trim();
-            match key {
-                "allow" => config.allow = parse_toml_array(value),
-                "deny" => config.deny = parse_toml_array(value),
+            match key.as_deref() {
+                Some("allow") => config.allow = parse_toml_array(value),
+                Some("deny") => config.deny = parse_toml_array(value),
                 _ => {}
             }
         }
@@ -733,9 +732,9 @@ pub fn parse_mcp_servers_from_config(content: &str) -> Vec<McpServerConfig> {
         }
 
         if let Some((key, value)) = trimmed.split_once('=') {
-            let key = key.trim();
+            let key = crate::config_unknown_keys::config_key_name(key);
             let value = value.trim();
-            match key {
+            match key.as_str() {
                 "command" => {
                     let v = strip_quotes(value);
                     if !v.is_empty() {
@@ -1336,7 +1335,7 @@ pub fn parse_model_pricing_from_config(content: &str) -> ModelPricingOverrides {
         }
 
         if let Some((key, value)) = trimmed.split_once('=') {
-            let key = key.trim();
+            let key = crate::config_unknown_keys::config_key_name(key);
             if key != "input" && key != "output" {
                 continue;
             }
@@ -1723,34 +1722,41 @@ fn set_permissions_allow(content: &str, patterns: &[String]) -> String {
     let allow_line = format!("allow = [{}]", formatted.join(", "));
 
     let mut lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
-    let mut in_permissions = false;
+    let mut section: Option<String> = None;
     let mut found_allow = false;
     let mut permissions_section_exists = false;
+    // The last top-level `permissions.x = ...` line: the table is spelled
+    // with dotted keys, so a new `[permissions]` would declare it twice (#1178).
+    let mut dotted_line: Option<usize> = None;
 
     for (i, line) in lines.iter_mut().enumerate() {
         let trimmed = line.trim();
         if let Some(header) = crate::config_unknown_keys::toml_section_header(trimmed) {
-            if header == "permissions" {
-                permissions_section_exists = true;
-                in_permissions = true;
-            } else {
-                // If we were in [permissions] but never found allow, insert before this section
-                if in_permissions && !found_allow {
-                    // We'll handle insertion below
-                }
-                in_permissions = false;
-            }
+            permissions_section_exists |= header == "permissions";
+            section = Some(header);
             continue;
         }
-        if in_permissions && !found_allow {
-            if let Some((key, _)) = trimmed.split_once('=') {
-                if key.trim() == "allow" {
-                    *line = allow_line.clone();
-                    found_allow = true;
-                    let _ = i; // suppress unused warning
-                }
-            }
+        let Some((key, _)) = trimmed.split_once('=') else {
+            continue;
+        };
+        if found_allow || trimmed.starts_with('#') {
+            continue;
         }
+        let key = crate::config_unknown_keys::key_in_table(section.as_deref(), key, "permissions");
+        match (key.as_deref(), section.is_none()) {
+            (Some("allow"), false) => *line = allow_line.clone(),
+            (Some("allow"), true) => *line = format!("permissions.{allow_line}"),
+            (Some(_), true) => {
+                dotted_line = Some(i);
+                continue;
+            }
+            _ => continue,
+        }
+        found_allow = true;
+    }
+    if let Some(i) = dotted_line.filter(|_| !found_allow) {
+        lines.insert(i + 1, format!("permissions.{allow_line}"));
+        found_allow = true;
     }
 
     if permissions_section_exists && !found_allow {
@@ -1758,14 +1764,16 @@ fn set_permissions_allow(content: &str, patterns: &[String]) -> String {
         let mut result = Vec::new();
         for line in &lines {
             result.push(line.clone());
-            if crate::config_unknown_keys::toml_section_header(line) == Some("permissions") {
+            if crate::config_unknown_keys::toml_section_header(line).as_deref()
+                == Some("permissions")
+            {
                 result.push(allow_line.clone());
             }
         }
         lines = result;
     }
 
-    if !permissions_section_exists {
+    if !permissions_section_exists && !found_allow {
         // Append a new [permissions] section
         if !lines.is_empty() && !lines.last().unwrap().is_empty() {
             lines.push(String::new());
@@ -1799,7 +1807,7 @@ pub fn set_toml_key(content: &str, key: &str, value: &str) -> String {
             // Match `key = ...` at the start of a non-comment line
             if !trimmed.starts_with('#') {
                 if let Some((k, _)) = trimmed.split_once('=') {
-                    if k.trim() == key {
+                    if crate::config_unknown_keys::config_key_name(k) == key {
                         found = true;
                         return new_line.clone();
                     }
@@ -1982,7 +1990,8 @@ pub fn parse_config_file(content: &str) -> HashMap<String, String> {
             continue;
         }
         if let Some((key, value)) = line.split_once('=') {
-            let key = key.trim().to_string();
+            // `"model"` is `model` to TOML (#1178).
+            let key = crate::config_unknown_keys::config_key_name(key);
             // TOML's reading or nothing (#1177): an array stays raw for
             // `parse_toml_array`; an unreadable value is left out, and
             // `config_value::warn_unreadable_values_once` names it at load.
