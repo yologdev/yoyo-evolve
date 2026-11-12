@@ -40,7 +40,10 @@ fn provider_key_presence_table() {
         // The load-bearing fallback, byte-identical.
         ("openai", &[("API_KEY", "generic")], Some("generic")),
         ("openai", &[("OPENAI_API_KEY", "oai"), ("API_KEY", "generic")], Some("oai")),
-        ("github", &[("GITHUB_TOKEN", "gh")], Some("gh")),
+        // #1166: retired GitHub Models; an ambient GitHub token is not sent to
+        // the endpoint a `--provider github --base-url` run names. API_KEY is.
+        ("github", &[("GITHUB_TOKEN", "gh")], None),
+        ("github", &[("GITHUB_TOKEN", "gh"), ("API_KEY", "generic")], Some("generic")),
         ("bedrock", &[("AWS_ACCESS_KEY_ID", "AKIA")], Some("AKIA")),
         // Nothing set: the "No API key found" path must still fire.
         ("google", &[], None),

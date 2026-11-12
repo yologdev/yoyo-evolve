@@ -544,7 +544,9 @@ pub fn handle_provider_switch(
     agent_config: &mut crate::AgentConfig,
     agent: &mut Agent,
 ) {
-    if !KNOWN_PROVIDERS.contains(&new_provider) {
+    // A retired name (#1166) is unlisted but falls through to its own refusal.
+    let retired = crate::providers::retired_provider_refusal(new_provider).is_some();
+    if !KNOWN_PROVIDERS.contains(&new_provider) && !retired {
         eprintln!("{RED}  unknown provider: '{new_provider}'{RESET}");
         eprintln!("{DIM}  available: {}{RESET}\n", KNOWN_PROVIDERS.join(", "));
         return;

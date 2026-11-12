@@ -15,9 +15,23 @@ pub const KNOWN_PROVIDERS: &[&str] = &[
     "zai",
     "minimax",
     "bedrock",
-    "github",
     "custom",
 ];
+
+/// Providers yoyo still recognises by name but lists nowhere (#1166), each with
+/// the refusal shown when one is picked without a base URL. With a base URL the
+/// name still runs, against the endpoint the user named: `create_model_config`
+/// keeps a `github` arm for exactly that. Not in [`KNOWN_PROVIDERS`], so no
+/// list, completion, hint or default reads them.
+pub const RETIRED_PROVIDERS: &[(&str, &str)] = &[("github", GITHUB_MODELS_RETIRED)];
+
+/// The refusal for a [retired](RETIRED_PROVIDERS) provider, or `None`.
+pub fn retired_provider_refusal(provider: &str) -> Option<&'static str> {
+    RETIRED_PROVIDERS
+        .iter()
+        .find(|(name, _)| *name == provider)
+        .map(|(_, msg)| *msg)
+}
 
 /// Get the environment variable name that holds the API key for a provider.
 pub fn provider_api_key_env(provider: &str) -> Option<&'static str> {
@@ -34,7 +48,6 @@ pub fn provider_api_key_env(provider: &str) -> Option<&'static str> {
         "minimax" => Some("MINIMAX_API_KEY"),
         "bedrock" => Some("AWS_ACCESS_KEY_ID"),
         "anthropic" => Some("ANTHROPIC_API_KEY"),
-        "github" => Some("GITHUB_TOKEN"),
         _ => None,
     }
 }
@@ -58,8 +71,6 @@ pub fn provider_api_key_vars(provider: &str) -> &'static [&'static str] {
         "minimax" => &["MINIMAX_API_KEY"],
         "openrouter" => &["OPENROUTER_API_KEY"],
         "cerebras" => &["CEREBRAS_API_KEY"],
-        // yoyo-own: yoagent has no github provider; GitHub Models takes a GitHub token.
-        "github" => &["GITHUB_TOKEN"],
         // yoyo-own: main.rs `apply_bedrock_credentials` joins this access key with
         // AWS_SECRET_ACCESS_KEY; yoagent's bearer-token name would be misjoined there.
         "bedrock" => &["AWS_ACCESS_KEY_ID"],
@@ -174,16 +185,6 @@ pub fn known_models_for_provider(provider: &str) -> &'static [&'static str] {
             "amazon.nova-lite-v1:0",
         ],
         "ollama" => &["llama3.2", "llama3.1", "codellama", "mistral"],
-        "github" => &[
-            "openai/gpt-4o",
-            "openai/gpt-4o-mini",
-            "openai/o3-mini",
-            "openai/o4-mini",
-            "meta/llama-4-scout-17b-16e-instruct",
-            "mistral/mistral-large-latest",
-            "deepseek/deepseek-v4-pro",
-            "anthropic/claude-sonnet-4-6",
-        ],
         _ => &[],
     }
 }
@@ -362,9 +363,6 @@ pub fn default_model_for_provider(provider: &str) -> String {
         // default runs on guessed limits and says so (#1119, `DEFAULT_WITHOUT_PRESET`).
         "minimax" => "MiniMax-M2.7".into(),
         "bedrock" => "anthropic.claude-sonnet-4-6".into(),
-        // No preset by necessity: yoagent ships none for any github id, so the
-        // default runs on guessed limits and says so (#1119, `DEFAULT_WITHOUT_PRESET`).
-        "github" => "openai/gpt-4o".into(),
         // The anthropic (and unknown-provider) default is `claude-opus-5-5` by
         // decision, checked Day 230 (#1037) rather than picked as "newest": it has
         // a yoagent preset (`anthropic_preset`, most-specific arm) with bundled
@@ -391,11 +389,12 @@ pub fn default_model_for_provider(provider: &str) -> String {
 /// sanitized (a project `.yoyo.toml` is repository-authored). Glyph-free
 /// except the em dash; callers add colour.
 ///
-/// Also refuses `github` without a base URL: GitHub Models is retired
-/// (#1166, see [`GITHUB_MODELS_RETIRED`]).
+/// Also refuses a [retired](RETIRED_PROVIDERS) provider without a base URL
+/// (`github`: GitHub Models, see [`GITHUB_MODELS_RETIRED`]), before the
+/// unknown-name branch, so the reason is the retirement, not "unknown".
 pub fn unknown_provider_refusal(provider: &str, base_url_given: bool) -> Option<String> {
-    if provider == "github" && !base_url_given {
-        return Some(GITHUB_MODELS_RETIRED.to_string());
+    if let Some(msg) = retired_provider_refusal(provider).filter(|_| !base_url_given) {
+        return Some(msg.to_string());
     }
     if KNOWN_PROVIDERS.contains(&provider) || base_url_given {
         return None;
@@ -461,8 +460,8 @@ to list the ids your server serves: curl {url}/models"
 /// opaque `Invalid header value: "text/plain"`. So `github` with no base URL
 /// is refused up front with the reason. With `--base-url` (or `base_url` in
 /// config) it still runs: the user chose an endpoint, and yoyo sends there.
-/// `github` stays in [`KNOWN_PROVIDERS`] for now; the rest of its removal is
-/// listed on #1166.
+/// It is in [`RETIRED_PROVIDERS`], not [`KNOWN_PROVIDERS`]: no list offers it,
+/// and it has no key variable, default model or known-model list (#1166).
 pub const GITHUB_MODELS_RETIRED: &str = "provider 'github' (GitHub Models) was retired by GitHub \
 on 2026-07-30 and no longer answers requests \
 (https://github.blog/changelog/2026-07-30-github-models-is-now-retired)\n\
@@ -639,7 +638,6 @@ mod tests {
         ("groq", "yoagent ships no preset for any groq id, so no default could resolve through one"),
         ("cerebras", "yoagent ships no preset for any cerebras id, so no default could resolve through one"),
         ("minimax", "yoagent ships no preset for any minimax id, so no default could resolve through one"),
-        ("github", "yoagent ships no preset for any github-models id, so no default could resolve through one"),
     ];
 
     #[test]
@@ -745,6 +743,14 @@ mod tests {
         );
         // Anti-vacuous: the list really is the authority, not an empty join.
         assert!(first.contains("anthropic") && first.contains("custom"));
+        // #1166: the list a user is told to pick from never offers a retired
+        // provider, and still names every listed one.
+        for (retired, _) in RETIRED_PROVIDERS {
+            assert!(!msg.contains(retired), "offers retired {retired}: {msg}");
+        }
+        for p in KNOWN_PROVIDERS {
+            assert!(first.contains(p), "{p} missing: {first}");
+        }
     }
 
     #[test]
@@ -758,9 +764,9 @@ mod tests {
         // Near-misses: an explicit endpoint is a choice; other providers untouched.
         assert_eq!(unknown_provider_refusal("github", true), None);
         assert_eq!(unknown_provider_refusal("openai", false), None);
-        // `github` is still listed for this slice (#1166), so the refusal
-        // must come from the retirement branch, not the unknown-name one.
-        assert!(KNOWN_PROVIDERS.contains(&"github"));
+        // `github` is no longer listed (#1166), so the retirement branch must
+        // run before the unknown-name one, or the user reads "unknown provider".
+        assert!(!KNOWN_PROVIDERS.contains(&"github"));
         assert!(!msg.contains("unknown provider"), "{msg}");
     }
 
@@ -1108,30 +1114,35 @@ mod tests {
         );
     }
 
+    /// #1166: GitHub Models is retired, so `github` is listed nowhere a user
+    /// picks a provider from, and every per-provider row it used to own is gone.
+    /// (Was four tests pinning those rows: in KNOWN_PROVIDERS, GITHUB_TOKEN,
+    /// default `openai/gpt-4o`, a GitHub Models catalog of known ids.)
     #[test]
-    fn test_github_in_known_providers() {
-        assert!(
-            KNOWN_PROVIDERS.contains(&"github"),
-            "github should be in KNOWN_PROVIDERS"
-        );
+    fn retired_github_provider_has_no_listing_or_per_provider_rows() {
+        assert!(!KNOWN_PROVIDERS.contains(&"github"));
+        assert!(retired_provider_refusal("github").is_some());
+        // No ambient GITHUB_TOKEN is sent to the endpoint a `--base-url` run
+        // names: that endpoint is not GitHub Models, which no longer exists.
+        assert_eq!(provider_api_key_env("github"), None);
+        assert!(provider_api_key_vars("github").is_empty());
+        assert!(known_models_for_provider("github").is_empty());
+        // No guessed default: a `--base-url` run names its model, like custom.
+        assert!(provider_requires_named_model("github"));
+        // Near-miss: a listed provider keeps every row.
+        assert_eq!(provider_api_key_env("openai"), Some("OPENAI_API_KEY"));
+        assert!(!provider_requires_named_model("openai"));
     }
 
+    /// #1166: a retired provider is never also listed, and every retired row
+    /// carries a refusal that names the retirement.
     #[test]
-    fn test_github_provider_api_key_env() {
-        assert_eq!(provider_api_key_env("github"), Some("GITHUB_TOKEN"));
-    }
-
-    #[test]
-    fn test_github_default_model() {
-        assert_eq!(default_model_for_provider("github"), "openai/gpt-4o");
-    }
-
-    #[test]
-    fn test_github_known_models() {
-        let models = known_models_for_provider("github");
-        assert!(!models.is_empty(), "github should have known models");
-        assert!(models.contains(&"openai/gpt-4o"));
-        assert!(models.contains(&"anthropic/claude-sonnet-4-6"));
+    fn retired_providers_are_disjoint_from_known_providers() {
+        assert!(!RETIRED_PROVIDERS.is_empty());
+        for (name, msg) in RETIRED_PROVIDERS {
+            assert!(!KNOWN_PROVIDERS.contains(name), "{name} is listed");
+            assert!(msg.contains("retired"), "{name}: {msg}");
+        }
     }
 }
 

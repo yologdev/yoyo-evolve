@@ -30,9 +30,11 @@ const PROBE_IDS: [&str; 2] = ["zz-unknown-a", "zz-unknown-b"];
 /// silent. Unknown providers are never resolved here.
 pub(crate) fn runs_on_guessed_limits(provider: &str, model: &str) -> bool {
     use crate::agent_builder::{create_model_config, declared_output_ceiling, vendor_preset};
-    if !crate::providers::KNOWN_PROVIDERS.contains(&provider)
-        || USER_RUN_SERVER_PROVIDERS.contains(&provider)
-    {
+    // A retired name (#1166) is unlisted but still runs with a base URL, on
+    // its own arm's guessed limits, so it keeps the note.
+    let resolvable = crate::providers::KNOWN_PROVIDERS.contains(&provider)
+        || crate::providers::retired_provider_refusal(provider).is_some();
+    if !resolvable || USER_RUN_SERVER_PROVIDERS.contains(&provider) {
         return false;
     }
     let limits = |id: &str| {
@@ -337,6 +339,19 @@ pass --max-tokens) to cap replies."
         assert_eq!(note_for("anthropic", "claude-opus-5-5", true), None);
     }
 
+    /// #1166: `github` is unlisted, but `--provider github --base-url X` still
+    /// runs through its own arm on guessed limits, so the note must still fire;
+    /// a name that is neither listed nor retired stays unresolved.
+    #[test]
+    fn retired_provider_with_a_base_url_still_warns_on_guessed_limits() {
+        assert!(!crate::providers::KNOWN_PROVIDERS.contains(&"github"));
+        assert!(runs_on_guessed_limits("github", "some-model"));
+        assert!(note_for("github", "some-model", true).is_some());
+        // Near-miss: an unknown name is not resolved here (its own warning says
+        // "treating unknown provider ... as OpenAI-compatible").
+        assert!(!runs_on_guessed_limits("nosuch", "some-model"));
+    }
+
     /// Anti-vacuous premise of the provenance check: for every provider the
     /// check can return `true` on, the two probe ids really resolve to equal
     /// limits, and for google those are the guess the gemini-2.x ids sit on.
@@ -397,7 +412,6 @@ pass --max-tokens) to cap replies."
             "anthropic",
             "bedrock",
             "cerebras",
-            "github",
             "google",
             "groq",
             "minimax",
@@ -491,7 +505,9 @@ no output cap, so Bedrock applies the model's own default output limit; set max_
         // (shrank by exactly those three). The four left carry their reason
         // in `providers.rs`'s `DEFAULT_WITHOUT_PRESET`: yoagent ships no
         // preset for any of their ids.
-        let mut expected = vec!["groq", "github", "cerebras", "minimax"];
+        // #1166: `github` left with GitHub Models' retirement; it has no
+        // default now (see retired_provider_with_a_base_url_still_warns...).
+        let mut expected = vec!["groq", "cerebras", "minimax"];
         expected.sort_unstable();
         assert_eq!(
             tripping, expected,

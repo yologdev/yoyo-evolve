@@ -1290,7 +1290,9 @@ pub(crate) fn unknown_model_warning(provider: &str, model: &str) -> Option<Strin
 /// user-declared `custom` endpoint all take foreign ids on purpose, so a warning
 /// here would be crying wolf at a supported setup. The `--base-url` clause below
 /// covers the same ground for single-vendor providers pointed at a gateway.
-const MULTI_VENDOR_PROVIDERS: &[&str] = &["openrouter", "ollama", "github", "custom"];
+// `github` left this list with #1166: retired, it only runs with a base URL,
+// and `base_url_given` returns before this list is read.
+const MULTI_VENDOR_PROVIDERS: &[&str] = &["openrouter", "ollama", "custom"];
 
 /// The `--provider`/`--model` disagreement warning, or `None` when the pair is
 /// consistent (or consistent enough that warning would be guessing).
