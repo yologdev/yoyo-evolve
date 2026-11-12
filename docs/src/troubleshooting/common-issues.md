@@ -33,15 +33,22 @@ Use safe mode to:
 
 Once you've identified the problem, fix the offending config/skill/server and restart normally.
 
-## "error: config file is malformed"
+## "error: config file is not valid TOML"
 
-yoyo found a syntax problem its lenient config reader can't fix for you: a quoted value with no closing quote (`model = "claude-haiku-5-5`) or a `[section` header with no `]`. The message names each `file:line`.
+Every config file yoyo loads (`.yoyo.toml`, `~/.yoyo.toml`, the user config) is first read by a real TOML parser. If it is not valid TOML, yoyo stops with this error and **exit code 2**, before any API call. The message names `file:line:column`, gives the parser's reason, and shows the line with a caret under the problem:
 
-Starting a session (the REPL, `yoyo -p`, piped input, `yoyo review`) **refuses** with this error and **exit code 2**, before any API call. Read as written, the value would keep its stray quote and be sent anyway (a model id with a stray `"` 404s), and nobody writes an unterminated quote on purpose. git, cargo and Python's `tomllib` refuse the same file.
+```
+error: .yoyo.toml:1:9: config file is not valid TOML: string values must be quoted, expected literal string
+  |
+1 | model = m1
+  |         ^^
+```
 
-To get going: fix the named lines, or move the file aside (`mv .yoyo.toml .yoyo.toml.bak`); yoyo then uses the next config file it finds, or its defaults.
+Common causes: a string value without quotes (`model = m1` must be `model = "m1"`), a quote that never closes, a `[section` header with no `]`, or the same key written twice (`model = "a"` then `model = "b"`; earlier versions silently used the last one). git, cargo and Python's `tomllib` refuse the same files.
 
-The inspection commands (`yoyo config get`, `yoyo config show`, `yoyo doctor`, `yoyo model`, `yoyo permissions`) and `yoyo setup` still run, with a `warning: config file is malformed` line instead, so you can look at what yoyo read while you fix it. The detector skips the inside of multi-line strings (`"""` / `'''`), so their contents never trigger it.
+Every command that reads the config refuses the same way: starting a session (the REPL, `yoyo -p`, piped input, `yoyo review`) and the inspection commands (`yoyo config show`, `yoyo config get`, `yoyo doctor`, `yoyo model`, `yoyo permissions`, `yoyo version -v`); `yoyo config show` exits 1 rather than 2. Values read from a file that is not TOML would be guesses, so none of them shows or uses them.
+
+To get going: fix the named line in your editor, or move the file aside (`mv .yoyo.toml .yoyo.toml.bak`); yoyo then uses the next config file it finds, or its defaults.
 
 ## "error: no CA certificates could be loaded"
 

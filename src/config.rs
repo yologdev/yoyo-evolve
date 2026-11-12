@@ -2118,6 +2118,78 @@ pub fn load_config_file() -> (HashMap<String, String>, String) {
     (HashMap::new(), String::new())
 }
 
+/// #1184 slice 1: the real TOML parser (the `toml` crate) is the gate for
+/// every config file yoyo loads. The readers below still hand-parse, so a file
+/// the parser rejects would otherwise run on whatever the hand parser guessed
+/// (`model = m1` ran as model `m1`; two `model =` lines silently took the
+/// last). Returns the located refusal for `content` (read from `shown`), or
+/// `None` when it is valid TOML. Pure, so every door and every test can ask.
+///
+/// The message names `path:line:column` (column counted in characters, as
+/// the parser counts it), the parser's own reason, the offending line with a
+/// caret, what happened, and what to do. Both the path and every echoed line
+/// go through `cli::sanitize_for_display`: the file is untrusted text.
+pub(crate) fn toml_parse_error(shown: &str, content: &str) -> Option<String> {
+    let err = content.parse::<toml::Table>().err()?;
+    let path = crate::cli::sanitize_for_display(shown);
+    let line_col = err.span().map(|span| line_col_at(content, span.start));
+    let (location, line_word) = match line_col {
+        Some((line, col)) => (
+            format!("{path}:{line}:{col}"),
+            format!("line {line} of {path}"),
+        ),
+        None => (path.clone(), path.clone()),
+    };
+    let reason = err.message().trim().to_string();
+    // The crate's Display is "TOML parse error at line L, column C", then a
+    // snippet with a caret, then the reason. Keep only the snippet: the
+    // location and the reason are already in our header line.
+    let rendered = err.to_string();
+    let snippet: Vec<String> = rendered
+        .lines()
+        .skip(1)
+        .filter(|l| !l.trim().is_empty() && l.trim() != reason)
+        .map(crate::cli::sanitize_for_display)
+        .collect();
+    Some(format!(
+        "{location}: config file is not valid TOML: {}\n{}\n\
+         yoyo refuses to use it: values read from a file that is not TOML would be \
+         guesses, so nothing ran and nothing was sent.\n\
+         To fix: correct {line_word}, or move the file aside (yoyo then uses the next \
+         config file it finds, or its defaults).",
+        crate::cli::sanitize_for_display(&reason),
+        snippet.join("\n"),
+    ))
+}
+
+/// 1-based (line, column) of byte offset `at` in `text`, column in chars.
+/// `at` comes from the parser's span (a byte range), so it is clamped to a
+/// char boundary first instead of being trusted as one.
+fn line_col_at(text: &str, at: usize) -> (usize, usize) {
+    let mut at = at.min(text.len());
+    while at > 0 && !text.is_char_boundary(at) {
+        at -= 1;
+    }
+    let before = &text[..at];
+    let line = before.matches('\n').count() + 1;
+    let line_start = before.rfind('\n').map_or(0, |i| i + 1);
+    let col = before[line_start..].chars().count() + 1;
+    (line, col)
+}
+
+/// Print `toml_parse_error`'s refusal and exit
+/// [`crate::config_syntax::CONFIG_SYNTAX_REFUSAL_EXIT`] (2) if `content` is not
+/// TOML. Called by every `load_config_file` hit, so every door that loads the
+/// config (REPL, `-p`, piped, `doctor`, `permissions`, ...) refuses before any
+/// provider call. Not quiet-gated: this is a fault, not chatter.
+fn refuse_if_not_toml(shown: &str, content: &str) {
+    if let Some(msg) = toml_parse_error(shown, content) {
+        use crate::format::RED;
+        eprintln!("{RED}error:{RESET} {msg}");
+        std::process::exit(crate::config_syntax::CONFIG_SYNTAX_REFUSAL_EXIT);
+    }
+}
+
 /// The shared tail of every `load_config_file` hit: announce, check syntax
 /// `parse_config_file` cannot report (#1034 warning; #1036 refusal at agent
 /// entry points), record provenance, parse.
@@ -2129,6 +2201,7 @@ fn accept_loaded_config(
     if !is_quiet() {
         eprintln!("{DIM}  config: {shown}{RESET}");
     }
+    refuse_if_not_toml(shown, &content); // #1184 slice 1: the real parser is the gate
     crate::config_syntax::check_loaded_config(shown, &content);
     crate::config_unknown_keys::warn_unknown_config_keys_once(shown, &content); // #1171
     crate::config_value::warn_unreadable_values_once(shown, &content); // #1177
@@ -2247,6 +2320,10 @@ pub fn loaded_config_is_project_local() -> bool {
     let home = std::env::var("HOME").ok().map(std::path::PathBuf::from);
     config_path_is_project_local(path, &cwd, home.as_deref())
 }
+
+#[cfg(test)]
+#[path = "config_toml_tests.rs"]
+mod config_toml_tests;
 
 #[cfg(test)]
 mod tests {
