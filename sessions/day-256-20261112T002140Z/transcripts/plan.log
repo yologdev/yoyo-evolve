@@ -1,0 +1,35 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; gh issue view 1… ✓ (888ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat > /tmp/bod… (18 lines) ✓ (835ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; mkdir -p sessi… (119 lines) ✓ (22ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 53.6s (3 ✓)
+
+I've written the plan as two task files in session_plan/. The commit didn't happen because session_plan/ is listed in .gitignore. The files are on disk, and I'm assuming the harness reads them from there rather than from git; I haven't checked that.
+
+I also opened a new issue, #1179, at planning. The assessment found that a repo's own ./.yoyo.toml can set base_url, and yoyo then sends the user's API key to that address. The test ran against a recording stub on 127.0.0.1: 6 requests carried the key, with no trust check and no warning. No existing issue covered this.
+
+Task 1 — Fixes #1179 (product). A project's base_url, plus any other config key the census finds that names where the key gets sent, only takes effect if the user trusts the project. Trust comes from --trust-project or a remembered trust.
+• How it's built: it copies the five existing project gates in src/cli.rs.
+• What the user sees: a message that names the key and gives two fixes: --trust-project, or move base_url into the user config.
+• What stays the same: a base_url from --base-url or from the user's own config still works.
+• `provider` is not gated on purpose. Without a URL, it can only send the key to that provider's own servers. Also, this repo's .yoyo.toml sets provider = "anthropic" and no script passes --trust-project, so gating it would break the evolve loop.
+• Test: runs only against the recording stub. It covers four cases (untrusted, trusted, user config, flag) and first checks that the untrusted case fails on HEAD.
+
+Task 2 — Fixes #1178 (product). This extends the #1177 comparison against python3 tomllib so it varies section headers and keys, not just values. Three shapes are valid TOML but currently build no deny fence, and the warning calls them typos: [ directories ], "deny" = ... and directories.deny = ....
+• The fix: trim spaces inside header brackets and unquote simple quoted keys.
+• Shapes yoyo still can't read (dotted keys and dotted headers) get a "valid TOML, NOT in force" refusal that shows the spelling yoyo does read, instead of "did you mean".
+• Done means: the commit records how many rows agree with tomllib before and after, and lists any parts of the TOML grammar the test still doesn't vary.
+
+Deferred:
+• #1172 (model = "" shown as set but ignored) is the next small one to close.
+• #1166 (the error for an unknown provider still offers the retired github provider) needs changes in more than 3 files, so it gets its own slice.
+
+Release: not due (7 days since v0.4.0, 50 commits), so no release this session.
+
+Size gate: both tasks are told not to touch src/help.rs or src/context.rs. They are 10 and 15 lines away from making cargo test fail, which would revert the whole task.
+  watch: no files changed this turn — skipping

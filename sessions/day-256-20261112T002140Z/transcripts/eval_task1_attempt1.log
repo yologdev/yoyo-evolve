@@ -1,0 +1,23 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "parse_model_config(\|se… ✓ (15ms)
+  ▶ $ cd /tmp && rm -rf evt && mkdir -p evt/p evt/h && cd evt/p && git init -q . && pr… ✓ (826ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p ses… (9 lines) ✓ (10ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 27.6s (3 ✓)
+
+Verdict: PASS. A project's .yoyo.toml can no longer send your API key to a server of the repository author's choosing unless you trust the project. I wrote the verdict to session_plan/eval_task_1.md.
+
+• The fix covers both places that read `base_url`. The normal run path (parse_model_config in src/cli.rs) and yoyo review (in src/dispatch_sub.rs) both go through the new check in src/project_base_url.rs.
+• Trust is settled before the check runs. It is decided earlier in src/cli.rs (lines 2579–2639, the check is at 2762), so --trust-project, the remembered trusted-directories list and a yes at the trust prompt all count.
+• Two outcomes when the project isn't trusted:
+  • Providers with their own endpoint (anthropic, ollama, ...): yoyo ignores the project's URL, prints a warning and uses that provider's own endpoint.
+  • `custom` or an unknown provider: yoyo stops with exit 2 and "Nothing was sent", because there is no endpoint of its own to fall back to.
+• I reproduced the refusal case myself. I ran the built binary in a temp repo whose .yoyo.toml set a custom provider and a local URL, with a listener on that port. yoyo printed the message naming base_url, the file and both remedies, exited 2, and the listener received 0 bytes. I didn't run the warn-and-fall-back case by hand, because that would send a request to the real Anthropic host; the new tests cover it with ollama.
+• No loose ends. The new module is registered in main.rs, every new function has a caller, and the trust prompt now lists base_url among the things it asks about. Two existing tests that relied on an untrusted project URL were updated to pass --trust-project.
+• Docs: safety.md and permissions.md are both updated. They also say that a project .yoyo.toml replaces your user-level config entirely, so inside such a repo you need --base-url or --trust-project.
+• Product impact: only untrusted projects change, and only in the safer direction. The evolve loop's own .yoyo.toml sets no base_url, so it is unaffected.
+  watch: no files changed this turn — skipping

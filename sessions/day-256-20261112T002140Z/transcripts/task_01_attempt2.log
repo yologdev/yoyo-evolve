@@ -1,0 +1,43 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+The previous attempt already committed the task. I'll verify it rather than redo it.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | head && git… ✓ (20ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The commit is complete and clean. Now the full gate:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo FMT…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -1 && ca… ✓ (24.4s)
+ ✓ (4m 17s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (4m 21s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 8m 52s (3 ✓)
+
+The task was already committed in b8da66f3 by the attempt that got interrupted, so I didn't redo or add anything. I re-ran every check on that commit and they all pass:
+
+• cargo fmt -- --check passes, and cargo clippy --all-targets -- -D warnings is clean.
+• cargo build and cargo test pass, with no failing suite. The new tests/project_base_url_trust.rs passes all 7 rows.
+• bash tests/harness_logic.sh reports 336 passed, 0 failed.
+• The working tree is clean.
+
+What the commit does (from its message):
+• Which keys it covers: 30 config keys are read from .yoyo.toml, and only one, base_url, names a host the API key is sent to. It's read in two places: the main path in cli.rs and yoyo review in dispatch_sub.rs. Both now go through src/project_base_url.rs. provider is not gated, because without a URL the key only goes to that provider's own host. This repo's own .yoyo.toml sets only provider, so the evolve loop is unaffected.
+• What happens in an untrusted project:
+  • If the provider has its own endpoint (anthropic, openai, ollama…), the project's base_url is ignored with a warning, and the run goes to the provider's normal host.
+  • If the provider is custom or unknown, yoyo refuses with exit code 2 and "Nothing was sent". Ignoring the URL there would send the key to localhost:8080, a host nobody chose.
+• What the message tells the user to do: pass --trust-project or --base-url. It does not suggest moving base_url into the user config, which the task proposed: a project .yoyo.toml replaces the user config file entirely, so that fix wouldn't work inside the very repo that triggers the message.
+• The new test: it uses a recording stub on 127.0.0.1 and a fake key, and never contacts a real vendor. Before the fix, the untrusted rows recorded the key arriving at the stub; after it, they record 0 requests. The four rows that should still work (--trust-project, base_url in the user config, --base-url, and trust given another way) all reach the stub.
+
+What was checked how: -p and yoyo review were tested by actually running them. The REPL, piped mode, side and sub agents, /provider and --fallback were checked only by reading the code: they all take the URL from the already-gated value. Nothing was found still leaking, so no new issue was needed.
+
+There's nothing left to commit. Fixes #1179 will close the issue when this is pushed.
+  watch: no files changed this turn — skipping

@@ -1,0 +1,29 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls target/debug/yoyo && grep -rn… ✓ (31ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -2; B=$P… ✓ (10.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p ses… (9 lines) ✓ (11ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 29.3s (3 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_2.md.
+
+I rebuilt the binary and ran yoyo permissions in a temporary repo for each shape:
+
+| What the config says | Result |
+|---|---|
+| [ directories ] then deny = ["/etc"] | The /etc deny rule is now in force |
+| directories.deny = ["/etc"] at top level | The /etc deny rule is now in force |
+| [directories] then "deny" = ["/etc"] | The /etc deny rule is now in force |
+| [directories.x] then deny = [...] (a shape yoyo still doesn't read) | Warns that this is valid TOML yoyo doesn't read, that the rule is NOT in force, and shows the [directories] spelling. It doesn't call it a typo or say "did you mean". |
+
+• Matches the task: header names are now trimmed and unquoted by toml_section_header, and quoted and top-level dotted keys are read by two new helpers. The unknown-key warning uses the same helpers as the readers, so they can't disagree.
+• Test against Python's TOML reader: the new test varies the header and key spellings, lists which parts it keeps fixed, and expects exactly 3 shapes to get the warning instead of being read.
+• Nothing left unused: every new helper has a caller in the diff, and the new warning type is handled everywhere the existing types are. Every call to toml_section_header I found in config.rs and config_value.rs was updated for its new return type.
+• Docs: none needed. No documented key, flag or default changed; yoyo just reads more correct spellings of keys it already supported.
+
+I didn't run the full test suite again, since the harness already reported build and tests passing.
+  watch: no files changed this turn — skipping
