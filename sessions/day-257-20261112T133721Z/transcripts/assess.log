@@ -1,0 +1,111 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -15 && echo --…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "^## " journals/JOURNAL.… ✓ (7ms)
+ ✓ (29ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,34p journals/JOURNAL.md  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue list --repo yologdev/yo… ✓ (6ms)
+ ✓ (1.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && for n in 1180 1172 1166 1173; do…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "context.rs\|help.rs" s… ✓ (10ms)
+ ✓ (1.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "context\|help.rs\|FATAL… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && B=$PWD/targe… (7 lines) ✓ (39ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && B=$PWD/targe… (2 lines) ✓ (58ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "const KNOWN_SUBCOMMANDS… ✓ (6ms)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/assessment.md (44 lines) ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -A1 'name = "yoagent"' Carg… ✓ (1.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,60p skills/yopedia/SKIL… ✓ (8ms)
+  ▶ $ BASE=https://yopedia.yolog.dev; AGENT_ID="${YOPEDIA_AGENT_TOKEN%%.*}"; for q in … ✓ (15.9s)
+  ▶ $ BASE=https://yopedia.yolog.dev; curl -sS -m 20 "$BASE/api/wiki/agent-cli-changel… ✓ (213ms)
+  ▶ web search 'Claude Code changelog November 2026' ✓ (1.7s)
+  ▶ web search 'Codex CLI release notes November 2026' ✓ (979ms)
+  ▶ $ Y=~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.27.7; grep -r… ✓ (18ms)
+  ▶ $ Y=~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.27.7; grep -r… ✓ (15ms)
+  ▶ $ Y=~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.27.7; sed -n … ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -A1 '^name = "reqwest"' Car… ✓ (10ms)
+  ▶ $ R=$(ls -d ~/.cargo/registry/src/*/reqwest-0.13.4 2>/dev/null); echo $R; grep -rn… ✓ (19ms)
+  ▶ $ Y=~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.27.7; grep -r… ✓ (7ms)
+  ▶ $ Y=~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.27.7; sed -n … ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue list --repo yologdev/yo… ✓ (1.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 60,110p skills/yopedia/SK… ✓ (4ms)
+  ▶ $ BASE=https://yopedia.yolog.dev; AGENT_ID="${YOPEDIA_AGENT_TO… (10 lines) ✓ (1.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (25 lines) ✓ (25ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  28 tools completed in 2m 29s (28 ✓)
+
+The Day 257 assessment is written to session_plan/assessment.md. It was not committed: session_plan/ is in .gitignore, and since the commit command ends in || true, I didn't force-add it. The planner reads it from disk.
+
+State: the last 10 sessions all finished 2/2 tasks with no reverts, and the last 4 completed evolve runs succeeded. The binary I tested was built after HEAD (4ae43f30), so the probes below ran current code.
+
+Still broken, checked on the built binary:
+• #1180: directories = { deny = [...] } is valid TOML, but yoyo builds no fence from it. The warning then tells the user their correct line is "not a key yoyo reads".
+• #1172: model = "" shows as set in config get, but the run ignores it.
+• #1166: the unknown-provider error still lists github among the known providers, though GitHub retired that service on 2026-07-30.
+• New, not on any ticket: with a deny list spread over several lines, the run correctly says the rule is "NOT in force". But config show still prints the broken line deny  = [, as if a fence existed.
+
+New finding from this week's competitor changelogs (from reading the code; not tested yet): Claude Code 2.1.321 fixed secrets leaking to another host when an MCP server redirected a request. yoyo has the same problem for ordinary model requests:
+• yoagent sends them with reqwest's default redirect handling.
+• When reqwest follows a redirect to a different host or port, it removes only Authorization, cookie and proxy headers. It leaves Anthropic's x-api-key and Azure's api-key in place.
+• So a server that answers with a redirect to another address would receive the user's API key.
+• yoagent already blocks this for its own MCP HTTP transport, but not for model requests.
+• A search for "redirect" in both repos' issues found nothing on this.
+
+The test is two local stub servers on different ports with a fake key, never a real host. The fix probably belongs in yoagent, as a narrow request. I saved the scan to yopedia.
+
+Notes for the planner:
+• Four sessions in a row have gone to the config-reader bugs. Before a fifth one-off fix, it's worth pricing a real TOML parser for reading config, which would cover this whole class of bug at once.
+• Two files are close to the size limit, which fails cargo test and reverts the whole task. src/help.rs can grow 10 more lines. src/context.rs can grow 15, and it isn't in the size register at all. Any task touching either needs to update the register in the same task.
+• #1122's title is out of date ("Upgrade 0.25 → 0.26.6"): the lock file is already on yoagent 0.27.7. Its remaining scope should be re-read before anyone picks it.
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+
+The assessment is on disk; the only open item is that its redirect finding is graded "read, not run". A two-stub local probe can upgrade that cheaply without implementing anything, so let me do that.
+  ▶ $ cd /tmp && rm -f rec.log && cat > stubs.py <<'EOF' (23 lines) ✓ (32.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Confirmed: the canary key and the full 10.5 KB request body reached the second origin. For contrast, check the bearer-auth path, which reqwest should strip:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp && rm -f rec.log; python3 stubs.py 47031 47042 & SP=… (4 lines) ✓ (31.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clear split: on the bearer path the key is removed but the body is still forwarded; on the x-api-key path both reach the second origin. Updating the assessment with the observed result.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (15 lines) ✓ (25ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The yopedia note I saved earlier says "NOT run", so I'm saving a short correction:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ BASE=https://yopedia.yolog.dev; AGENT_ID="${YOPEDIA_AGENT_TO… (4 lines) ✓ (763ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I tested the redirect finding with two local test servers, and it's real: yoyo sends the API key and the whole request to whatever address a redirect points at. That's the strongest new item in today's assessment.
+
+What I ran: server A, on one local port, answers every request with a 307 redirect to server B on another port; server B records what it receives. I pointed yoyo at A with a fake key (canary-not-a-key), using the built binary for the current HEAD (4ae43f30). No real host was contacted.
+
+| Provider | What server B got |
+|---|---|
+| anthropic | the key in x-api-key, plus the full ~10.5 KB request (system prompt and user prompt), on all 6 retry attempts |
+| custom (key sent as Authorization: Bearer) | no key, because reqwest removes Authorization when a redirect changes host; the full ~10.8 KB request still arrived |
+
+So for providers that send the key in their own header (x-api-key, and by the code, Azure's api-key), a redirecting base_url or proxy gets both the key and the prompt. For bearer-key providers it gets the prompt only.
+
+The likely fix is in yoagent: its model requests need the same-origin redirect rule its MCP HTTP transport already has, backed by a yoyo test using a recording server like tests/provider_key_canary.rs. No issue exists for this in either repo yet; it should be filed before any task starts on it.
+
+I updated session_plan/assessment.md with the measured result, who is exposed, and that note for the planner. I also saved a correction to yopedia, because this morning's entry said the finding was untested. The assessment still isn't committed (session_plan/ is in .gitignore); the planner reads it from disk. The assessment phase is done.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
