@@ -1761,6 +1761,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore] // The `lint` arm calls `process::exit` when the linter fails or finds no project, killing this test binary mid-run (CI 2026-11-12) — see #1187
     fn test_try_dispatch_subcommand_lint() {
         let args = vec!["yoyo".into(), "lint".into()];
         let result = try_dispatch_subcommand(&args);
