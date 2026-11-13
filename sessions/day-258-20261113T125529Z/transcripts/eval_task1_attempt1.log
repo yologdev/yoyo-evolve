@@ -1,0 +1,52 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "process::exit" src | gre… ✓ (18ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 275,320p src/commands_lint.… ✓ (31ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; mkdir -p sessi… (9 lines) ✓ (9ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 18.1s (3 ✓)
+
+Verdict: PASS. The diff does what the task asked, and I've written the verdict to session_plan/eval_task_1.md. I didn't re-run the suite; build and tests had already passed in the harness.
+
+• One exit point: exit_process in src/dispatch_sub.rs is now the only way out. A real build calls std::process::exit(code). In unit tests it panics with a message naming #1187, so the test that reaches it fails by name and the rest keep running.
+• What was routed through it: all 9 exits in dispatch_sub.rs, plus 11 in cli.rs and one each in config.rs, config_syntax.rs and project_base_url.rs. That is more than the task listed. The commit explains why: those sites sit inside functions that unit tests call. Each change is a one-line swap, so the shipped binary exits with the same codes as before.
+• Remaining direct exits: grepping src/ now finds only the one inside exit_process, 4 in main.rs and 1 in prompt/sigterm.rs. That matches the guard's register in tests/process_exit_sites.rs exactly.
+• The lint test: it is un-ignored and now tests lint_shell_status on lint zz (returns 2) and lint fix (returns the "needs an interactive session" code). I read commands_lint.rs: both return before any linter runs.
+• The guard test: it fails by file and line if a new direct exit appears or a registered count moves either way. It also checks that the walk found more than 10 files and that it can see the exit inside exit_process, so a broken scan can't pass silently.
+• Leftovers and docs: NEUTERED count in dispatch_sub.rs is 0. ARCHITECTURE.md has a new Day 258 entry describing the change.
+• Product surface: not touched, since real binaries behave the same.
+
+One small inconsistency to tidy: the commit title says "Part of #1187" but the body says "Fixes #1187". The task asked for "Fixes" when every remaining site is unreachable from unit tests, and the body claims that, so the body is the intended one.
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -c '^Checked: ' session_plan/… ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+There's nothing left for me to do here. My job was to evaluate Task 1 and then stop without changing code, and that's done.
+
+I re-checked the verdict file, session_plan/eval_task_1.md. It has the Verdict: PASS line, the reason, and all four Checked: lines filled in, with no placeholder text left. git status shows no changes in the working tree, so I didn't modify any code during the evaluation.
+
+Two things are still open, but they belong to whoever implemented the task or to the session wrap-up, not to me:
+
+• Census comment on #1187: the task asked for the per-site census to be posted as a comment on #1187 as well as in the commit body. I didn't check whether that comment was posted.
+• Commit title vs. body: the commit title says "Part of #1187" but the body says "Fixes #1187". The body's claim (every remaining direct exit is unreachable from unit tests) matches what I checked, so "Fixes" looks like the intended one. The title should be fixed in a later commit, not by me.
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 20 gh issue view 1187 --co… ✓ (31ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 20 gh issue view 1187 --js… ✓ (406ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.8s (2 ✓)
+
+The evaluation is finished, and the one open item I could check myself is now confirmed, so nothing else is mine to do. My verdict for Task 1 is still PASS, in session_plan/eval_task_1.md.
+
+• Census comment on #1187: it was posted at 2026-11-13 12:03 and opens with the scope, as the task required: "Scope: done-when met. No unit test can reach process::exit … lint test un-ignored; cargo test + clippy green." I only read its first 200 characters, so I haven't checked the per-site table in it.
+• #1187 is still open. The commit body says "Fixes #1187", but I didn't check whether the commit has reached main yet, so I can't say whether the issue will close on its own.
+• Title vs. body mismatch: the commit title says "Part of #1187" while the body says "Fixes #1187". That is still unfixed. Because I'm the evaluator, I didn't edit the commit; it can be corrected in a later commit.
+  watch: no files changed this turn — skipping

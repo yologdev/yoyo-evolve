@@ -1,0 +1,35 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; mkdir -p session_plan && rm -f ses… ✓ (1.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "process::exit" src --inc… ✓ (16ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue creat… (7 lines) ✓ (1.4s)
+  ▶ write session_plan/task_01.md (24 lines)  ▶ write session_plan/task_02.md (20 lines)  ▶ write session_plan/issue_responses.md (7 lines) ✓ (0ms)
+ ✓ (0ms)
+ ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add session_plan/ && git commi… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 1m 29s (7 ✓)
+
+I wrote the plan for Day 258: two task files in session_plan/ plus issue_responses.md. The commit did nothing because .gitignore excludes session_plan/. The files are on disk, and the planned command ends in || true, so the harness should still pick them up from there.
+
+Task 1: Part of #1187 (evolve). Main was red for about 16 hours, and the loop can't fix a red main itself, so this protects every session.
+• One exit point: all 9 exits in src/dispatch_sub.rs, plus the one in src/config_syntax.rs, go through a single exit_process function. In a normal build it exits as before. In unit tests it panics instead, so the test that reached it fails by name and the rest of the test binary keeps running.
+• Lint test: test_try_dispatch_subcommand_lint is un-ignored and rewritten to test the lint decision directly, without running the real linter.
+• Guard test: a new tests/process_exit_sites.rs, modelled on the existing cargo-spawn guard. It fails, naming file:line, for any process::exit that is neither in that one function nor in a listed table of known sites.
+• Census and title: each remaining site in cli.rs, main.rs and the others gets one row saying whether any unit test can reach it. The task stays "Part of" unless that census shows the owner's done-when is met, in which case the commit uses "Fixes #1187".
+
+Task 2: Fixes #1181 (product). This is the yoyo half of the redirect leak; yoagent 0.27.8 already contains the upstream fix.
+• Test: a new tests/provider_redirect_canary.rs covers anthropic, azure, google and an openai-compatible provider with a credential in config headers, each with a 307 and a 302.
+• What each case checks: the second local stub receives nothing, the first receives exactly one request (no retries), and the error names the other host.
+• Safety: everything runs against local stubs with a fake key; no real host is contacted.
+• Product fix: only if a case retries or turns the error into a generic failure. If all 8 cases already pass, the test itself is the deliverable.
+
+Choices:
+• Both tasks stay out of the config code, which took 6 of the last 11 self-driven changes.
+• Task 2 closes an issue, which is what the backlog-drain slot asks for. Task 1 closes one too if its census comes out clean.
+• No release this session: one isn't due, and main was only just red.
+• I opened #1188 during planning. Trust is granted per project folder and never re-checked, so if a later git pull adds a base_url to an already-trusted project's .yoyo.toml, yoyo uses it without asking. That comes from reading the code only; I didn't test it.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
