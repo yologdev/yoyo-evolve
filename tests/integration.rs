@@ -426,6 +426,29 @@ fn help_output_lists_all_documented_cli_flags() {
     }
 }
 
+/// #1190: with no `--max-tokens`, yoyo never calls `with_max_tokens`, so the
+/// request carries the model preset's value (anthropic.rs / openai_compat.rs in
+/// yoagent 0.27.8) or no field at all (google, vertex, bedrock, responses), and
+/// the provider applies its own. "default: 8192" was false for most users.
+#[test]
+fn help_max_tokens_line_names_per_model_default_not_8192() {
+    let output = yoyo_cmd()
+        .arg("--help")
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to run yoyo");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let line = stdout
+        .lines()
+        .find(|l| l.trim_start().starts_with("--max-tokens"))
+        .expect("--help should have a --max-tokens line");
+    assert!(!line.contains("8192"), "stale default in: {line}");
+    assert!(
+        line.contains("(default: per model, from its preset or the provider)"),
+        "unexpected --max-tokens default wording: {line}"
+    );
+}
+
 #[test]
 fn help_output_lists_all_documented_repl_commands() {
     let output = yoyo_cmd()

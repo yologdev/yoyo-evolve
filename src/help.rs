@@ -81,7 +81,7 @@ pub fn cli_help_text() -> String {
     );
     let _ = writeln!(
         s,
-        "  --max-tokens <n>  Maximum output tokens per response (default: 8192)"
+        "  --max-tokens <n>  Maximum output tokens per response (default: per model, from its preset or the provider)"
     );
     let _ = writeln!(
         s,

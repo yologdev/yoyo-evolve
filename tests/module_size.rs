@@ -576,7 +576,8 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 254 (#1169): 2032 -> 2037, `git_stdout` (one trim_end decoder shared by
     // run_git/run_git_in_dir, net +2) and the 3-line `#[path]` wiring of git_porcelain_tests.rs.
     ("src/git.rs", 2037),
-    ("src/help.rs", 2856), // Day 196: +71 drift paid off (pasted from what the gate printed).
+    // Day 258 (#1190): 2856 -> 2946, drift paid off; the #1190 fix itself is a line swap (+0).
+    ("src/help.rs", 2946), // Day 196: +71 drift paid off (pasted from what the gate printed).
     // Day 197: the stdin channel (`hook_stdin_payload` + its guards) crossed the
     // cap. Registered rather than split, on the Day-183 `prompt_retry.rs`
     // precedent: registering is this gate's OWN stated remedy, while the better
