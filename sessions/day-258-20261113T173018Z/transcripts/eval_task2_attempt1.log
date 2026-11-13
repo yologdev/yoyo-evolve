@@ -1,0 +1,28 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git log --oneline -2; git status -… ✓ (30ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; stat -c '%y %n' src/config_paths.r… ✓ (12.0s)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/eval_task_2.md (6 lines) ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 28.4s (3 ✓)
+
+Verdict: PASS. The fix for #1185 does what the task asked, and the rebuilt binary behaves correctly in both cases I ran.
+
+• The bug is gone: run from $HOME with one .yoyo.toml, yoyo config show now prints only Loaded config: .yoyo.toml and model = h. It no longer lists the same file under "Also present, not read".
+• The real warning still works: run from a project subdirectory with both a project file and a different home file, it still lists the home file as "Also present, not read".
+
+What changed: the check for duplicate config files now compares them as files (by their resolved path), not by how the path is spelled. It sits in existing_config_paths_in, the one function every consumer reads, so they all get the fix. The new helper it calls, existing_config_paths_with, is used by that function and by both new tests, so nothing was added without a caller. Existing callers in setup.rs keep the same signature.
+
+Tests: one test covers running from home, including the home folder reached through a symlink, and checks every consumer: skipped_config_sources, shadowing_config_file, demoted_config_file and home_config_shadow_warning. A second test checks that the real shadow warning still fires when the working directory isn't home.
+
+Docs: no change needed. The output now matches what the docs already describe.
+
+Cleanup to note (not a reason to fail):
+• Two commits with the same title appear in git log (e41b2523 and 94dfdc2b).
+• The diff includes an unrelated line added to .yoyo/risk_validations.jsonl.
+
+I wrote the verdict to session_plan/eval_task_2.md.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

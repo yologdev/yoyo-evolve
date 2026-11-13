@@ -1,0 +1,143 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | head; sed -… ✓ (22ms)
+  ▶ read src/config_paths.rs:1..261  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn home_config_path\|fn… ✓ (2ms)
+ ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 105,135p src/commands_con… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2085,2150p src/config.rs ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "existing_config_paths_i… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "config_paths\|DEFAULT_C… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "LINE_CAP\|const\|2000\|… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -1 && B=… ✓ (120ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  9 tools completed in 38.0s (9 ✓)
+
+Reproduced. Now the fix: a path-taking seam plus identity dedup in the authority.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/config_paths.rs (25 → 48 lines)
+    pub(crate) fn existing_config_paths_in(project_dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+  -     let mut found = Vec::new();
+  +     existing_config_paths_with(
+  +         project_dir,
+  +         crate::cli::home_config_path(),
+  +         crate::cli::user_config_path(),
+  +     )
+  + }
+  + 
+  + /// [`existing_config_paths_in`] with the two user-level rungs passed in, so tests
+  + /// can point `~` at a tempdir without touching `$HOME` (#1185).
+  + ///
+  + /// Rungs are deduplicated by **file identity**, keeping the higher one: run from
+  + /// `$HOME` and the project rung `./.yoyo.toml` *is* `~/.yoyo.toml`, and a symlink
+  + /// can make any two rungs one file. Listed twice, every consumer reads the file
+  + /// yoyo loads as a lower rung it skipped: `/config show` said "Also present, not
+  + /// read ... nothing in the file(s) above takes effect" about the live config, and
+  + /// `/config set --global` from `$HOME` warned that its write was shadowed by
+  + /// itself. Identity is `canonicalize`, falling back to the absolute path when
+  + /// that fails (the file exists, so it rarely does).
+  ... (39 more lines)
+ ✓ (5m 3s)
+    pub(crate) fn existing_config_paths_in(project_dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+  -     let mut found = Vec::new();
+  +     existing_config_paths_with(
+  +         project_dir,
+  +         crate::cli::home_config_path(),
+  +         crate::cli::user_config_path(),
+  +     )
+  + }
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && rustc --version; grep -n "pub fn… ✓ (16ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 820,830p src/config_paths… ✓ (5ms)
+  ▶ edit src/config_paths.rs (5 → 87 lines)
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+  + 
+  +     // === #1185: a rung that is the same file as a higher rung is one config ===
+  +     //
+  +     // Running from $HOME makes the project rung `./.yoyo.toml` and the home rung
+  +     // `~/.yoyo.toml` one file. Every consumer of the chain is asserted on its own
+  +     // output, over a tempdir standing in for both cwd and HOME (no env, no cwd).
+  +     #[test]
+  +     fn cwd_is_home_lists_the_one_config_once_and_no_consumer_calls_it_skipped() {
+  +         let tmp = tempfile::tempdir().unwrap();
+  +         let home_dir = tmp.path().join("home");
+  +         std::fs::create_dir_all(&home_dir).unwrap();
+  +         let home_file = home_dir.join(".yoyo.toml");
+  +         std::fs::write(&home_file, "model = \"m1\"\n").unwrap();
+  +         let xdg = home_dir.join(".config/yoyo/config.toml"); // absent
+  + 
+  +         // Two spellings of "cwd is HOME": the same string, and a symlinked dir
+  +         // whose path differs from HOME's but names the same file.
+  ... (67 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo test --bin yo… ✓ (5m 15s)
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+  + 
+  +     // === #1185: a rung that is the same file as a higher rung is one config ===
+  +     //
+  +     // Running from $HOME makes the project rung `./.yoyo.toml` and the home rung
+  +     // `~/.yoyo.toml` one file. Every consumer of the chain is asserted on its own
+  ... (13 more lines)
+ ✓ (5m 15s)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 10m 50s (5 ✓)
+
+Positive control: neuter the dedup, confirm the new test fails by name, then restore — all in one command.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/config_paths.rs /tmp/cp.b… ✓ (1m 7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control fires and restores clean. Now build-then-probe, and the post-fix near-miss probe from a different cwd:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -1 && B=… ✓ (10.6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both directions are right. Next, the full gate:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (4m 37s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -cE "FAIL… ✓ (4m 12s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 9m 3s (2 ✓)
+
+All green: 0 failures, clippy and fmt clean, config_paths.rs at 1875/2000 lines. No doc describes the double-listing. Committing:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (48 lines) ✓ (15ms)
+
+I fixed #1185: when you run yoyo from your home directory, it no longer tells you your own config file is "not read". All checks pass (build, tests, clippy, fmt), and it's committed as 94dfdc2b.
+
+The bug: In $HOME, ./.yoyo.toml and ~/.yoyo.toml are the same file, but existing_config_paths_in listed it twice. So yoyo config show printed the live config under "Also present, not read … nothing in the file(s) above takes effect". There was a second symptom I hadn't been asked about: /config set --global run from $HOME warned that the file it had just written was overridden by itself.
+
+The fix (in src/config_paths.rs): existing_config_paths_in now passes through to a new existing_config_paths_with(project_dir, home, xdg). That function treats two entries as one when they resolve to the same file on disk, and keeps the higher-precedence one. Because every consumer reads this one function, they all get the fix together: /config show, the /config get note, the /config set shadow warning, and the setup wizard's shadow and demoted checks. The same check also covers a project or XDG config that is a symlink to ~/.yoyo.toml.
+
+Tests:
+• Same-file case: run from $HOME, tested both as the same path and through a symlinked directory. The file is listed once, and each consumer is checked on its own output.
+• Different-files case: project, home and XDG files are all distinct. The home file is still reported as not read, so the genuine warning still fires.
+• Proof the test catches the bug: I temporarily disabled the dedup, the first test failed by name, and I put the code back. No marker was left behind and all 37 tests in the module pass.
+
+Built binary, using the repro from the issue:
+• Before: it printed "Also present, not read: /tmp/…/.yoyo.toml".
+• After: it prints only Loaded config: .yoyo.toml and model = m1.
+• Run from a subdirectory with its own config: it still lists $HOME/.yoyo.toml as not read, which is correct.
+
+No docs needed changing, since none of them describe the double listing. config_paths.rs is now 1875 lines, under the 2000-line cap.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 1/1 changed files were in top-10 predictions (100.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 1/1 (100.0%) — reactive was 100.0%
+     Predicted correctly: src/config_paths.rs
