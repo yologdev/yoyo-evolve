@@ -1,0 +1,116 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | head; grep …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1735,1800p src/safety.rs;… ✓ (9ms)
+ ✓ (34ms)
+  ▶ read src/tool_wrappers.rs:1276..1301  ▶ read src/safety.rs:4370..4410  ▶ read src/safety.rs:2170..2220 ✓ (2ms)
+ ✓ (3ms)
+ ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "const RM\b\|const RM:" … ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 4255,4272p src/safety.rs;… ✓ (7ms)
+  ▶ write src/read_guard_delete_tests.rs (101 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/s… (7 lines) ✓ (3m 26s)
+ ✗ (3m 26s)
+    │ Command timed out after 120s
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 580 cargo test --lib rea… ✓ (122ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 580 cargo test --lib rea… ✓ (122ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 580 cargo test --bin yoy… ✓ (150ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  12 tools completed in 3m 58s (11 ✓, 1 ✗)
+
+Red as expected: before the fix, 12 of the 17 non-control delete rows ran under read mode (find -delete, dd of=, git clean, rsync --delete and git rm were already refused). Now the fix:
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (13 lines) ✓ (20ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read src/safety.rs:1746..1751 ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 9.2s (2 ✓)
+
+Now update the old a_scratch_path_delete test, whose verdict was per classifier:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/safety.rs (15 → 16 lines)
+  -     /// Recorded because it *looks* like a hole and is not. `rm` is
+  -     /// deliberately absent from `WRITE_VERBS` — deletion is the destructive
+  -     /// classifier's job — and a scratch path is not a system target, so both
+  -     /// classifiers return `None` here **with or without** a prefix. The
+  -     /// prefix changes nothing; measuring the unprefixed twin is what settles
+  -     /// it, rather than reading the prefixed row alone and inventing a hole.
+  +     /// Superseded verdict, recorded rather than erased: this test was named
+  +     /// `..._is_not_a_hole_it_is_unclassified_either_way` and called deletion
+  +     /// "the destructive classifier's job", so both classifiers returned `None`
+  +     /// and the read guard, which composes both, ran the delete (#1192). Now
+  +     /// `rm` is in `WRITE_VERBS`, so the write classifier refuses it with or
+  +     /// without a prefix, while the destructive one still (correctly) does not
+  +     /// call a scratch path a system target.
+        #[test]
+  -     fn a_scratch_path_delete_is_not_a_hole_it_is_unclassified_either_way() {
+  +     fn a_scratch_path_delete_is_refused_as_a_write_with_or_without_a_prefix() {
+            let bare = format!("{RM} -rf /tmp/yoyo-probe");
+            let prefixed = format!("FOO=1 {bare}");
+  -         assert_eq!(detect_write_command(&bare), None);
+  -         assert_eq!(detect_write_command(&prefixed), None);
+  ... (5 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 3727,3770p src/safety.rs … ✓ (5m 57s)
+  -     /// Recorded because it *looks* like a hole and is not. `rm` is
+  -     /// deliberately absent from `WRITE_VERBS` — deletion is the destructive
+  -     /// classifier's job — and a scratch path is not a system target, so both
+  -     /// classifiers return `None` here **with or without** a prefix. The
+  -     /// prefix changes nothing; measuring the unprefixed twin is what settles
+  -     /// it, rather than reading the prefixed row alone and inventing a hole.
+  +     /// Superseded verdict, recorded rather than erased: this test was named
+  +     /// `..._is_not_a_hole_it_is_unclassified_either_way` and called deletion
+  ... (13 more lines)
+ ✓ (5m 57s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "touch\b.*mkdir\|mkdir.… ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "/read" docs/src/usage/… ✓ (9ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 6m 3s (4 ✓)
+
+No docs list enumerates what /read refuses, so nothing there to update. Size gate:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && wc -l src/safety.rs… ✓ (1.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (9 lines) ✓ (19ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 590 cargo clippy --all-t… ✓ (2.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && (timeout 1700 cargo test > /tmp/… ✓ (9m 50s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -E "test result|FAILED|pani… ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 10m 12s (5 ✓)
+
+Everything passes: 44 test binaries ok, plus clippy and fmt. Committing:
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status -… (36 lines) ✓ (26ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+/read and /plan now refuse bash deletes. The fix is committed as ca499d89 (Fixes #1192), and build, test, clippy and fmt all pass.
+
+The bug: both modes say "read-only commands are allowed", but rm -rf src/ still ran. The read guard checks commands with two classifiers. The write classifier's verb list had no delete verbs, and the destructive classifier only flags system paths, so a delete of project files passed both.
+
+The fix: I added rm, rmdir, unlink and shred to that verb list in src/safety.rs. The read guard is still the only production caller of the write classifier (I re-grepped), so changing the list fixes it there and nowhere else.
+
+What the new tests show: src/read_guard_delete_tests.rs runs each command through the same two checks the guard runs. I ran it once before the fix and it failed as expected.
+• Before: 12 of the 17 delete/write commands got through, including rm -rf src/, sudo rm, env rm, /bin/rm, rmdir, unlink, shred -u, echo $(rm x) and ls && rm x.
+• Already refused before the fix: find -delete, dd of=, git clean -fdx, rsync --delete and git rm.
+• After: all 17 are refused, plus the two existing cases (chmod, touch). All 8 commands that only mention a delete word, like grep -rn rm src/ and cat rmdir.txt, are still allowed.
+
+Nothing was left over, so I didn't file a follow-up issue.
+
+Old test: a_scratch_path_delete_is_not_a_hole_... asserted that rm -rf /tmp/... gets through both checks, which was the bug itself. I renamed it to a_scratch_path_delete_is_refused_as_a_write_with_or_without_a_prefix, made it assert the refusal, and kept the old verdict in its comment marked as superseded.
+
+src/safety.rs grew from 4783 to 4789 lines; I updated its entry in tests/module_size.rs. No docs page lists what /read refuses, so there were no docs to change.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 1/2 changed files were in top-10 predictions (50.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/2 (0.0%) — reactive was 50.0%
+     Predicted correctly: src/safety.rs
+     Surprises (not predicted): src/read_guard_delete_tests.rs

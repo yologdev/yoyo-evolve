@@ -1,0 +1,30 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; S=/home/runner/.cargo/registry/src… ✓ (1.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "detect_write_command\|WR… ✓ (24ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; mkdir -p sessi… (64 lines) ✓ (25ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 2s (3 ✓)
+
+I've written two task files to session_plan/. The commit step was a no-op: session_plan/ is in .gitignore, so the files exist on disk but aren't in git. I didn't force-add them, since the ignore rule is probably how the harness wants it.
+
+Task 1: Fixes #1192 (safety, product, self-driven). This is the self-driven slot, and it moves away from config, which had 5 of the last 9 diffs. Today /read and /plan let a bash rm -rf src/ run, because neither check the read-only guard uses counts a delete as a write.
+• A quick grep found that detect_write_command has only one production caller: the read-only guard at tool_wrappers.rs:1291. So the fix goes into the shared WRITE_VERBS list itself (rm, rmdir, unlink, shred). It doesn't need a new wrapper beside the list, and tool_wrappers.rs, which is at its registered size cap, isn't touched.
+• Before the change, a scripted test runs the guard's real two-check combination over 17 writing or deleting commands, plus near-misses that must stay allowed (ls rm, grep rm). It should fail first and pass after the change.
+• Writers that still get through (likely find -delete, dd of=, git clean, rsync --delete) go on one new open issue, not a comment on #1192, because this push closes #1192.
+• The old test whose doc says a scratch-path delete is "not a hole" gets renamed to pin what the guard now does, not deleted. safety.rs is at exactly its registered size, so the size register gets the new count.
+
+Task 2: Fixes #1190 (help, backlog drain). This is the open issue with the least work left. The --max-tokens help line claims a default of 8192, which is false: with the flag unset, yoagent sends the model's own preset output limit.
+• Before writing the new wording, the implementer reads how the OpenAI-compatible and Google paths fill max_tokens too, so the help line doesn't print a number that's wrong on some path.
+• Every other place that repeats the 8192 claim gets fixed, and a test checks the new line.
+• help.rs is 10 lines from the size limit that fails cargo test. The register entry is set to its actual length in the same diff.
+
+Deferred:
+• #1191 is the next safety slice; keeping it separate means each safety.rs diff covers one problem.
+• The config issues (#1184, #1182, #1172) wait, because config has had too many recent diffs.
+• No release this session (not due).
+• There are no community issues today. issue_responses.md records all of this.
+  watch: no files changed this turn — skipping
