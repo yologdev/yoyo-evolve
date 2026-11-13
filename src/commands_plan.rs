@@ -568,16 +568,12 @@ pub fn task_looks_nontrivial(task: &str) -> bool {
 
     // Signal 3: implementation-verb cues — match whole words to avoid substring noise.
     const IMPL_VERBS: &[&str] = &["refactor", "migrate", "implement", "integrate", "redesign"];
-    if words.iter().any(|w| {
+    words.iter().any(|w| {
         let cleaned = w
             .trim_matches(|c: char| !c.is_alphanumeric())
             .to_lowercase();
         IMPL_VERBS.contains(&cleaned.as_str())
-    }) {
-        return true;
-    }
-
-    false
+    })
 }
 
 /// Pure decision helper combining the explicit flags with the auto-escalation

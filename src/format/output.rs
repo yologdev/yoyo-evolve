@@ -709,10 +709,7 @@ fn is_diagnostic_header(line: &str) -> bool {
         }
     }
     // TypeScript: "src/index.ts(5,3): error TS2322:"
-    if t.contains("error TS") && t.contains(':') {
-        return true;
-    }
-    false
+    t.contains("error TS") && t.contains(':')
 }
 
 /// Maximum number of diagnostic blocks to include in compiler-aware truncation.

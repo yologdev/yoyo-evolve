@@ -444,11 +444,7 @@ pub fn is_retriable_error(error_msg: &str) -> bool {
     // errors carrying those words — every error-shaped hit is self-authored
     // prose about this detector. They stay because the corpus is absent, not
     // because they were shown load-bearing; see `broad_word_tests`.
-    if mentions_retry_directive(&lower) {
-        return true;
-    }
-
-    false
+    mentions_retry_directive(&lower)
 }
 
 /// True when a tool error is a *deterministic refusal* — a guard that will
