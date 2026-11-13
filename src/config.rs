@@ -2186,7 +2186,7 @@ fn refuse_if_not_toml(shown: &str, content: &str) {
     if let Some(msg) = toml_parse_error(shown, content) {
         use crate::format::RED;
         eprintln!("{RED}error:{RESET} {msg}");
-        std::process::exit(crate::config_syntax::CONFIG_SYNTAX_REFUSAL_EXIT);
+        crate::dispatch_sub::exit_process(crate::config_syntax::CONFIG_SYNTAX_REFUSAL_EXIT);
     }
 }
 

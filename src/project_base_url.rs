@@ -130,7 +130,7 @@ pub(crate) fn resolve_base_url(
     // run stopped), which is not informational chatter.
     if refused {
         eprintln!("{RED}error:{RESET} {msg}");
-        std::process::exit(2);
+        crate::dispatch_sub::exit_process(2);
     }
     eprintln!("{YELLOW}warning:{RESET} {msg}");
     gated.base_url

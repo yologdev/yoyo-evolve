@@ -221,7 +221,7 @@ pub(crate) fn check_loaded_config(shown: &str, content: &str) {
         if let Some(msg) = config_syntax_refusal(shown, content) {
             use crate::format::{RED, RESET};
             eprintln!("{RED}error:{RESET} {msg}");
-            std::process::exit(CONFIG_SYNTAX_REFUSAL_EXIT);
+            crate::dispatch_sub::exit_process(CONFIG_SYNTAX_REFUSAL_EXIT);
         }
         return;
     }

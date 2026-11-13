@@ -136,7 +136,30 @@ fn exit_if_nonzero(code: i32) {
     if code != 0 {
         use std::io::Write;
         let _ = std::io::stdout().flush();
-        std::process::exit(code);
+        exit_process(code);
+    }
+}
+
+/// The one way yoyo's dispatchers and argument parsers end the process
+/// (#1187). In a release or debug binary it is `std::process::exit`. In the
+/// unit-test binary it panics instead: a unit test that reaches an exiting
+/// door used to kill the whole test binary with no test named (CI red ~16h,
+/// 2026-11-12/13, `test_try_dispatch_subcommand_lint`), and a panic fails
+/// exactly that test, by name, while the rest keep running. Integration tests
+/// run the built binary, which is compiled without cfg(test), so their
+/// exit-code assertions still see the real code.
+/// `tests/process_exit_sites.rs` fails on any new direct exit call in `src/`.
+pub(crate) fn exit_process(code: i32) -> ! {
+    #[cfg(not(test))]
+    {
+        std::process::exit(code)
+    }
+    #[cfg(test)]
+    {
+        panic!(
+            "unit test reached the process exit door with code {code}; \
+             test the core function that returns the code, not the door (#1187)"
+        )
     }
 }
 
@@ -358,6 +381,14 @@ fn todo_shell_status(verb: &str) -> i32 {
     2 * i32::from(unknown)
 }
 
+/// `yoyo lint ...` from the shell: the status the arm exits with (#1187: the
+/// arm's decision, testable without the exit door). #1009: plain join;
+/// `/lint` never tokenizes quotes, so the wrapper's `"a b"` was echoed back
+/// (`git "a b"` names it bare). #982: 1 when no recognized project was found.
+fn lint_shell_status(args: &[String]) -> i32 {
+    crate::commands_lint::handle_lint_status(&join_args_as_command(args)).1
+}
+
 /// `yoyo extended` from the shell: always a refusal, since extended mode needs
 /// a live agent session. Prints the usage hint and returns the shell-refusal
 /// status (#982) — it used to exit 0 having run nothing.
@@ -419,7 +450,7 @@ pub(crate) fn try_dispatch_subcommand_in(
             "{}",
             crate::cli::misplaced_subcommand_refusal(args, i, plain)
         );
-        std::process::exit(2);
+        exit_process(2);
     }
     if let Some(sub) = args.get(1) {
         refuse_unknown_verb_flag(args); // #1132: every `Refuse` row, before any arm
@@ -521,12 +552,7 @@ pub(crate) fn try_dispatch_subcommand_in(
                 return Some(None);
             }
             "lint" => {
-                // #1009: plain join; `/lint` never tokenizes quotes, so the
-                // wrapper's `"a b"` was echoed back (`git "a b"` names it bare).
-                let input = join_args_as_command(args);
-                // #982: exits 1 when no recognized project was found.
-                let (_, code) = crate::commands_lint::handle_lint_status(&input);
-                exit_if_nonzero(code);
+                exit_if_nonzero(lint_shell_status(args));
                 return Some(None);
             }
             "security" => {
@@ -604,7 +630,7 @@ pub(crate) fn try_dispatch_subcommand_in(
                 // mistyped flag exits 2 (above the match) instead of a path.
                 let review = build_review_arg(args);
                 let exit_code = run_review_subcommand(args, &review);
-                std::process::exit(exit_code);
+                exit_process(exit_code);
             }
             "blame" => {
                 // #1009: plain join, not `quote_args_as_command` — `/blame`
@@ -651,7 +677,7 @@ pub(crate) fn try_dispatch_subcommand_in(
                     Ok(p) => p,
                     Err(refusal) => {
                         eprintln!("{refusal}");
-                        std::process::exit(crate::commands_search::SEARCH_USAGE_EXIT);
+                        exit_process(crate::commands_search::SEARCH_USAGE_EXIT);
                     }
                 };
                 let input = format!("/find {pattern}");
@@ -921,7 +947,7 @@ pub(crate) fn try_dispatch_subcommand_in(
                 let verb = verb.unwrap_or("");
                 if let Some(refusal) = crate::commands_todo::shell_todo_refusal(verb) {
                     eprintln!("{YELLOW}{refusal}{RESET}");
-                    std::process::exit(1);
+                    exit_process(1);
                 }
                 let input = join_args_as_command(&crate::verb_flags::sub_args(args));
                 println!("{}", crate::commands_todo::handle_todo_on(&input, Shell));
@@ -969,7 +995,7 @@ pub(crate) fn try_dispatch_subcommand_in(
                 // (#745/#767/#769/#816, "two doors, one works"). An honest refusal
                 // is the whole point of routing it.
                 let exit_code = run_gasp_subcommand(&args[2..]);
-                std::process::exit(exit_code);
+                exit_process(exit_code);
             }
             _ => {}
         }
@@ -1760,15 +1786,30 @@ mod tests {
         );
     }
 
+    /// Was `#[ignore]`d after it ran the real linter in-process and the arm's
+    /// exit killed this whole test binary (#1187). It now tests the arm's
+    /// decision, `lint_shell_status`, on inputs that run no linter: bare
+    /// `yoyo lint` would spawn cargo inside cargo and depend on the tree's
+    /// lint state. The linter-ran paths are covered against the built binary
+    /// by `lint_exits_with_the_linters_code_when_it_ran_and_failed`.
     #[test]
-    #[ignore] // The `lint` arm calls `process::exit` when the linter fails or finds no project, killing this test binary mid-run (CI 2026-11-12) — see #1187
     fn test_try_dispatch_subcommand_lint() {
-        let args = vec!["yoyo".into(), "lint".into()];
-        let result = try_dispatch_subcommand(&args);
-        assert!(
-            matches!(result, Some(None)),
-            "expected Some(None) for bare `lint` subcommand"
+        let argv =
+            |parts: &[&str]| -> Vec<String> { parts.iter().map(|s| s.to_string()).collect() };
+        // Unknown subcommand: usage error (#1009).
+        assert_eq!(lint_shell_status(&argv(&["yoyo", "lint", "zz"])), 2);
+        // `lint fix` needs a live session: the shell-refusal code (#982).
+        assert_eq!(
+            lint_shell_status(&argv(&["yoyo", "lint", "fix"])),
+            crate::setup::SETUP_NOT_INTERACTIVE_EXIT
         );
+        // The door itself: a unit test that reaches it fails by name.
+        let reached = std::panic::catch_unwind(|| exit_if_nonzero(2));
+        let msg = reached.expect_err("the exit door must panic under cfg(test)");
+        let msg = msg.downcast_ref::<String>().cloned().unwrap_or_default();
+        assert!(msg.contains("code 2") && msg.contains("#1187"), "{msg}");
+        // Code 0 is not an exit: the arm returns `Some(None)`.
+        exit_if_nonzero(0);
     }
 
     #[test]

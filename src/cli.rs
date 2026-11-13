@@ -1070,7 +1070,7 @@ pub fn resolve_system_prompt(
                 eprintln!(
                     "{RED}error:{RESET} Failed to read system_file '{path}' from config: {e}"
                 );
-                std::process::exit(1);
+                crate::dispatch_sub::exit_process(1);
             }
         }
     }
@@ -1143,7 +1143,7 @@ fn parse_model_config(
     let url_given = base_url.as_deref().is_some_and(|u| !u.trim().is_empty());
     if let Some(msg) = crate::providers::unknown_provider_refusal(&provider, url_given) {
         eprintln!("{RED}error:{RESET} {msg}");
-        std::process::exit(2);
+        crate::dispatch_sub::exit_process(2);
     }
 
     // API key: --api-key flag > provider-specific env > API_KEY > config file (#1170:
@@ -1197,7 +1197,7 @@ fn parse_model_config(
                                     eprintln!(
                                         "Set {env_hint} env var, use --api-key <key>, or add api_key to .yoyo.toml."
                                     );
-                                    std::process::exit(1);
+                                    crate::dispatch_sub::exit_process(1);
                                 }
                             }
                         },
@@ -1225,7 +1225,7 @@ fn parse_model_config(
     );
     if let Some(msg) = refusal {
         eprintln!("{RED}error:{RESET} {msg}");
-        std::process::exit(2);
+        crate::dispatch_sub::exit_process(2);
     }
     let model = named_model.unwrap_or_else(|| default_model_for_provider(&provider));
 
@@ -2428,7 +2428,7 @@ pub(crate) fn parse_args_with_config(
         .or_else(|| crate::cli_config::stray_prompt_word_refusal(full_args))
     {
         eprintln!("{RED}error:{RESET} {msg}");
-        std::process::exit(2); // #1109: before the trust prompt, wizard and any request
+        crate::dispatch_sub::exit_process(2); // #1109: before the trust prompt, wizard and any request
     }
 
     // --continue-on-silence: opt-in (issue #631). Treat a tool-using turn that
@@ -2706,12 +2706,12 @@ directory ({e}); this run is trusted, later runs will not be."
             FlagIssue::Empty { flag } => {
                 eprintln!("{RED}error:{RESET} {flag} requires a non-empty value");
                 eprintln!("Run with --help for usage information.");
-                std::process::exit(1);
+                crate::dispatch_sub::exit_process(1);
             }
             FlagIssue::Missing { flag } => {
                 eprintln!("{RED}error:{RESET} {flag} requires a value");
                 eprintln!("Run with --help for usage information.");
-                std::process::exit(1);
+                crate::dispatch_sub::exit_process(1);
             }
         }
     }
@@ -2720,7 +2720,7 @@ directory ({e}); this run is trusted, later runs will not be."
     warn_unknown_flags(args, flags_needing_values);
     if let Some(msg) = crate::cli_config::bad_numeric_flag_refusal(args) {
         eprintln!("{RED}error:{RESET} {msg}");
-        std::process::exit(2); // before any agent or request (Day 244)
+        crate::dispatch_sub::exit_process(2); // before any agent or request (Day 244)
     }
 
     // Parse prompt and image flags early so we can validate --image before API key check
@@ -2743,12 +2743,12 @@ directory ({e}); this run is trusted, later runs will not be."
             let path = std::path::Path::new(img_path.as_str());
             if !path.exists() {
                 eprintln!("{RED}error:{RESET} image file not found: {img_path}");
-                std::process::exit(1);
+                crate::dispatch_sub::exit_process(1);
             }
             if !crate::commands_file::is_image_extension(img_path) {
                 let why = crate::commands_file::image_flag_refusal(img_path);
                 eprintln!("{RED}error:{RESET} {why}");
-                std::process::exit(1);
+                crate::dispatch_sub::exit_process(1);
             }
         }
     }
@@ -2812,7 +2812,7 @@ directory ({e}); this run is trusted, later runs will not be."
         .map(|path| {
             std::fs::read_to_string(path).unwrap_or_else(|e| {
                 eprintln!("{RED}error:{RESET} Failed to read system prompt file '{path}': {e}");
-                std::process::exit(1);
+                crate::dispatch_sub::exit_process(1);
             })
         });
 
