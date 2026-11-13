@@ -676,7 +676,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // would also be refused. The message belongs beside the detector whose
     // reason string it classifies; splitting them would create the second
     // matcher this deliberately avoids.
-    ("src/safety.rs", 4714),
+    ("src/safety.rs", 4783), // Day 258 (15:50): +69 (from 4714; HEAD was 4720), strip_quoted_regions keeps $(...)/backticks inside double quotes visible (#1189): two scanner helpers + doc; tests live in safety_quoted_subst_tests.rs.
     // Day 175 (#816): first entry for this file — 1882 → 2067, +185. The setup
     // wizard becomes the second and third consumer of the #735 shadow/demotion
     // guard family (which had exactly one: `/config set`), so both of its save
