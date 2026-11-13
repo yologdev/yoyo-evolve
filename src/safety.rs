@@ -1749,7 +1749,8 @@ fn check_archive_extraction_to_system(cmd: &str, _cmd_lower: &str) -> Option<Str
 /// command position (first token of a segment, after unwrapping `sudo`
 /// etc.), so `grep tee file` or `ls /backup/mv` never match.
 const WRITE_VERBS: &[&str] = &[
-    "touch", "mkdir", "mv", "cp", "tee", "truncate", "install", "ln", "chmod",
+    "touch", "mkdir", "mv", "cp", "tee", "truncate", "install", "ln", "chmod", "rm", "rmdir",
+    "unlink", "shred",
 ];
 
 /// Git subcommands that only ever read: they touch neither the repository,
@@ -4378,18 +4379,19 @@ mod assignment_prefix_guards {
         assert!(analyze_bash_command(&bare_root).is_some());
     }
 
-    /// Recorded because it *looks* like a hole and is not. `rm` is
-    /// deliberately absent from `WRITE_VERBS` — deletion is the destructive
-    /// classifier's job — and a scratch path is not a system target, so both
-    /// classifiers return `None` here **with or without** a prefix. The
-    /// prefix changes nothing; measuring the unprefixed twin is what settles
-    /// it, rather than reading the prefixed row alone and inventing a hole.
+    /// Superseded verdict, recorded rather than erased: this test was named
+    /// `..._is_not_a_hole_it_is_unclassified_either_way` and called deletion
+    /// "the destructive classifier's job", so both classifiers returned `None`
+    /// and the read guard, which composes both, ran the delete (#1192). Now
+    /// `rm` is in `WRITE_VERBS`, so the write classifier refuses it with or
+    /// without a prefix, while the destructive one still (correctly) does not
+    /// call a scratch path a system target.
     #[test]
-    fn a_scratch_path_delete_is_not_a_hole_it_is_unclassified_either_way() {
+    fn a_scratch_path_delete_is_refused_as_a_write_with_or_without_a_prefix() {
         let bare = format!("{RM} -rf /tmp/yoyo-probe");
         let prefixed = format!("FOO=1 {bare}");
-        assert_eq!(detect_write_command(&bare), None);
-        assert_eq!(detect_write_command(&prefixed), None);
+        assert_eq!(detect_write_command(&bare), detect_write_command(&prefixed));
+        assert!(detect_write_command(&bare).is_some());
         assert_eq!(analyze_bash_command(&bare), None);
         assert_eq!(analyze_bash_command(&prefixed), None);
     }
@@ -4781,3 +4783,7 @@ mod substitution_prefix_guards {
 #[cfg(test)]
 #[path = "safety_quoted_subst_tests.rs"]
 mod safety_quoted_subst_tests;
+
+#[cfg(test)]
+#[path = "read_guard_delete_tests.rs"]
+mod read_guard_delete_tests;
