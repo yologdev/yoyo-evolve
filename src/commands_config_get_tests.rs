@@ -251,3 +251,112 @@ fn suggested_config_commands_round_trip_to_the_shell_arm() {
         }
     }
 }
+
+// === #1172: `config get` says what the run does with a value it reads as unset ===
+
+/// Every settable key is classified, so a new key cannot silently fall back to
+/// "show the raw value" while the run ignores it. Iterates the authority.
+#[test]
+fn every_settable_key_has_an_unset_reading() {
+    use crate::commands_config_get::run_reads_as_unset;
+    for (key, _) in crate::config::SETTABLE_KEYS {
+        assert!(run_reads_as_unset(key, "").is_some(), "{key} unclassified");
+    }
+    assert_eq!(run_reads_as_unset("not_a_key", ""), None);
+}
+
+/// `key = ""` for every settable key: the full printed line and exit code.
+/// provider and thinking are the two the run does NOT read as unset
+/// (provider "" is refused as unknown; thinking "" warns and uses medium).
+#[test]
+fn empty_value_rows_say_what_the_run_does() {
+    let src = "/x/.yoyo.toml";
+    for (key, _) in crate::config::SETTABLE_KEYS {
+        let mut cfg = std::collections::HashMap::new();
+        cfg.insert(key.to_string(), String::new());
+        let (code, text) = crate::commands_config_get::config_get_report(key, &cfg, src);
+        assert_eq!(code, 0, "{key}");
+        let expected = if matches!(*key, "provider" | "thinking") {
+            format!("\x1b[2m  {key} =   ({src})\x1b[0m\n")
+        } else {
+            format!(
+                "\x1b[2m  {key} is not set: {src} has {key} = \"\", which yoyo reads as unset (using default)\x1b[0m\n"
+            )
+        };
+        assert_eq!(strip_dim(&text), strip_dim(&expected), "{key}");
+    }
+}
+
+/// The colour statics may be empty (no-color); compare without them.
+fn strip_dim(s: &str) -> String {
+    s.replace("\x1b[2m", "").replace("\x1b[0m", "")
+}
+
+/// Near misses: a real value, a value equal to the default, whitespace, garbage.
+#[test]
+fn unset_reading_near_misses() {
+    let src = "/x/.yoyo.toml";
+    let run = |key: &str, value: &str| {
+        let mut cfg = std::collections::HashMap::new();
+        cfg.insert(key.to_string(), value.to_string());
+        let (code, text) = crate::commands_config_get::config_get_report(key, &cfg, src);
+        (code, strip_dim(&text))
+    };
+    // A real model is shown as today.
+    assert_eq!(run("model", "x"), (0, format!("  model = x  ({src})\n")));
+    // Whitespace: the run trims the model, so it is unset too.
+    assert_eq!(
+        run("model", " "),
+        (
+            0,
+            format!("  model is not set: {src} has model = \" \", which yoyo reads as unset (using default)\n")
+        )
+    );
+    // A boolean equal to its default is still a value the run reads.
+    assert_eq!(
+        run("auto_continue", "true"),
+        (0, format!("  auto_continue = true  ({src})\n"))
+    );
+    // A boolean the run does not recognise falls back to the default.
+    assert_eq!(
+        run("auto_edit", "maybe"),
+        (
+            0,
+            format!("  auto_edit is not set: {src} has auto_edit = \"maybe\", which yoyo reads as unset (using default)\n")
+        )
+    );
+    // A numeric that parses is shown; one that doesn't is unset.
+    // (max_turns, not max_tokens: `is_secret_key` masks max_tokens, #1194.)
+    assert_eq!(
+        run("max_turns", "20"),
+        (0, format!("  max_turns = 20  ({src})\n"))
+    );
+    assert!(run("max_turns", "abc").1.contains("max_turns is not set"));
+    // Absent: byte-for-byte as before.
+    let empty = std::collections::HashMap::new();
+    let (code, text) = crate::commands_config_get::config_get_report("model", &empty, src);
+    assert_eq!(
+        (code, strip_dim(&text)),
+        (
+            0,
+            "  model is not set in config file (using default)\n".to_string()
+        )
+    );
+}
+
+/// `config show` lists the key and marks it the same way.
+#[test]
+fn config_show_marks_a_value_read_as_unset() {
+    let mut cfg = std::collections::HashMap::new();
+    cfg.insert("model".to_string(), String::new());
+    cfg.insert("provider".to_string(), "openai".to_string());
+    let out = crate::commands_config::format_config_output(
+        &cfg,
+        Some(std::path::Path::new("/x/.yoyo.toml")),
+    );
+    assert!(
+        out.contains("  model     =   (read as unset; using default)\n"),
+        "{out}"
+    );
+    assert!(out.contains("  provider  = openai\n"), "{out}");
+}

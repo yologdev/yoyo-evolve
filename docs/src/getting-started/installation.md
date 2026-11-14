@@ -102,7 +102,7 @@ yoyo supports a TOML-style config file so you don't have to pass flags every tim
 2. `~/.yoyo.toml` (home directory shorthand)
 3. `~/.config/yoyo/config.toml` (XDG user-level)
 
-yoyo reads exactly one of these files; they are never merged. A project `.yoyo.toml` shadowing your home config is the intended layering and is silent, but if both `~/.yoyo.toml` and `~/.config/yoyo/config.toml` exist, every run warns once on stderr that the second is ignored, and `yoyo config get <key>` names a skipped file that sets the key.
+yoyo reads exactly one of these files; they are never merged. A project `.yoyo.toml` shadowing your home config is the intended layering and is silent, but if both `~/.yoyo.toml` and `~/.config/yoyo/config.toml` exist, every run warns once on stderr that the second is ignored, and `yoyo config get <key>` names a skipped file that sets the key. A value yoyo reads as unset (an empty or blank `model = ""`, a boolean that is not `true`/`false`/`yes`/`no`/`on`/`off`/`1`/`0`, a number that does not parse) is shown as such: `yoyo config get model` prints `model is not set: .yoyo.toml has model = "", which yoyo reads as unset (using default)`, and `yoyo config show` marks the line `(read as unset; using default)`. `provider = ""` and `thinking = ""` are not unset: without a `base_url` the first is refused as an unknown provider, and the second warns and runs at medium.
 **Example `.yoyo.toml`:**
 
 ```toml

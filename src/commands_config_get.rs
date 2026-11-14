@@ -14,6 +14,20 @@ pub(crate) fn config_get_report(
     source: &str,
 ) -> (i32, String) {
     match config.get(key) {
+        // #1172: the run reads this value as if the key were absent; say so.
+        Some(value) if run_reads_as_unset(key, value) == Some(true) => {
+            let shown = if is_secret_key(key) && !value.trim().is_empty() {
+                "\"***\"".to_string()
+            } else {
+                format!("{value:?}")
+            };
+            (
+                0,
+                format!(
+                    "{DIM}  {key} is not set: {source} has {key} = {shown}, which yoyo reads as unset (using default){RESET}\n"
+                ),
+            )
+        }
         Some(value) => {
             let display = if is_secret_key(key) {
                 "***".to_string()
@@ -43,6 +57,65 @@ pub(crate) fn config_get_report(
                 )
             }
         }
+    }
+}
+
+/// #1172: `Some(true)` when the run reads `value` for `key` exactly as it reads
+/// the key being absent (the default is used), `Some(false)` when it reads the
+/// value, `None` for a key that is not settable. Every arm asks the run's own
+/// reader; none restates its rule. Not unset: `provider` ("" is refused as an
+/// unknown provider) and `thinking` ("" warns and runs at medium).
+pub(crate) fn run_reads_as_unset(key: &str, value: &str) -> Option<bool> {
+    use crate::config::*;
+    let one: std::collections::HashMap<String, String> =
+        [(key.to_string(), value.to_string())].into();
+    let numeric_none = |flag: &str| match key {
+        "temperature" => crate::cli_config::resolve_numeric_setting::<f32>(&[], flag, &one, key)
+            .0
+            .is_none(),
+        "max_turns" => crate::cli_config::resolve_numeric_setting::<usize>(&[], flag, &one, key)
+            .0
+            .is_none(),
+        _ => crate::cli_config::resolve_numeric_setting::<u32>(&[], flag, &one, key)
+            .0
+            .is_none(),
+    };
+    Some(match key {
+        "model" => crate::config_value::named_model(value).is_none(),
+        "provider" | "thinking" => false,
+        "temperature" => numeric_none("--temperature"),
+        "max_tokens" => numeric_none("--max-tokens"),
+        "max_turns" => numeric_none("--max-turns"),
+        "max_auto_continues" => parse_max_auto_continues_from_config(&one).is_none(),
+        "notify_command" => parse_notify_command_from_config(&one).is_none(),
+        "cost_warn_usd" => {
+            crate::prompt_budget::parse_cost_threshold(parse_cost_warn_from_config(&one).as_deref())
+                .is_none()
+        }
+        // Booleans go through `config_flag`: a value it does not recognise is
+        // the one whose result depends on the default, i.e. the default is used.
+        "auto_watch"
+        | "auto_edit"
+        | "auto_commit"
+        | "auto_continue"
+        | "continue_on_silence"
+        | "wait_for_reset"
+        | "retry_after_partial"
+        | "hints"
+        | "lite"
+        | "no_bell"
+        | "quiet"
+        | "no_color" => config_flag(&one, key, false) != config_flag(&one, key, true),
+        _ => return None,
+    })
+}
+
+/// `config show`'s marker for a value the run reads as unset (#1172).
+pub(crate) fn unset_reading_note(key: &str, value: &str) -> &'static str {
+    if run_reads_as_unset(key, value) == Some(true) {
+        "  (read as unset; using default)"
+    } else {
+        ""
     }
 }
 

@@ -23,6 +23,13 @@
 //! as before: `tomllib` refuses the whole file there, and this module does
 //! not make yoyo stricter than it was about input TOML itself rejects.
 
+/// The model name `--model` or the config's `model` names, or `None` when it
+/// is blank: the run trims it and treats an empty name as "not set" (default
+/// model). `config get` reads the same rule (#1172), so the two cannot disagree.
+pub(crate) fn named_model(raw: &str) -> Option<String> {
+    Some(raw.trim().to_string()).filter(|s| !s.is_empty())
+}
+
 /// `raw` (the text after `=`) with a trailing `# comment` removed and
 /// whitespace trimmed. A `#` inside a basic (`"…"`, with `\` escapes),
 /// literal (`'…'`) or triple-quoted string is part of the string, not a

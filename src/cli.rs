@@ -1215,8 +1215,7 @@ fn parse_model_config(
 
     let named_model = flag_value(args, &["--model"])
         .or_else(|| file_config.get("model").cloned())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
+        .and_then(|s| crate::config_value::named_model(&s));
     // #1175: a user-run server's models are the user's to name, not ours to guess.
     let refusal = crate::providers::named_model_required_refusal(
         &provider,

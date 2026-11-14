@@ -100,7 +100,10 @@ fn plain_top_level_keys_read_as_they_did_at_head() {
     ] {
         assert_eq!(new.get(key), old.get(key), "{key}");
     }
-    assert_eq!(new["fallback"], "", "empty stays empty (#1172 owns that)");
+    assert_eq!(
+        new["fallback"], "",
+        "empty stays empty (config get reports it as unset, #1172)"
+    );
     // The array is re-rendered, so compare what its reader makes of it.
     assert_eq!(
         crate::config::parse_toml_array(&new["mcp"]),

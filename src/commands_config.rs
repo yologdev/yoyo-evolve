@@ -420,9 +420,10 @@ pub fn format_config_output(
             value.to_string()
         };
         out.push_str(&format!(
-            "  {:<width$}  = {}\n",
+            "  {:<width$}  = {}{}\n",
             key,
             display_value,
+            crate::commands_config_get::unset_reading_note(key, value),
             width = max_key_len
         ));
     }
