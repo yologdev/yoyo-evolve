@@ -2172,10 +2172,13 @@ fn perl_edits_in_place(segment: &str) -> bool {
     false
 }
 
+/// Characters that end a shell command segment (incl. `$(`, `(`, backtick); token checks split here too (#1191).
+const SEGMENT_BREAKS: [char; 7] = [';', '|', '&', '\n', '(', ')', '`'];
+
 pub fn detect_write_command(cmd: &str) -> Option<String> {
     let stripped = strip_quoted_regions(cmd);
 
-    for segment in stripped.split([';', '|', '&', '\n', '(', ')', '`']) {
+    for segment in stripped.split(SEGMENT_BREAKS) {
         let mut tokens = segment.split_whitespace();
         let cmd_token = tokens.find(|t| !COMMAND_WRAPPERS.contains(t) && !t.contains('='));
         let Some(cmd_token) = cmd_token else { continue };
@@ -2251,7 +2254,10 @@ pub fn detect_git_redirection_escape(
 
     // Env-prefix assignments anywhere in the command (incl. `export X=`):
     // token-anchored so `FOO_GIT_DIR=` or a filename containing the name pass.
-    for token in stripped.split_whitespace() {
+    for token in stripped
+        .split(SEGMENT_BREAKS)
+        .flat_map(str::split_whitespace)
+    {
         for var in ["GIT_DIR", "GIT_WORK_TREE"] {
             if let Some(rest) = token.strip_prefix(var) {
                 if rest.starts_with('=') {
@@ -2263,7 +2269,7 @@ pub fn detect_git_redirection_escape(
         }
     }
 
-    for segment in stripped.split([';', '|', '&', '\n', '(', ')', '`']) {
+    for segment in stripped.split(SEGMENT_BREAKS) {
         let mut tokens = segment.split_whitespace();
         // Locate the command token, skipping wrappers and env assignments.
         let cmd_token = tokens.find(|t| !COMMAND_WRAPPERS.contains(t) && !t.contains('='));
@@ -4787,3 +4793,7 @@ mod safety_quoted_subst_tests;
 #[cfg(test)]
 #[path = "read_guard_delete_tests.rs"]
 mod read_guard_delete_tests;
+
+#[cfg(test)]
+#[path = "safety_git_glued_tests.rs"]
+mod safety_git_glued_tests;

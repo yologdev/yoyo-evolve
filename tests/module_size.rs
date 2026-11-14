@@ -677,7 +677,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // would also be refused. The message belongs beside the detector whose
     // reason string it classifies; splitting them would create the second
     // matcher this deliberately avoids.
-    ("src/safety.rs", 4789), // Day 258 (21:51): +6 (from 4783), rm/rmdir/unlink/shred join WRITE_VERBS so /read and /plan refuse deletes (#1192): +1 verb line, +1 doc line on the superseded scratch-delete test, +4 mod include; tests live in read_guard_delete_tests.rs.
+    ("src/safety.rs", 4799), // Day 259 (02:03): +10 (from 4789), #1191: GIT_DIR=/GIT_WORK_TREE= glued to $( ( or backtick refused; +2 shared SEGMENT_BREAKS const, +3 fmt of the env token loop, +5 mod include; tests and the #1193 census live in safety_git_glued_tests.rs.
     // Day 175 (#816): first entry for this file — 1882 → 2067, +185. The setup
     // wizard becomes the second and third consumer of the #735 shadow/demotion
     // guard family (which had exactly one: `/config set`), so both of its save
