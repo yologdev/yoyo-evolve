@@ -190,6 +190,129 @@ fn spelling_yoyo_reads(parts: &[String]) -> Option<(String, bool)> {
     })
 }
 
+/// The tables `config_toml_read` reads through the `toml` crate (#1182), so
+/// any TOML spelling of them is read; the detector judges a line in them by
+/// the full path it sets and the value's type, never by its header form.
+const PARSED_TABLES: [&str; 2] = ["mcp_servers", "model_pricing"];
+
+fn is_parsed_table_path(path: &[String]) -> bool {
+    path.first()
+        .is_some_and(|s| PARSED_TABLES.contains(&s.as_str()))
+}
+
+/// The keys read inside one entry of a parsed table.
+fn parsed_entry_keys(stem: &str) -> &'static [&'static str] {
+    if stem == "mcp_servers" {
+        &["command", "args", "env"]
+    } else {
+        &["input", "output"]
+    }
+}
+
+/// A header under a parsed table that opens a table the reader reads:
+/// `[t]`, `[t.<name>]` and `[mcp_servers.<name>.env]`.
+fn parsed_header_is_read(path: &[String]) -> bool {
+    match path {
+        [_] | [_, _] => true,
+        [stem, _, k] => stem == "mcp_servers" && k == "env",
+        _ => false,
+    }
+}
+
+/// What the reader needs at a parsed-table path, for the warning.
+fn parsed_spelling(path: &[String]) -> String {
+    let stem = path[0].as_str();
+    let entry = match path.get(1) {
+        Some(n) => format!("`[{stem}.{}]`", toml_key_part(n)),
+        None => format!("`[{stem}.<name>]`"),
+    };
+    let what = match path.get(2).map(String::as_str) {
+        Some("command") => "`command = \"<program>\"` (a string); the server is not started",
+        Some("args") => "`args = [\"...\"]` (a list of strings); the server is not started",
+        Some("env") => {
+            "`env = { NAME = \"value\" }` (a table of strings); the server is not started"
+        }
+        Some("input" | "output") => {
+            "`input = 1.5` / `output = 6.0` (numbers); the price is dropped"
+        }
+        _ if stem == "mcp_servers" => "`command = ...` (a server is a table)",
+        _ => "`input = ...` / `output = ...` (a price is a table)",
+    };
+    format!("{entry} then {what}")
+}
+
+/// Judge the line at `line` that sets `path` (under a parsed table) to
+/// `value` (`None` when the value alone is not readable, e.g. it spans
+/// lines), recursing into inline tables, and push what the reader ignores.
+fn judge_parsed_path(
+    path: &[String],
+    value: Option<&toml::Value>,
+    line: usize,
+    written: &str,
+    out: &mut Vec<UnknownKey>,
+) {
+    use toml::Value;
+    let unread = |out: &mut Vec<UnknownKey>| {
+        out.push(UnknownKey::Unread {
+            line,
+            written: written.to_string(),
+            path: path
+                .iter()
+                .map(|p| toml_key_part(p))
+                .collect::<Vec<_>>()
+                .join("."),
+            keys: Vec::new(),
+            header: false,
+            spelling: parsed_spelling(path),
+            fence: false,
+            rewrite: None,
+        })
+    };
+    let recurse = |t: &toml::Table, out: &mut Vec<UnknownKey>| {
+        for (k, v) in t {
+            let p: Vec<String> = path.iter().cloned().chain([k.clone()]).collect();
+            judge_parsed_path(&p, Some(v), line, written, out);
+        }
+    };
+    let Some(value) = value else { return };
+    let stem = path[0].as_str();
+    match path.len() {
+        1 | 2 => match value {
+            Value::Table(t) => recurse(t, out),
+            _ => unread(out),
+        },
+        3 => {
+            let k = path[2].as_str();
+            let keys = parsed_entry_keys(stem);
+            if !keys.contains(&k) {
+                out.push(UnknownKey::Key {
+                    line,
+                    key: k.to_string(),
+                    section: Some(format!("{stem}.{}", toml_key_part(&path[1]))),
+                    suggestion: closest_match(k, keys, max_edits(k)).map(String::from),
+                });
+                return;
+            }
+            let ok = match (k, value) {
+                ("command", Value::String(_)) => true,
+                ("args", Value::Array(a)) => !a.iter().any(|v| v.is_array() || v.is_table()),
+                ("env", Value::Table(t)) => return recurse(t, out),
+                ("input" | "output", Value::Integer(_) | Value::Float(_)) => true,
+                _ => false,
+            };
+            if !ok {
+                unread(out);
+            }
+        }
+        4 if stem == "mcp_servers" && path[2] == "env" => {
+            if value.is_array() || value.is_table() {
+                unread(out);
+            }
+        }
+        _ => unread(out),
+    }
+}
+
 /// One TOML key part as written in a header: bare when it can be, else quoted.
 fn toml_key_part(p: &str) -> String {
     if toml_key_segments(p).is_some_and(|s| s.len() == 1 && s[0] == p) {
@@ -479,7 +602,15 @@ pub(crate) fn unknown_config_keys(contents: &str) -> Vec<UnknownKey> {
                 let raw = raw.strip_prefix('[').and_then(|r| r.strip_suffix(']'));
                 let parts =
                     toml_key_segments(raw.unwrap_or(header_inner(line).unwrap_or_default()));
-                let keys = if array { None } else { section_keys(&inner) };
+                let keys = match parts.as_deref() {
+                    // #1182: these tables are read through the toml crate, so
+                    // the header is judged by the path it opens.
+                    Some(p) if is_parsed_table_path(p) => {
+                        (!array && parsed_header_is_read(p)).then_some(&[][..])
+                    }
+                    _ if array => None,
+                    _ => section_keys(&inner),
+                };
                 open_section = None;
                 if keys.is_none() {
                     let unread = parts.as_deref().and_then(spelling_yoyo_reads);
@@ -527,6 +658,28 @@ pub(crate) fn unknown_config_keys(contents: &str) -> Vec<UnknownKey> {
         }
         // The whole TOML path this line sets, when it is a TOML key.
         let segs = toml_key_segments(key);
+        // #1182: under mcp_servers / model_pricing every TOML spelling is
+        // read, so judge the full path and value, not the header form.
+        let base = match &section {
+            None => Some(Vec::new()),
+            Some((_, Some(_), p)) if is_parsed_table_path(p) => Some(p.clone()),
+            Some(_) => None,
+        };
+        if let (Some(base), Some(segs)) = (base, segs.as_ref()) {
+            let path: Vec<String> = base.into_iter().chain(segs.iter().cloned()).collect();
+            if is_parsed_table_path(&path) {
+                let parsed = format!("v = {value}").parse::<toml::Table>().ok();
+                let shown = format!("{key} = {value}");
+                judge_parsed_path(
+                    &path,
+                    parsed.as_ref().and_then(|t| t.get("v")),
+                    idx + 1,
+                    &shown,
+                    &mut out,
+                );
+                continue;
+            }
+        }
         // An inline table at one of yoyo's table names (#1180): valid TOML
         // the readers never see, so name it, and for a fence say it is off.
         let inline = section.is_none() && value.starts_with('{');
@@ -1112,7 +1265,8 @@ mod tests {
     /// those rows the value is a one-line string or array (config_value.rs
     /// varies values, but only under the key `k`, so it says nothing about a
     /// value at a name yoyo reads); an inline table never sits under a header
-    /// (`[mcp_servers]` then `fs = { ... }`: not covered, #1182); keys and
+    /// (that slot is now covered for mcp_servers / model_pricing, #1182; a
+    /// fence table under its own header holding an inline table is not); keys and
     /// headers are ASCII; no key contains `=`; no table is declared twice.
     const SHAPE_CORPUS: &[&str] = &[
         "[directories]\ndeny = [\"/etc\"]",
@@ -1165,6 +1319,14 @@ mod tests {
         "mcp_servers.fs = { command = \"npx\" }",
         "model_pricing = { m = { input = 1.0, output = 2.0 } }",
         "model_pricing.m = { input = 1.0, output = 2.0 }",
+        // #1182: an inline table under a header naming one of yoyo's tables.
+        "[mcp_servers]\nfs = { command = \"npx\" }",
+        "[mcp_servers] # c\nfs = { command = \"npx\", args = [\"-y\"] } # c",
+        "[mcp_servers]\n\"my server\" = { command = \"npx\", env = { A = \"b\" } }",
+        "[mcp_servers]\nfs = { command = \"npx\", args = [\n  \"-y\",\n] }",
+        "[mcp_servers.fs]\ncommand = \"npx\"\n[mcp_servers.fs.env]\nA = \"b\"",
+        "[model_pricing]\nm = { input = 1.0, output = 2.0 }",
+        "[model_pricing] # c\n\"gpt-4.1\" = { input = 1, output = 2.5 } # c",
     ];
 
     /// What tomllib reads for each document, projected onto the things
@@ -1282,7 +1444,9 @@ print(json.dumps(res))
                 continue;
             }
             if &got == want {
-                if warnings.contains("NOT in force") && !got.as_object().unwrap().is_empty() {
+                // A row yoyo reads must not also be warned as unread (#1182:
+                // checked by the words, so a non-fence table counts too).
+                if warnings.contains("does not read") && !got.as_object().unwrap().is_empty() {
                     disagree.push(format!("{doc:?}: read, yet warned: {warnings}"));
                 } else {
                     agree += 1;
@@ -1315,8 +1479,10 @@ print(json.dumps(res))
             disagree.join("\n")
         );
         // Refusal is the escape hatch: pin it so widening it is a decision.
-        // 3 header/key spellings (#1178) + 12 inline tables at a table name (#1180).
-        assert_eq!(refused, 15, "refused rows changed");
+        // 7 inline fence tables at a table name (#1180). Down from 15 at
+        // #1182: mcp_servers / model_pricing are read through the toml crate,
+        // so their 3 dotted spellings and 5 inline rows are now read.
+        assert_eq!(refused, 7, "refused rows changed");
     }
 
     /// #1180: the rewrite an inline-table refusal prints is a command the
@@ -1329,11 +1495,14 @@ print(json.dumps(res))
             .iter()
             .copied()
             .filter(|d| {
-                d.split_once('=')
-                    .is_some_and(|(_, v)| v.trim().starts_with('{'))
+                !d.starts_with('[')
+                    && d.split_once('=')
+                        .is_some_and(|(_, v)| v.trim().starts_with('{'))
             })
+            .filter(|d| !d.contains("mcp_servers") && !d.contains("model_pricing"))
             .collect();
-        assert_eq!(rows.len(), 12, "the #1180 rows");
+        // The fence rows; mcp_servers / model_pricing ones are read (#1182).
+        assert_eq!(rows.len(), 7, "the #1180 fence rows");
         let wanted = shape_oracle(&rows);
         let mut rewritten = 0;
         for (doc, want) in rows.iter().zip(&wanted) {
@@ -1371,7 +1540,7 @@ print(json.dumps(res))
             );
             rewritten += 1;
         }
-        assert_eq!(rewritten, 11, "rows with a rewrite");
+        assert_eq!(rewritten, 6, "rows with a rewrite");
     }
 
     #[test]
@@ -1390,14 +1559,65 @@ print(json.dumps(res))
                     .to_string()
             ]
         );
-        // Nested: each server becomes its own header, keys kept as written.
-        let f = unknown_config_keys(
-            "mcp_servers = { \"my server\" = { command = \"npx\", args = [\"-y\"] } }",
+        // #1182: the same shape for a non-fence table is read, so not warned.
+        assert_eq!(
+            unknown_config_keys(
+                "mcp_servers = { \"my server\" = { command = \"npx\", args = [\"-y\"] } }",
+            ),
+            vec![]
         );
+    }
+
+    /// #1182: inside mcp_servers / model_pricing every spelling is read, so
+    /// the detector judges the path and the value's type: a typo'd key is a
+    /// typo (with its did-you-mean), a wrong type is named with what the
+    /// reader needs, and a read shape is silent.
+    #[test]
+    fn parsed_tables_are_judged_by_path_and_type_not_by_header() {
+        let w = |doc: &str| unknown_config_key_warnings(".yoyo.toml", &unknown_config_keys(doc));
+        for doc in [
+            "[mcp_servers]\nfs = { command = \"npx\" }",
+            "[mcp_servers.fs.env]\nA = \"b\"",
+            "[mcp_servers]\nfs.env.A = \"b\"",
+            "[model_pricing]\nm.input = 1\nm.output = 2.0",
+        ] {
+            assert_eq!(w(doc), Vec::<String>::new(), "{doc:?}");
+        }
+        assert_eq!(
+            w("[mcp_servers]\nfs = { comand = \"npx\" }"),
+            vec![
+                ".yoyo.toml line 2: `comand` (in [mcp_servers.fs]) is not a key yoyo reads, \
+                  so it has no effect; did you mean `command`?"
+                    .to_string()
+            ]
+        );
+        assert_eq!(
+            w("[mcp_servers.fs]\ncommand = 5"),
+            vec![
+                ".yoyo.toml line 2: `command = 5` is valid TOML, but yoyo does not read that \
+                  spelling of `mcp_servers.fs.command`, so it has no effect. yoyo reads \
+                  `[mcp_servers.fs]` then `command = \"<program>\"` (a string); the server is \
+                  not started."
+                    .to_string()
+            ]
+        );
+        assert_eq!(
+            w("[mcp_servers]\nfs = \"npx\""),
+            vec![
+                ".yoyo.toml line 2: `fs = \"npx\"` is valid TOML, but yoyo does not read that \
+                  spelling of `mcp_servers.fs`, so it has no effect. yoyo reads \
+                  `[mcp_servers.fs]` then `command = ...` (a server is a table)."
+                    .to_string()
+            ]
+        );
+        assert_eq!(
+            w("[model_pricing]\nm = { input = \"1.0\", output = 2.0 }").len(),
+            1,
+            "a quoted rate is named"
+        );
+        // A table the reader never opens is still an unread header.
         assert!(
-            matches!(f.as_slice(), [UnknownKey::Unread { fence: false, rewrite: Some(r), .. }]
-                if r == "[mcp_servers.\"my server\"]\ncommand = \"npx\"\nargs = [\"-y\"]"),
-            "{f:?}"
+            w("[mcp_servers.fs.args]\nx = 1")[0].contains("does not read `[mcp_servers.fs.args]`")
         );
     }
 }

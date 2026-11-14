@@ -15,7 +15,7 @@
 //!
 //! Shapes that are refused: values spanning several lines (multi-line arrays,
 //! `"""` strings with a line break), inline tables (`{ a = 1 }`, except the
-//! `env` table of an `[mcp_servers.*]` section, which has its own reader),
+//! `mcp_servers` / `model_pricing` tables, which the toml crate reads, #1182),
 //! nested arrays, and anything left over after a closing quote. Bare values
 //! (numbers, booleans) are passed through as text, with TOML's integer forms
 //! (`1_000`, `0x10`, `+5`) written as plain decimal so `parse::<u64>()` works.
@@ -249,8 +249,8 @@ pub(crate) fn unescape_toml_basic_string(value: &str) -> String {
 
 /// Every `key = value` line in `content` whose value yoyo cannot read, as
 /// `(1-based line, "[section] key", reason)`. Arrays are checked as arrays,
-/// everything else as one value. The `env` inline table of an
-/// `[mcp_servers.*]` section is skipped: it has its own reader.
+/// everything else as one value. Lines in `mcp_servers` / `model_pricing`
+/// are skipped: the toml crate reads those tables (#1182).
 pub(crate) fn unreadable_values(content: &str) -> Vec<(usize, String, &'static str)> {
     let mut out = Vec::new();
     let mut section = String::new();
@@ -280,10 +280,21 @@ pub(crate) fn unreadable_values(content: &str) -> Vec<(usize, String, &'static s
         let dotted = ["directories", "permissions"].into_iter().find_map(|t| {
             crate::config_unknown_keys::key_in_table(None, key, t).map(|k| format!("[{t}] {k}"))
         });
-        let key = crate::config_unknown_keys::config_key_name(key);
-        if key == "env" && section.starts_with("mcp_servers.") && v.starts_with('{') {
+        // mcp_servers / model_pricing are read through the toml crate (#1182),
+        // which reads every value TOML allows there (inline tables, arrays over
+        // several lines), so this hand check has nothing to say about them.
+        let first = crate::config_unknown_keys::toml_key_segments(key)
+            .and_then(|s| s.into_iter().next())
+            .unwrap_or_default();
+        let head = if section.is_empty() {
+            first.as_str()
+        } else {
+            section.split('.').next().unwrap_or("")
+        };
+        if head == "mcp_servers" || head == "model_pricing" {
             continue;
         }
+        let key = crate::config_unknown_keys::config_key_name(key);
         let result = if v.starts_with('[') {
             read_array(v).map(|_| ())
         } else {
@@ -595,17 +606,28 @@ print(json.dumps(out))
     #[test]
     fn readable_files_and_mcp_env_tables_raise_no_warning() {
         let text = "model = \"m1\" # c\nmax_tokens = 4096 # c\n[permissions]\nallow = [\"git *\"] # x\n\
-                    [mcp_servers.fs]\ncommand = \"npx\"\nargs = [\"-y\", \"pkg\"]\nenv = { A = \"1\" }\n\
-                    system = \"\"\"\nline = [\n\"\"\"\n";
+                    system = \"\"\"\nline = [\n\"\"\"\n\
+                    [mcp_servers.fs]\ncommand = \"npx\"\nargs = [\"-y\", \"pkg\"]\nenv = { A = \"1\" }\n";
         let found = unreadable_values(text);
         // Only the multi-line string is refused; its body is not read as keys.
         assert_eq!(
             found,
             vec![(
-                9,
-                "[mcp_servers.fs] system".to_string(),
+                5,
+                "[permissions] system".to_string(),
                 "a string over several lines"
             )]
         );
+        // #1182: the toml crate reads mcp_servers / model_pricing, so no
+        // value there is "ignored", whatever its TOML shape.
+        for doc in [
+            "[mcp_servers]\nfs = { command = \"npx\" }\n",
+            "mcp_servers = { fs = { command = \"npx\" } }\n",
+            "[mcp_servers.fs]\ncommand = \"npx\"\nargs = [\n  \"-y\",\n]\n",
+            "[model_pricing]\nm = { input = 1.0, output = 2.0 }\n",
+            "model_pricing.m = { input = 1.0, output = 2.0 }\n",
+        ] {
+            assert_eq!(unreadable_values(doc), vec![], "{doc:?}");
+        }
     }
 }

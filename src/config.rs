@@ -658,9 +658,12 @@ pub(crate) fn directory_wildcard_warning(
     Some(msg)
 }
 
-/// Parse `[mcp_servers.<name>]` sections from raw config content.
+/// Read the `mcp_servers` table from raw config content, through the `toml`
+/// crate (#1182), so every TOML spelling of it reads the same: the header form
+/// below, `[mcp_servers]` then `fs = { ... }`, a top-level inline table, dotted
+/// keys. See `config_toml_read.rs`.
 ///
-/// Each section defines a named MCP server with a command, optional args, and optional env vars:
+/// Each server defines a named MCP server with a command, optional args, and optional env vars:
 /// ```toml
 /// [mcp_servers.filesystem]
 /// command = "npx"
@@ -672,97 +675,11 @@ pub(crate) fn directory_wildcard_warning(
 /// env = { DATABASE_URL = "postgresql://localhost/mydb" }
 /// ```
 pub fn parse_mcp_servers_from_config(content: &str) -> Vec<McpServerConfig> {
-    let mut servers: Vec<McpServerConfig> = Vec::new();
-    let mut current_name: Option<String> = None;
-    let mut current_command: Option<String> = None;
-    let mut current_args: Vec<String> = Vec::new();
-    let mut current_env: Vec<(String, String)> = Vec::new();
-
-    // Helper: flush accumulated server data into the result vec
-    let flush = |name: &mut Option<String>,
-                 command: &mut Option<String>,
-                 args: &mut Vec<String>,
-                 env: &mut Vec<(String, String)>,
-                 servers: &mut Vec<McpServerConfig>| {
-        if let (Some(n), Some(c)) = (name.take(), command.take()) {
-            servers.push(McpServerConfig {
-                name: n,
-                command: c,
-                args: std::mem::take(args),
-                env: std::mem::take(env),
-            });
-        } else {
-            // Reset even if incomplete
-            *name = None;
-            *command = None;
-            args.clear();
-            env.clear();
-        }
-    };
-
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-
-        // Detect section headers
-        if let Some(section) = crate::config_unknown_keys::toml_section_header(trimmed) {
-            // Flush any previous MCP server
-            flush(
-                &mut current_name,
-                &mut current_command,
-                &mut current_args,
-                &mut current_env,
-                &mut servers,
-            );
-
-            if let Some(name) = section.strip_prefix("mcp_servers.") {
-                let name = name.trim();
-                if !name.is_empty() {
-                    current_name = Some(name.to_string());
-                }
-            }
-            continue;
-        }
-
-        // Only parse key=value lines inside an mcp_servers section
-        if current_name.is_none() {
-            continue;
-        }
-
-        if let Some((key, value)) = trimmed.split_once('=') {
-            let key = crate::config_unknown_keys::config_key_name(key);
-            let value = value.trim();
-            match key.as_str() {
-                "command" => {
-                    let v = strip_quotes(value);
-                    if !v.is_empty() {
-                        current_command = Some(v);
-                    }
-                }
-                "args" => {
-                    current_args = parse_toml_array(value);
-                }
-                "env" => {
-                    current_env = parse_inline_table(value);
-                }
-                _ => {}
-            }
-        }
-    }
-
-    // Flush the last server
-    flush(
-        &mut current_name,
-        &mut current_command,
-        &mut current_args,
-        &mut current_env,
-        &mut servers,
-    );
-
-    servers
+    config_toml_read::mcp_servers_from_table(&config_toml_read::parse_table(content))
 }
+
+#[path = "config_toml_read.rs"]
+mod config_toml_read;
 
 /// Which end of a config value carries invisible whitespace padding.
 ///
@@ -816,12 +733,12 @@ pub(crate) fn padding_end(raw: &str) -> Option<PaddingEnd> {
 ///
 /// **Why this exists (measured Day 193, in a tempdir, through the real parsers).** A
 /// quoted TOML value preserves its inner padding all the way to the resolved value:
-/// `strip_quotes` trims *outside* the quotes and then strips them, so
-/// `command = "npx "` resolves to `"npx "` and the spawn silently fails with no error,
-/// no output, and no way for a user to tell it from a server that started and did
-/// nothing. An **unquoted** `command = npx ` is trimmed away by that same `trim()`, so
-/// the safe-looking idiom — quote your values — is the one that keeps the invisible
-/// byte. Same class as #892's unreachable hook key: accepted vocabulary, no validation.
+/// `command = "npx "` resolves to `"npx "` (TOML keeps what is inside the quotes) and
+/// the spawn silently fails with no error, no output, and no way for a user to tell it
+/// from a server that started and did nothing. (Superseded, recorded rather than erased:
+/// the Day-193 hand reader also trimmed an unquoted `command = npx `; since #1184 the
+/// load gate refuses an unquoted value outright.) Same class as #892's unreachable hook
+/// key: accepted vocabulary, no validation.
 ///
 /// **No third parser.** This is pure over the values the two existing MCP parsers
 /// already produced (`parse_toml_array` for `mcp = [...]`, `parse_mcp_servers_from_config`
@@ -911,48 +828,6 @@ pub(crate) fn config_whitespace_warning(
         "\n  A quoted TOML value keeps its padding; an unquoted one does not. Remove the space inside the quotes if it was not intended.",
     );
     Some(msg)
-}
-
-/// Strip surrounding quotes from a TOML string value.
-fn strip_quotes(s: &str) -> String {
-    let s = s.trim();
-    if (s.starts_with('"') && s.ends_with('"')) || (s.starts_with('\'') && s.ends_with('\'')) {
-        if s.len() >= 2 {
-            s[1..s.len() - 1].to_string()
-        } else {
-            String::new()
-        }
-    } else {
-        s.to_string()
-    }
-}
-
-/// Parse a simple inline TOML table like `{ KEY = "value", KEY2 = "value2" }`.
-/// Returns a list of (key, value) pairs.
-fn parse_inline_table(s: &str) -> Vec<(String, String)> {
-    let s = s.trim();
-    // Strip surrounding braces
-    let inner = if s.starts_with('{') && s.ends_with('}') {
-        &s[1..s.len() - 1]
-    } else {
-        return Vec::new();
-    };
-
-    let mut result = Vec::new();
-    for pair in inner.split(',') {
-        let pair = pair.trim();
-        if pair.is_empty() {
-            continue;
-        }
-        if let Some((k, v)) = pair.split_once('=') {
-            let k = k.trim().to_string();
-            let v = strip_quotes(v);
-            if !k.is_empty() {
-                result.push((k, v));
-            }
-        }
-    }
-    result
 }
 
 /// Configuration for an MCP (Model Context Protocol) server defined in config TOML sections.
@@ -1250,7 +1125,8 @@ impl ModelPricingOverrides {
     }
 }
 
-/// Parse `[model_pricing."<model-id>"]` tables out of raw config content.
+/// Read the `model_pricing` table out of raw config content, through the
+/// `toml` crate (#1182): any spelling of the table reads the same.
 ///
 /// ```toml
 /// [model_pricing."my-model-id"]
@@ -1270,99 +1146,7 @@ impl ModelPricingOverrides {
 ///   marginal cost per million tokens really is zero is the motivating case
 ///   for this feature. Do not "fix" this into a refusal.
 pub fn parse_model_pricing_from_config(content: &str) -> ModelPricingOverrides {
-    let mut out = ModelPricingOverrides::default();
-    let mut current: Option<String> = None;
-    let mut input: Option<f64> = None;
-    let mut output: Option<f64> = None;
-    let mut saw_bad_value = false;
-
-    fn flush(
-        current: &mut Option<String>,
-        input: &mut Option<f64>,
-        output: &mut Option<f64>,
-        saw_bad_value: &mut bool,
-        out: &mut ModelPricingOverrides,
-    ) {
-        let name = match current.take() {
-            Some(n) => n,
-            None => {
-                *input = None;
-                *output = None;
-                *saw_bad_value = false;
-                return;
-            }
-        };
-        match (input.take(), output.take()) {
-            (Some(i), Some(o)) if !*saw_bad_value => {
-                out.entries.push((
-                    name,
-                    ModelPrice {
-                        input_per_million: i,
-                        output_per_million: o,
-                    },
-                ));
-            }
-            _ => out.dropped.push(name),
-        }
-        *saw_bad_value = false;
-    }
-
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-
-        if let Some(section) = crate::config_unknown_keys::toml_section_header(trimmed) {
-            flush(
-                &mut current,
-                &mut input,
-                &mut output,
-                &mut saw_bad_value,
-                &mut out,
-            );
-            if let Some(id) = section.strip_prefix("model_pricing.") {
-                let id = strip_quotes(id.trim());
-                if !id.is_empty() {
-                    current = Some(id);
-                }
-            }
-            continue;
-        }
-
-        if current.is_none() {
-            continue;
-        }
-
-        if let Some((key, value)) = trimmed.split_once('=') {
-            let key = crate::config_unknown_keys::config_key_name(key);
-            if key != "input" && key != "output" {
-                continue;
-            }
-            // Strip a trailing `# comment` before parsing the number.
-            let value = value.split('#').next().unwrap_or("").trim();
-            // A rate must be a real, non-negative number. Zero is allowed on
-            // purpose (see the doc comment); negative and NaN are not.
-            match value.parse::<f64>() {
-                Ok(v) if v.is_finite() && v >= 0.0 => {
-                    if key == "input" {
-                        input = Some(v);
-                    } else {
-                        output = Some(v);
-                    }
-                }
-                _ => saw_bad_value = true,
-            }
-        }
-    }
-    flush(
-        &mut current,
-        &mut input,
-        &mut output,
-        &mut saw_bad_value,
-        &mut out,
-    );
-    out
+    config_toml_read::model_pricing_from_table(&config_toml_read::parse_table(content))
 }
 
 /// Keys that `/config set` understands. Each entry is a key name and a
@@ -2545,18 +2329,37 @@ env = { API_KEY = "secret" }
         );
     }
 
+    // The hand reader's `strip_quotes` / `parse_inline_table` were deleted
+    // with it (#1182); their tests now pin the same cases through the reader.
+    fn mcp_cmd(value: &str) -> Option<String> {
+        parse_mcp_servers_from_config(&format!("[mcp_servers.s]\ncommand = {value}\n"))
+            .pop()
+            .map(|s| s.command)
+    }
+
     #[test]
     fn test_config_module_strip_quotes() {
-        assert_eq!(strip_quotes("\"hello\""), "hello");
-        assert_eq!(strip_quotes("'hello'"), "hello");
-        assert_eq!(strip_quotes("hello"), "hello");
-        assert_eq!(strip_quotes("\"\""), "");
-        assert_eq!(strip_quotes(""), "");
+        assert_eq!(mcp_cmd("\"hello\"").as_deref(), Some("hello"));
+        assert_eq!(mcp_cmd("'hello'").as_deref(), Some("hello"));
+        // Unquoted is not TOML (the load gate refuses it), and an empty
+        // command is no server.
+        assert_eq!(mcp_cmd("hello"), None);
+        assert_eq!(mcp_cmd("\"\""), None);
+        assert_eq!(mcp_cmd(""), None);
+    }
+
+    fn mcp_env(value: &str) -> Vec<(String, String)> {
+        parse_mcp_servers_from_config(&format!(
+            "[mcp_servers.s]\ncommand = \"x\"\nenv = {value}\n"
+        ))
+        .pop()
+        .map(|s| s.env)
+        .unwrap_or_default()
     }
 
     #[test]
     fn test_config_module_parse_inline_table() {
-        let result = parse_inline_table(r#"{ KEY = "value", OTHER = "val2" }"#);
+        let result = mcp_env(r#"{ KEY = "value", OTHER = "val2" }"#);
         assert_eq!(result.len(), 2);
         assert_eq!(result[0], ("KEY".to_string(), "value".to_string()));
         assert_eq!(result[1], ("OTHER".to_string(), "val2".to_string()));
@@ -2564,11 +2367,9 @@ env = { API_KEY = "secret" }
 
     #[test]
     fn test_config_module_parse_inline_table_empty() {
-        let result = parse_inline_table("{}");
-        assert!(result.is_empty());
-
-        let result = parse_inline_table("not a table");
-        assert!(result.is_empty());
+        assert!(mcp_env("{}").is_empty());
+        // Not a table: the server is skipped, so no env either.
+        assert!(mcp_env("\"not a table\"").is_empty());
     }
 
     #[test]
