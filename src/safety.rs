@@ -108,10 +108,18 @@ pub(crate) const COMMAND_SEPARATORS: &[&str] = &[";", "&&", "||", "|"];
 /// Returns `Some(reason)` if the command looks destructive.
 pub fn analyze_bash_command(command: &str) -> Option<String> {
     let cmd = command.trim();
-    let cmd_lower = cmd.to_lowercase();
-    SAFETY_CHECKS
-        .iter()
-        .find_map(|check| check(cmd, &cmd_lower))
+    let check = |c: &str| {
+        let lower = c.to_lowercase();
+        SAFETY_CHECKS.iter().find_map(|f| f(c, &lower))
+    };
+    // #1193: a trigger glued to `$(`, `(`, `)` or a backtick slips the token
+    // anchors, so each subshell piece (quotes stripped) is checked on its own.
+    let stripped = strip_quoted_regions(cmd);
+    check(cmd).or_else(|| {
+        let mut pieces = stripped.split(SUBSHELL_BREAKS).map(str::trim);
+        let split = stripped.contains(SUBSHELL_BREAKS);
+        pieces.find_map(|p| (split && !p.is_empty()).then(|| check(p)).flatten())
+    })
 }
 
 /// Check if a character position is at a word boundary (start of a command/token).
@@ -2174,6 +2182,8 @@ fn perl_edits_in_place(segment: &str) -> bool {
 
 /// Characters that end a shell command segment (incl. `$(`, `(`, backtick); token checks split here too (#1191).
 const SEGMENT_BREAKS: [char; 7] = [';', '|', '&', '\n', '(', ')', '`'];
+/// SEGMENT_BREAKS' subshell/substitution members (pipes stay joined for the pipe checks), #1193.
+const SUBSHELL_BREAKS: &[char] = SEGMENT_BREAKS.split_at(4).1;
 
 pub fn detect_write_command(cmd: &str) -> Option<String> {
     let stripped = strip_quoted_regions(cmd);

