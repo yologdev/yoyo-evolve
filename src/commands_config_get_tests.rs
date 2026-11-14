@@ -326,7 +326,6 @@ fn unset_reading_near_misses() {
         )
     );
     // A numeric that parses is shown; one that doesn't is unset.
-    // (max_turns, not max_tokens: `is_secret_key` masks max_tokens, #1194.)
     assert_eq!(
         run("max_turns", "20"),
         (0, format!("  max_turns = 20  ({src})\n"))
@@ -359,4 +358,75 @@ fn config_show_marks_a_value_read_as_unset() {
         "{out}"
     );
     assert!(out.contains("  provider  = openai\n"), "{out}");
+}
+
+// === #1194: `is_secret_key` matches name segments, not substrings ===
+
+/// Census over every key yoyo knows, from the two authorities (not typed):
+/// the only one masked is `api_key`. `max_tokens` used to be masked too,
+/// because its name contains `token` (#1194).
+#[test]
+fn only_api_key_is_masked_among_every_known_key() {
+    use crate::commands_config::is_secret_key;
+    let mut all: Vec<&str> = crate::config::SETTABLE_KEYS
+        .iter()
+        .map(|(k, _)| *k)
+        .chain(crate::config_unknown_keys::TOP_LEVEL_KEYS.iter().copied())
+        .collect();
+    all.sort_unstable();
+    all.dedup();
+    assert!(all.contains(&"max_tokens"), "census lost max_tokens");
+    let masked: Vec<&str> = all.iter().copied().filter(|k| is_secret_key(k)).collect();
+    assert_eq!(masked, vec!["api_key"], "probed {} known keys", all.len());
+}
+
+#[test]
+fn secret_key_rows_mask_credentials_and_show_counts() {
+    use crate::commands_config::is_secret_key;
+    for key in [
+        "api_key",
+        "apikey",
+        "API_KEY",
+        "GITHUB_TOKEN",
+        "access_token",
+        "AccessToken",
+        "githubtoken",
+        "client_secret",
+        "db_password",
+        "x-api-key",
+        "aws.secret_access_key",
+        "api_keys",
+        "credentials",
+    ] {
+        assert!(is_secret_key(key), "{key} must be masked");
+    }
+    for key in [
+        "max_tokens",
+        "MaxTokens",
+        "max_output_tokens",
+        "thinking",
+        "keymap",
+        "model",
+        "temperature",
+    ] {
+        assert!(!is_secret_key(key), "{key} must be shown");
+    }
+}
+
+/// The report path a user actually runs: `yoyo config get max_tokens`.
+#[test]
+fn config_get_max_tokens_prints_the_value() {
+    let src = "/x/.yoyo.toml";
+    let mut cfg = std::collections::HashMap::new();
+    cfg.insert("max_tokens".to_string(), "2048".to_string());
+    let (code, text) = crate::commands_config_get::config_get_report("max_tokens", &cfg, src);
+    assert_eq!(
+        (code, strip_dim(&text)),
+        (0, format!("  max_tokens = 2048  ({src})\n"))
+    );
+    // And a real secret on the same path stays masked.
+    let mut cfg = std::collections::HashMap::new();
+    cfg.insert("api_key".to_string(), "sk-real".to_string());
+    let (_, text) = crate::commands_config_get::config_get_report("api_key", &cfg, src);
+    assert_eq!(strip_dim(&text), format!("  api_key = ***  ({src})\n"));
 }
