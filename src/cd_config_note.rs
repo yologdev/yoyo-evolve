@@ -589,8 +589,10 @@ mod tests {
 
     #[test]
     fn deny_plus_unapplied_sections_names_both() {
-        let text = "[permissions]\nallow = [\"git *\"]\ndeny = [\"a *\", \"b *\"]\n\
-                    hooks.pre.bash = \"echo\"\n";
+        // The hook goes before the header: under `[permissions]` TOML reads
+        // it as `permissions.hooks.pre.bash`, no hook at all (#1184).
+        let text = "hooks.pre.bash = \"echo\"\n\
+                    [permissions]\nallow = [\"git *\"]\ndeny = [\"a *\", \"b *\"]\n";
         let reading = sets(text);
         assert_eq!(note_volume(&reading), NoteVolume::Warning);
         let note = cd_config_note("/r", &reading, true).unwrap();

@@ -552,12 +552,16 @@ pub(crate) fn project_trust_grants(
     // produces, not raw text, and rebuilding that map here would be a second loader.
     // A key-prefix scan is enough for a predicate whose only job is "is there
     // something worth asking about" — and both error directions are safe (above).
-    if crate::hooks::config_text_names_a_hook(config_text) {
+    // #1184: the map the hook reader takes now holds every TOML spelling
+    // (`hooks = { pre = ... }` too), so a hook it holds is asked about as well.
+    let parsed = crate::config::parse_config_file(config_text);
+    if crate::hooks::config_text_names_a_hook(config_text)
+        || parsed.keys().any(|k| k.starts_with("hooks."))
+    {
         grants.push("shell hooks (commands run on tool calls)");
     }
 
     // #1179: the host the user's API key is sent to (`project_base_url`'s gate).
-    let parsed = crate::config::parse_config_file(config_text);
     if parsed.get("base_url").is_some_and(|u| !u.trim().is_empty()) {
         grants.push("base_url (the host your API key is sent to)");
     }

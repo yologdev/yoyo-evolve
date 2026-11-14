@@ -144,7 +144,9 @@ allow = ["./src", "./tests"]
 deny = ["~/.ssh", "/etc"]
 ```
 
-A key yoyo does not read (a typo such as `modle = "gpt-4o"`, or a misspelled section such as `[permisions]`) is not an error: the run goes ahead without it, and yoyo prints one stderr warning per such key naming the file, the line and the closest key it does read. Hook keys are top-level dotted keys (`hooks.pre.bash = "..."`); a `[hooks]` table is warned about because yoyo never reads it.
+A key yoyo does not read (a typo such as `modle = "gpt-4o"`, or a misspelled section such as `[permisions]`) is not an error: the run goes ahead without it, and yoyo prints one stderr warning per such key naming the file, the line and the closest key it does read. Hook keys are top-level dotted keys (`hooks.pre.bash = "..."`); any spelling TOML reads as the same key (`[hooks.pre]` then `bash = "..."`, or an inline table) works too.
+
+Settings such as `model`, `provider` and `base_url` follow TOML's rule: a top-level key goes **before the first `[section]` header**. Written under a header (`[permissions]` then `provider = "openai"`), the key belongs to that table, so yoyo does not use it as the setting and warns that it has no effect. Before this was fixed, such a line silently replaced the top-level value.
 
 CLI flags always override config file values. For example, `--model gpt-4o` overrides `model = "claude-sonnet-5-5"` from the config file.
 

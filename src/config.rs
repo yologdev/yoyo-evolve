@@ -1764,32 +1764,12 @@ pub fn history_file_path() -> Option<std::path::PathBuf> {
         .map(|h| std::path::PathBuf::from(h).join(".yoyo_history"))
 }
 
-/// Parse a simple TOML-like config file (key = "value" or key = value per line).
-/// Ignores comments (#) and blank lines. Returns a map of key → value.
+/// The config file's top-level settings as a map of key → value (strings
+/// unquoted, other values as TOML text). See `top_level_scalars_from_table`.
 pub fn parse_config_file(content: &str) -> HashMap<String, String> {
-    let mut map = HashMap::new();
-    for line in content.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        if let Some((key, value)) = line.split_once('=') {
-            // `"model"` is `model` to TOML (#1178).
-            let key = crate::config_unknown_keys::config_key_name(key);
-            // TOML's reading or nothing (#1177): an array stays raw for
-            // `parse_toml_array`; an unreadable value is left out, and
-            // `config_value::warn_unreadable_values_once` names it at load.
-            let value = crate::config_value::strip_trailing_comment(value);
-            let read = if value.starts_with('[') {
-                Ok(value.to_string())
-            } else {
-                crate::config_value::read_scalar(value)
-            };
-            let Ok(value) = read else { continue };
-            map.insert(key, value);
-        }
-    }
-    map
+    // #1184: TOML's top-level keys, never a key from under a `[section]`.
+    // Content that is not TOML (the loader refuses it first) configures nothing.
+    config_toml_read::top_level_scalars_from_table(&config_toml_read::parse_table(content))
 }
 
 // ---------------------------------------------------------------------------
@@ -2108,6 +2088,10 @@ pub fn loaded_config_is_project_local() -> bool {
 #[cfg(test)]
 #[path = "config_toml_tests.rs"]
 mod config_toml_tests;
+
+#[cfg(test)]
+#[path = "config_toplevel_tests.rs"]
+mod config_toplevel_tests;
 
 #[cfg(test)]
 mod tests {
@@ -3539,8 +3523,11 @@ thinking = "high"
 
     #[test]
     fn test_parse_config_file_no_quotes() {
+        // A bare string is not TOML: the loader refuses the file (#1184 slice
+        // 1) and the map, built by the toml crate since slice 2, holds nothing.
         let content = "model = claude-haiku-35\nmax_tokens = 2048";
-        let config = parse_config_file(content);
+        assert!(parse_config_file(content).is_empty());
+        let config = parse_config_file("model = \"claude-haiku-35\"\nmax_tokens = 2048");
         assert_eq!(config.get("model").unwrap(), "claude-haiku-35");
         assert_eq!(config.get("max_tokens").unwrap(), "2048");
     }
@@ -3560,7 +3547,7 @@ thinking = "high"
 
     #[test]
     fn test_parse_config_file_whitespace_handling() {
-        let content = "  model  =  claude-opus-4-6  ";
+        let content = "  model  =  \"claude-opus-4-6\"  ";
         let config = parse_config_file(content);
         assert_eq!(config.get("model").unwrap(), "claude-opus-4-6");
     }

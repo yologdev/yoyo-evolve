@@ -1,6 +1,6 @@
 //! Warn when a loaded config file has a key yoyo never reads (#1171).
 //!
-//! `parse_config_file` puts every `key = value` line into a flat map and the
+//! `parse_config_file` puts every top-level key into a flat map and the
 //! readers look up the names they know, so a typo (`modle = "gpt-4o"`) was
 //! simply never looked up: the run went ahead on the default model and said
 //! nothing. This module names those keys, once per process, on stderr. It
@@ -9,8 +9,10 @@
 //!
 //! "Never reads" is defined by the readers, not by `/config set`'s list:
 //! - the flat map is read by name (`file_config.get("model")`, `config_flag`,
-//!   the numeric settings, `hooks.<phase>.<tool>` by prefix). The map is
-//!   flattened across sections, so these names are read wherever they appear;
+//!   the numeric settings, `hooks.<phase>.<tool>` by prefix). Since #1184
+//!   slice 2 the map holds TOML's top-level keys only (plus every spelling of
+//!   `hooks`), so these names are read only before the first header (until
+//!   then the map was flattened across sections);
 //! - four section parsers read their own keys inside their own headers
 //!   (`[permissions]`, `[directories]`, `[mcp_servers.<name>]`,
 //!   `[model_pricing.<name>]`), using the same header rule they use:
@@ -101,7 +103,7 @@ pub(crate) enum UnknownKey {
         rewrite: Option<String>,
     },
     /// A section no parser reads, with the keys under it that nothing reads
-    /// either (a top-level name under it is still read: the map is flat).
+    /// either (a top-level name under it too, since #1184 slice 2).
     Section {
         line: usize,
         header: String,
@@ -609,6 +611,9 @@ pub(crate) fn unknown_config_keys(contents: &str) -> Vec<UnknownKey> {
                         (!array && parsed_header_is_read(p)).then_some(&[][..])
                     }
                     _ if array => None,
+                    // #1184: every TOML spelling of `hooks` reaches the hook
+                    // reader, which judges its keys itself.
+                    Some([stem, ..]) if stem == "hooks" => Some(&[][..]),
                     _ => section_keys(&inner),
                 };
                 open_section = None;
@@ -653,11 +658,19 @@ pub(crate) fn unknown_config_keys(contents: &str) -> Vec<UnknownKey> {
             array_depth = bracket_balance(value).max(0);
         }
         let name = config_key_name(key);
-        if key.is_empty() || is_top_level_key(&name) {
+        // #1184: only a key before the first header is a top-level setting;
+        // under a header it is that table's key, judged below.
+        if key.is_empty() || (section.is_none() && is_top_level_key(&name)) {
             continue;
         }
         // The whole TOML path this line sets, when it is a TOML key.
         let segs = toml_key_segments(key);
+        let here = section.as_ref().map_or(&[][..], |(_, _, p)| p.as_slice());
+        let stem = here.first().or(segs.as_ref().and_then(|s| s.first()));
+        let one_part = here.is_empty() && segs.as_ref().is_some_and(|s| s.len() == 1);
+        if stem.is_some_and(|s| s == "hooks") && (!one_part || value.starts_with('{')) {
+            continue; // a hook, in any spelling; the hook reader judges it
+        }
         // #1182: under mcp_servers / model_pricing every TOML spelling is
         // read, so judge the full path and value, not the header form.
         let base = match &section {
@@ -780,6 +793,11 @@ pub(crate) fn unknown_config_key_warnings(shown: &str, findings: &[UnknownKey]) 
                     None => String::new(),
                 };
                 let hint = match suggestion {
+                    // #1184: a top-level key under a header is that table's key.
+                    Some(s) if s == key && section.is_some() => {
+                        "; it is a top-level key, so put it above the first `[section]` header"
+                            .to_string()
+                    }
                     Some(s) => format!("; did you mean `{s}`?"),
                     None => String::new(),
                 };
@@ -959,19 +977,53 @@ mod tests {
     }
 
     #[test]
-    fn a_hooks_table_is_unread_because_hooks_are_dotted_top_level_keys() {
-        // `[hooks]` + `pre.bash` flattens to `pre.bash`, which the hook parser
-        // never sees: it reads `hooks.pre.bash`.
-        assert_eq!(
-            keys("[hooks]\npre.bash = \"echo\"\n"),
-            vec!["[hooks]".to_string()]
-        );
+    fn a_hooks_table_is_read_in_every_toml_spelling() {
+        // Until #1184 slice 2 only the dotted `hooks.pre.bash` line was read
+        // and `[hooks]` was warned as unread. The flat map is now built from
+        // TOML's table, where every spelling is the same `hooks.pre.bash`.
+        for doc in [
+            "[hooks]\npre.bash = \"echo\"\n",
+            "[hooks.pre]\nbash = \"echo\"\n",
+            "hooks = { pre = { bash = \"echo\" } }\n",
+            "\"hooks\".pre.bash = \"echo\"\n",
+        ] {
+            assert_eq!(keys(doc), Vec::<String>::new(), "{doc:?}");
+            let map = crate::config::parse_config_file(doc);
+            assert_eq!(map.get("hooks.pre.bash").map(String::as_str), Some("echo"));
+        }
     }
 
     #[test]
-    fn a_top_level_name_under_any_section_is_read_because_the_map_is_flat() {
-        assert_eq!(keys("[whatever]\nmodel = \"x\"\n"), Vec::<String>::new());
-        assert_eq!(keys("[permissions]\nmodel = \"x\"\n"), Vec::<String>::new());
+    fn a_top_level_name_under_a_section_is_named_because_it_is_not_read() {
+        // Until #1184 slice 2 the flat map took it (and it overrode the real
+        // top-level key), so it was read and this list was empty.
+        assert_eq!(
+            keys("[whatever]\nmodel = \"x\"\n"),
+            vec!["[whatever]".to_string()]
+        );
+        assert_eq!(
+            keys("[permissions]\nmodel = \"x\"\n"),
+            vec!["model".to_string()]
+        );
+        assert_eq!(
+            keys("[x]\nhooks.pre.bash = \"x\"\n"),
+            vec!["[x]".to_string()]
+        );
+        let found = unknown_config_keys("[permissions]\nprovider = \"openai\"\n");
+        assert_eq!(
+            unknown_config_key_warnings("cfg", &found),
+            vec![
+                "cfg line 2: `provider` (in [permissions]) is not a key yoyo reads, so it has \
+                 no effect; it is a top-level key, so put it above the first `[section]` header"
+                    .to_string()
+            ]
+        );
+        for doc in [
+            "[whatever]\nmodel = \"x\"\n",
+            "[permissions]\nmodel = \"x\"\n",
+        ] {
+            assert_eq!(crate::config::parse_config_file(doc).get("model"), None);
+        }
     }
 
     #[test]

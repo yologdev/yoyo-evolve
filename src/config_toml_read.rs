@@ -18,6 +18,7 @@
 //! caller names). `config_unknown_keys` names the line for the user.
 
 use super::{McpServerConfig, ModelPrice, ModelPricingOverrides};
+use std::collections::HashMap;
 use toml::{Table, Value};
 
 /// Parse `content` as TOML; an unparseable file configures nothing.
@@ -35,6 +36,47 @@ fn scalar_text(v: &Value) -> Option<String> {
         Value::Boolean(b) => Some(b.to_string()),
         Value::Datetime(d) => Some(d.to_string()),
         Value::Array(_) | Value::Table(_) => None,
+    }
+}
+
+/// The flat map every top-level setting is looked up in (#1184): TOML's
+/// top-level keys only. A key under any `[section]`, a dotted key or an
+/// inline table is a table to TOML, so it is never read as `model`,
+/// `provider` or `base_url` (the line reader took it, last one winning).
+/// A string is its content, anything else its TOML text, which an array
+/// reader (`parse_toml_array`) reads back. The one table flattened is
+/// `hooks`, whose reader takes `hooks.<phase>.<tool>` keys, in every spelling.
+pub(super) fn top_level_scalars_from_table(doc: &Table) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    for (key, v) in doc {
+        match v {
+            Value::Table(t) if key == "hooks" => flatten_into(&mut map, key, t),
+            Value::Table(_) => {}
+            v => {
+                map.insert(key.clone(), flat_text(v));
+            }
+        }
+    }
+    map
+}
+
+fn flat_text(v: &Value) -> String {
+    match v {
+        Value::String(s) => s.clone(),
+        v => v.to_string(),
+    }
+}
+
+/// `prefix.<key>` for every leaf under `t`.
+fn flatten_into(map: &mut HashMap<String, String>, prefix: &str, t: &Table) {
+    for (key, v) in t {
+        let path = format!("{prefix}.{key}");
+        match v {
+            Value::Table(t) => flatten_into(map, &path, t),
+            v => {
+                map.insert(path, flat_text(v));
+            }
+        }
     }
 }
 
