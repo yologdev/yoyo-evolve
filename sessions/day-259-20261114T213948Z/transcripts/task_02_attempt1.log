@@ -1,0 +1,81 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "is_secret_key" src/ | … ✓ (298ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "is_secret_key\|\*\*\*" … ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 350,368p src/commands_con… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1268 && NR<=1284 {print… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=280 && NR<=315 {print N… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "\"commands_config.rs\"\… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,60p tests/module_size.r… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "const\|2000\|overshoot\… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/c… (75 lines) ✓ (32.9s)
+
+────────────────────────────────────────────────────────────────────────────────
+  9 tools completed in 1m 21s (9 ✓)
+
+Red for the right reasons. Now the fix:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (29 lines) ✓ (35.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The failing row is key_bindings_file, my own contrived near-miss; a bare key segment masking is exactly the task's rule, so the row was wrong, not the code. Dropping it:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i '/^  … (7 lines) ✗ (2m 0s)
+    │ Command timed out after 120s. Output so far:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (4m 22s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (4m 12s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 10m 41s (2 ✓, 1 ✗)
+
+All suites green. Binary probe, in one command after the build:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -1 && B=… ✓ (130ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "mask\|\*\*\*" docs/src… ✓ (8ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 12.5s (2 ✓)
+
+Docs say "secrets masked", still true. Committing.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/co… (43 lines) ✓ (19ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+#1194 is fixed and committed as 18296f08. yoyo config get max_tokens now shows the real value, and api_key is still hidden as ***. Build, all tests, clippy with -D warnings and the fmt check all pass.
+
+The cause: is_secret_key in src/commands_config.rs hid any key whose name merely contained token, key, secret or password. So max_tokens, which is just the output limit, came out as ***.
+
+The fix: it now splits the key name on _, - and ., and hides a value when a part ends in key(s), token, secret(s), password, passwd or credential(s), or when the whole name contains secret, password or apikey.
+• I used "ends in" rather than "equals" so names written as one word stay hidden (AccessToken, githubtoken). An existing test already required AccessToken to be hidden.
+• Plural tokens is left out on purpose: in a config key it names a count, not a credential.
+• One known trade: a part that is exactly key is still hidden, even in a made-up name like key_bindings_file. Hiding too much is the harmless direction. I had added that name as a "must show" row, saw it fail, and decided the row was wrong rather than the rule.
+
+Tests (in src/commands_config_get_tests.rs):
+• Every known key: the test takes all keys from SETTABLE_KEYS and TOP_LEVEL_KEYS (30 after removing duplicates). Before the fix, the hidden ones were {api_key, max_tokens}; now only api_key is. This test failed on the old code before I changed it.
+• Name table: 13 names that must be hidden (including GITHUB_TOKEN, x-api-key, aws.secret_access_key) and 7 that must be shown (including max_tokens, MaxTokens, max_output_tokens, keymap).
+• Full output check: config get max_tokens prints exactly   max_tokens = 2048  (src), and api_key prints ***.
+• No test had been asserting max_tokens = ***. One test avoided the bug by using max_turns instead, with a comment saying why; I removed that comment.
+
+Run against the freshly built binary (temporary HOME, .yoyo.toml containing max_tokens = 2048 and api_key = "x"):
+```
+$ yoyo config get max_tokens
+  max_tokens = 2048  (.yoyo.toml)
+$ yoyo config show
+  api_key     = ***
+  max_tokens  = 2048
+```
+
+src/commands_config.rs is now 2042 lines. That is over the 2000-line limit, but inside the 50-line grace allowance, so the module-size check passes with a warning. The next change to that file has 8 lines of room before the check fails.
+  watch: no files changed this turn — skipping
