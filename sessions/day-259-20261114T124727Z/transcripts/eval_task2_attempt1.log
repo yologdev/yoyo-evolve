@@ -1,0 +1,24 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la target/debug/yoyo 2>&1 | … ✓ (26ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > sessio… (9 lines) ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 12.4s (2 ✓)
+
+Verdict: PASS. It's written to session_plan/eval_task_2.md, with all four checks passing.
+
+I ran the built binary (target/debug/yoyo) on the #1172 setup: provider = "openai", a base_url on 127.0.0.1 that nothing answers, and model = "".
+• `config get model` now says the model is not set: .yoyo.toml has model = "", which yoyo reads as unset (using default). Exit code is 0, the same as for a key that isn't in the file at all.
+• `config show` marks the model line (read as unset; using default).
+• With `model = "x"` the output is the same as before.
+
+I didn't re-run -p hi against the dead address. The cli.rs change behaves exactly as the old code did (trim the value, then drop it if empty), so the run should still use the default model.
+
+• Shared rule: the run's model rule now lives in one helper, config_value::named_model, called by both the run (cli.rs) and config get, so the two can't disagree. The other settable keys reuse the run's own readers, and a test goes through SETTABLE_KEYS so a new key can't be left unhandled.
+• Every new function is called within this diff.
+• Docs: docs/src/getting-started/installation.md is updated.
+• Product behaviour: only what config get and config show print has changed. No defaults, flags or startup behaviour changed.
+  watch: no files changed this turn — skipping

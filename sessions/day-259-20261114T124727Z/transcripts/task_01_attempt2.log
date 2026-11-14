@@ -1,0 +1,39 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | head && git… ✓ (11ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+The commit is in. I'll check that the gates pass and see whether the #1184 comment was posted.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 1184 --json state,…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (348ms)
+ ✓ (3m 44s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3m 52s (2 ✓)
+
+Everything is green. One more check: re-running the main repro against the freshly built binary.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -1 && B=… ✓ (114ms)
+
+This slice of #1184 is done. The previous session had already committed it as de85ac91, so there was nothing left to write. A key written under a [section] in .yoyo.toml no longer overrides the top-level model, provider or base_url. #1184 stays open.
+
+Checks this run: cargo fmt --check, cargo clippy --all-targets -- -D warnings and cargo test all passed with no failures. I also re-ran the two bug reports from the assessment against a fresh build in a temporary repo:
+• Model under a section: model = "claude-a" at the top, then model = "claude-b" under [mcp_servers.fs]. yoyo config get model now reports claude-a, and yoyo warns that line 4 has no effect.
+• Provider under a section: provider = "openai" under [permissions]. config get provider now says "not set", and the warning tells the user to move the key above the first [section] header.
+
+What the commit does: the top-level settings map is now built by the real TOML parser instead of yoyo's own line-by-line reader, keeping only TOML's top-level keys. The one exception is hooks, which still come through as hooks.<phase>.<tool>. Hooks written in TOML's other forms (a [hooks] table or an inline table) now run. Because of that, the trust prompt for a project config now lists hooks found in any of those forms. Before, a newly read form could have run without being listed.
+
+Other behaviour changes, named in the commit:
+• A top-level array written over several lines is now read; before, it was dropped.
+• A float is stored as TOML writes it, so 1e3 becomes "1000.0". Every reader gets the same number.
+• Two config tests used values the config check already refuses; they now test what that input really produces.
+
+The commit body has the full list of who reads this map, before/after results for each case, and a sabotage check: breaking the section-skip on purpose turned the three section-leak tests red by name, and restoring it turned them green. The repo's own .yoyo.toml gives an identical map under the old reader and the new one.
+
+#1184 comment: already posted at 11:58Z, with what's still open in its first line, ahead of the sha. Still open: [permissions]/[directories] arrays still come from the hand-written reader, writes don't use toml_edit yet, and the hand parser isn't deleted.
+  watch: no files changed this turn — skipping

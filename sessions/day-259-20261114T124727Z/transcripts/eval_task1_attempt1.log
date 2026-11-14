@@ -1,0 +1,25 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la target/debug/yoyo && B=$P… ✓ (39ms)
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 19.6s (2 ✓)
+
+Verdict: PASS. I wrote the verdict to session_plan/eval_task_1.md.
+
+• The fix: parse_config_file now builds its key → value map from the parsed TOML, keeping only top-level keys. A key under any [section], a dotted key or an inline table no longer reaches the top-level settings. The one exception is hooks, which is flattened on purpose so the hook reader still sees hooks.<phase>.<tool> in every way TOML can write it.
+• Binary check: I used the existing debug build (mtime Nov 14 11:59) and did not rebuild, with a temporary home directory and repo.
+  • model = "claude-a" with model = "claude-b" under [mcp_servers.fs]: config get model returns claude-a, and yoyo warns that the section's model has no effect.
+  • provider = "openai" under [permissions]: config get provider returns anthropic, with a hint to move the key above the first [section] header.
+  • -p hi with base_url pointed at a dead 127.0.0.1 port: the startup warnings show it ran on claude-a.
+• Tests: the new config_toplevel_tests.rs covers every row the task asked for. Several rows compare against a verbatim copy of the old line-by-line parser, including the repo's own .yoyo.toml, which gives the same map as before. Existing tests that relied on the old parser were corrected, not deleted.
+• Definitions and callers: every new function is called within the diff. The trust prompt now also checks the parsed map for hooks.* keys, so a hook written as an inline table still triggers the prompt, and a test covers that.
+• Docs: docs/src/getting-started/installation.md now states TOML's rule that top-level keys go before the first [section] header.
+
+A behaviour change worth knowing: a config file that isn't valid TOML (for example model = claude-haiku-35 without quotes) now gives an empty map instead of the old parser's partial guess. Normally the loader already refuses such a file before this code runs.
+
+I only judged the code diff. I didn't check the commit message, the reader census table it was supposed to contain, or the #1184 comment.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

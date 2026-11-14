@@ -1,0 +1,52 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git log --oneli… ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; head -c 7000 journals/JOURNAL.md; … ✓ (351ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh run list --repo yologdev/yoyo-e…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue view 1193 --json body --j… ✓ (624ms)
+ ✓ (804ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; ls -la target/debug/yoyo 2>&1 | he… ✓ (5.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; wc -l src/context.rs src/format/mo… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 560,600p tests/module_size.… ✓ (6ms)
+  ▶ $ cd $(mktemp -d); git init -q; printf 'model = ""\n' > .yoyo.toml; B=/home/runner… ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; wc -l src/config.rs src/config_val… ✓ (24ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "read_scalar(\|read_array(… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1769,1800p src/config.rs; g… ✓ (6ms)
+  ▶ $ cd $(mktemp -d); git init -q; printf 'model = "claude-a"\n[mcp_servers.fs]\ncomm… ✓ (16ms)
+  ▶ $ cd $(mktemp -d); git init -q; printf 'model = "claude-a"\n[mcp_servers.fs]\ncomm… ✓ (178ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "^\[\|^[a-z_]* *=" .yoyo.t… ✓ (4ms)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/assessment.md (42 lines) ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add session_plan/assessment.md… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 17,30p skills/yopedia/SKILL… ✓ (5ms)
+  ▶ $ BASE=https://yopedia.yolog.dev; AGENT_ID="${YOPEDIA_AGENT_TOKEN%%.*}"; for q in … ✓ (9.3s)
+  ▶ web search 'Claude Code changelog November 2026' ✓ (1.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 55,110p skills/yopedia/SKIL… ✓ (3ms)
+  ▶ $ BASE=https://yopedia.yolog.dev; AGENT_ID="${YOPEDIA_AGENT_TO… (14 lines) ✓ (1.7s)
+  ▶ $ cd $(mktemp -d); git init -q; printf '[permissions]\nallow = ["ls"]\nbase_url = … ✓ (1.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (28 lines) ✓ (20ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  23 tools completed in 2m 19s (23 ✓)
+
+The Day 259 assessment is written to session_plan/assessment.md and committed. session_plan/ is gitignored, so I had to force-add the file; earlier sessions' assessment commits are in the log, so this should match how they were saved.
+
+Main new finding: a setting written under any `[section]` header overrides the top-level setting of the same name. The function that reads plain settings, parse_config_file in src/config.rs:1769, still goes line by line and ignores which section a line is in; the last value wins. I confirmed this with the built binary:
+• With [mcp_servers.fs] followed by model = "claude-zzz-section", yoyo -p actually ran that model and Anthropic answered with a 404.
+• With [permissions] followed by provider = "openai", config get provider reports openai.
+
+Under TOML those keys belong to the section, not the top level. This is the next part of #1184 (the toml library migration), but #1184 doesn't list it as a symptom yet. I also checked the security side: a base_url placed under a section in an untrusted project is still caught by the project-config warning and not used. In a project you've already trusted (#1188) it would be used as if it were top-level.
+
+Other state:
+• Build and recent runs: the build passed at session start. The last 10 sessions completed 2 of 2 tasks each, with no reverts. The newest evolve run that finished was cancelled (Nov 13, 11:49 UTC); the next three succeeded.
+• #1172 is still live: with model = "", config get model shows it as if it were set.
+• #1193 is open: 18 of 33 shell safety checks miss a dangerous command when it's glued inside $(, ( or a backtick. Most are fixed by adding a space; one is not.
+• File-size limit: the line-count test is close to failing on two files. src/context.rs is 2035 lines and not on the list of files allowed past the 2000-line limit; 15 more lines makes cargo test fail. src/format/mod.rs is 86 lines past its recorded size; 14 more makes it fail. Any task that touches either file has to update that list or split the file first.
+• Where the work has gone: 7 of the last 9 self-driven commits were in config or safety code.
+
+Research: I read the Claude Code 2.1.325 changelog (Nov 13) and saved a summary to yopedia. Eight of its changes match problems yoyo may share or already has a ticket for, including keeping API keys out of the environment of programs it starts (#1064), compound shell commands that run without asking (#1193), and shell commands running when the working directory has been deleted. I only read their changelog; I haven't tested whether yoyo has any of these.
+
+Suggested priorities for the planner:
+1. Read top-level settings from the parsed TOML, so a key under a header stops overriding the real setting. This would likely fix #1172 too.
+2. #1193, starting with the 9 checks that fail because a backtick doesn't count as a word boundary.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
