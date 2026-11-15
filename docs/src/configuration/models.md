@@ -223,8 +223,9 @@ for, or a Claude id spelled with a prefix or version suffix AWS doesn't use, suc
 request carries no `inferenceConfig.maxTokens` unless you set `max_tokens`, so Bedrock applies the
 model's own default output limit. With `--thinking` on, the guessed 16000 is sent as the cap (raised
 above the budget if it is not already above it). The warning names both cases instead of
-naming one cap. The `/side` and `/architect` agents set no `max_tokens` and no thinking, so on
-`bedrock` they send no `inferenceConfig.maxTokens` and Bedrock's own default applies to them.
+naming one cap. The `/side` and `/architect` agents run with thinking off and send the cap the
+main agent sends with thinking off, on every provider: your `max_tokens` if set, and on `bedrock`
+with it unset, the preset's output maximum for a Claude id (no cap for an id with no preset) (#1203).
 
 A value for `--max-tokens`, `--temperature`, `--max-turns` or `--context-window` that is not a
 number (`--max-tokens abc`) is refused at startup with exit 2, before any request is sent; it no

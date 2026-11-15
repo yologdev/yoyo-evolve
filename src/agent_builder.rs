@@ -1866,8 +1866,18 @@ impl AgentConfig {
             .with_execution_limits(ExecutionLimits::default().with_max_turns(1));
 
         agent.temperature = effective_temperature(&self.model, sampling, self.temperature);
+        agent.max_tokens = self.thinking_off_max_tokens(&self.model);
 
         agent
+    }
+
+    /// #1203: the cap a thinking-off one-turn agent (/side, /architect) sends,
+    /// by the main agent's thinking-off rule: Bedrock's preset, else the user's.
+    fn thinking_off_max_tokens(&self, model: &str) -> Option<u32> {
+        match self.provider.as_str() {
+            "bedrock" => crate::providers::bedrock_max_tokens(model, self.max_tokens, false),
+            _ => self.max_tokens,
+        }
     }
 
     /// Build a minimal agent for the architect (planning) phase — same provider
@@ -1907,6 +1917,7 @@ impl AgentConfig {
             .with_execution_limits(ExecutionLimits::default().with_max_turns(1));
 
         agent.temperature = effective_temperature(architect_model, sampling, self.temperature);
+        agent.max_tokens = self.thinking_off_max_tokens(architect_model);
 
         agent
     }
