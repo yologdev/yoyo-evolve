@@ -72,6 +72,8 @@ fn a_git_env_assignment_glued_to_an_opener_is_refused_like_the_bare_one() {
 /// (check, bare trigger that must fire, shapes still missed: `d` = `$(`,
 /// `p` = `(`, `b` = backtick). Every miss is open on #1193. An exempt shape
 /// that starts refusing fails this test, so the list can only shrink.
+/// Day 260 (#1202 step 1): the parse-tree pass emptied the last exemption
+/// (`indirect_command_word`'s `d` and `b`), so every row is now "".
 #[allow(clippy::type_complexity)]
 const GLUED_CENSUS: &[(&str, super::SafetyCheck, &str, &str)] = {
     use super::*;
@@ -227,7 +229,7 @@ const GLUED_CENSUS: &[(&str, super::SafetyCheck, &str, &str)] = {
             "indirect_command_word",
             indirect_command::check_indirect_command_word,
             "$(echo rm) -rf /",
-            "db",
+            "",
         ),
     ]
 };
@@ -330,4 +332,47 @@ fn a_trigger_glued_to_a_subshell_break_is_refused_like_the_bare_one() {
         })
         .collect();
     assert!(wrong.is_empty(), "wrong verdicts:\n{}", wrong.join("\n"));
+}
+
+/// #1202 step 1: the parse-tree pass reaches commands inside control flow,
+/// a shape the #1193 census never wrapped (`d`/`p`/`b` only). Measured on
+/// Day 260: 35 of these were let through by the text passes (rm_destruction,
+/// crontab_removal, firewall_flush, history_destruction, pkill,
+/// standalone_destruction, symlink_attack); the tree pass refuses them all.
+#[test]
+fn a_census_trigger_inside_control_flow_is_refused() {
+    let mut wrong = Vec::new();
+    for (name, _, bare, _) in GLUED_CENSUS {
+        for cmd in [
+            format!("{{ {bare}; }}"),
+            format!("if true; then {bare}; fi"),
+            format!("for i in 1; do {bare}; done"),
+            format!("while false; do {bare}; done"),
+            format!("f() {{ {bare}; }}"),
+        ] {
+            if super::analyze_bash_command(&cmd).is_none() {
+                wrong.push(format!("{name}: {cmd:?} is not refused"));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "missed:\n{}", wrong.join("\n"));
+}
+
+/// Near-misses for the tree pass: quoted mentions and innocent commands
+/// inside the same wrappers must still pass. Not listed: a commit message
+/// heredoc mentioning `kill -9 1` is still refused, by the raw-text pass
+/// that ran before this one (the #1102/#1196 false-positive class; the tree
+/// itself extracts no command from the body, see bash_parse's tests).
+#[test]
+fn the_tree_pass_does_not_refuse_quoted_mentions_or_innocent_nesting() {
+    for cmd in [
+        "echo \"kill -9 1\"",
+        "echo 'crontab -r'",
+        "if true; then rm -rf build; fi",
+        "{ cargo build; cargo test; }",
+        "for f in *.rs; do echo $(wc -l $f); done",
+        "echo $(echo $(date))",
+    ] {
+        assert_eq!(super::analyze_bash_command(cmd), None, "{cmd:?}");
+    }
 }

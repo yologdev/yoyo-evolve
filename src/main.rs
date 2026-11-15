@@ -43,6 +43,7 @@ mod anthropic_preset_tests;
 mod auto_check_scope;
 mod banner;
 mod bash_output_cap;
+mod bash_parse;
 #[cfg(test)]
 mod bash_refusal_tests;
 mod cd_allow;

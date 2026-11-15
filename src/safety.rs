@@ -115,11 +115,20 @@ pub fn analyze_bash_command(command: &str) -> Option<String> {
     // #1193: a trigger glued to `$(`, `(`, `)` or a backtick slips the token
     // anchors, so each subshell piece (quotes stripped) is checked on its own.
     let stripped = strip_quoted_regions(cmd);
-    check(cmd).or_else(|| {
-        let mut pieces = stripped.split(SUBSHELL_BREAKS).map(str::trim);
-        let split = stripped.contains(SUBSHELL_BREAKS);
-        pieces.find_map(|p| (split && !p.is_empty()).then(|| check(p)).flatten())
-    })
+    check(cmd)
+        .or_else(|| {
+            let mut pieces = stripped.split(SUBSHELL_BREAKS).map(str::trim);
+            let split = stripped.contains(SUBSHELL_BREAKS);
+            pieces.find_map(|p| (split && !p.is_empty()).then(|| check(p)).flatten())
+        })
+        // #1202 step 1: every simple command in the parse tree, nested ones
+        // included. Only adds refusals; a parse issue keeps the text checks.
+        .or_else(|| {
+            crate::bash_parse::extract_check_units(cmd)
+                .ok()?
+                .iter()
+                .find_map(|c| check(c))
+        })
 }
 
 /// Check if a character position is at a word boundary (start of a command/token).

@@ -680,7 +680,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // would also be refused. The message belongs beside the detector whose
     // reason string it classifies; splitting them would create the second
     // matcher this deliberately avoids.
-    ("src/safety.rs", 4809), // Day 259 (20:29): +10 (from 4799), #1193: analyze_bash_command re-runs SAFETY_CHECKS on each piece split at $( ( ) backtick (SUBSHELL_BREAKS, a slice of SEGMENT_BREAKS); census and near-misses in safety_git_glued_tests.rs. Before: Day 259 (02:03) +10 from 4789 for #1191.
+    ("src/safety.rs", 4818), // Day 260 (20:52): +9 (from 4809), #1202 step 1: analyze_bash_command also runs SAFETY_CHECKS on every command/pipeline/redirect node of the tree-sitter-bash parse (src/bash_parse.rs); the parser lives outside this file. Before: Day 259 (20:29): +10 (from 4799), #1193: analyze_bash_command re-runs SAFETY_CHECKS on each piece split at $( ( ) backtick (SUBSHELL_BREAKS, a slice of SEGMENT_BREAKS); census and near-misses in safety_git_glued_tests.rs. Before: Day 259 (02:03) +10 from 4789 for #1191.
     // Day 175 (#816): first entry for this file — 1882 → 2067, +185. The setup
     // wizard becomes the second and third consumer of the #735 shadow/demotion
     // guard family (which had exactly one: `/config set`), so both of its save
