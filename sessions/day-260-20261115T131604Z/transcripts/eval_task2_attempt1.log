@@ -1,0 +1,31 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -1 && R=… ✓ (152ms)
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 13.5s (2 ✓)
+
+Verdict: PASS, written to session_plan/eval_task_2.md.
+
+What the diff does: it adds is_masked_key in src/config_secret.rs. That masks a key's value if the key has a credential name or if yoyo doesn't read it. It doesn't use a new list to decide "doesn't read". It calls is_top_level_key, the same check the unknown-key warning uses, which the diff makes visible to the rest of the crate. All three places that print config values now use it:
+• config show
+• config get
+• the shadowed-key note
+
+On the built binary: I ran yoyo config show and yoyo config get on a test config file.
+• openai, dsn and modle all printed as ***.
+• model and max_tokens still showed their real values.
+• The "not a key yoyo reads" warnings still printed, including "did you mean model?" for the typo.
+• Neither sk-abc nor the database password from the dsn line appeared anywhere in the output.
+
+Tests: they compare each full output line for every row the task asked for, including an unknown key under [permissions]. One extra test checks that a key is masked exactly when the warning names it or it has a credential name, so the display and the warning can't drift apart.
+
+Docs: the /config show row in docs/src/usage/commands.md now says unknown keys' values are masked, and that config get does the same.
+
+Product safety: this only hides values in display output, for keys yoyo never reads. No defaults, flags or startup behaviour change.
+
+I didn't modify any code.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
