@@ -117,6 +117,7 @@ mod commands_update;
 mod commands_web;
 mod config;
 mod config_paths;
+mod config_secret;
 mod config_syntax;
 mod config_unknown_keys;
 mod config_value;

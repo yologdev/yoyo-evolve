@@ -352,34 +352,7 @@ pub fn handle_config(cfg: &ConfigDisplay<'_>) {
 // a runtime mirror and `/config show` stays a file-introspection
 // tool. They're complementary, not redundant.
 
-/// Return `true` if a config key looks like a secret and its value
-/// should be masked in any user-visible output. Case-insensitive, by name
-/// segment (split on `_`, `-`, `.`): a segment ending in `key(s)`, `token`,
-/// `secret(s)`, `password`, `passwd` or `credential(s)` masks, and so does
-/// `secret`/`password`/`apikey` anywhere. Plural `tokens` does not: in a
-/// config key it names a count (`max_tokens`), which a substring match on
-/// `token` used to hide as `***` (#1194). Census over every known key in
-/// `commands_config_get_tests.rs`.
-pub(crate) fn is_secret_key(key: &str) -> bool {
-    const ENDINGS: &[&str] = &[
-        "key",
-        "keys",
-        "token",
-        "secret",
-        "secrets",
-        "password",
-        "passwd",
-        "credential",
-        "credentials",
-    ];
-    let lower = key.to_ascii_lowercase();
-    ["secret", "password", "apikey"]
-        .iter()
-        .any(|w| lower.contains(w))
-        || lower
-            .split(['_', '-', '.'])
-            .any(|seg| ENDINGS.iter().any(|e| seg.ends_with(e)))
-}
+pub(crate) use crate::config_secret::is_secret_key;
 
 /// Pure, testable formatter for `/config show` output. Takes the
 /// already-loaded config HashMap and an optional path to the file

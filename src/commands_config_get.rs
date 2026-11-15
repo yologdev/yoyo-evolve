@@ -2,7 +2,8 @@
 //! code from one function. Split out of `commands_config.rs`, which sits at the
 //! module-size gate.
 
-use crate::commands_config::{is_secret_key, settable_keys_list};
+use crate::commands_config::settable_keys_list;
+use crate::config_secret::is_secret_key;
 use crate::format::{DIM, RESET, YELLOW};
 
 /// Pure core of `/config get <key>`: the exact text printed and the shell exit

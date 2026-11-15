@@ -367,7 +367,7 @@ fn config_show_marks_a_value_read_as_unset() {
 /// because its name contains `token` (#1194).
 #[test]
 fn only_api_key_is_masked_among_every_known_key() {
-    use crate::commands_config::is_secret_key;
+    use crate::config_secret::is_secret_key;
     let mut all: Vec<&str> = crate::config::SETTABLE_KEYS
         .iter()
         .map(|(k, _)| *k)
@@ -382,7 +382,7 @@ fn only_api_key_is_masked_among_every_known_key() {
 
 #[test]
 fn secret_key_rows_mask_credentials_and_show_counts() {
-    use crate::commands_config::is_secret_key;
+    use crate::config_secret::is_secret_key;
     for key in [
         "api_key",
         "apikey",
@@ -400,15 +400,12 @@ fn secret_key_rows_mask_credentials_and_show_counts() {
     ] {
         assert!(is_secret_key(key), "{key} must be masked");
     }
-    for key in [
-        "max_tokens",
-        "MaxTokens",
-        "max_output_tokens",
-        "thinking",
-        "keymap",
-        "model",
-        "temperature",
-    ] {
+    // #1197: yoyo reads none of these, so their value could be anything the
+    // user typed; the pre-#1194 rule masked them and so does the current one.
+    for key in ["MaxTokens", "max_output_tokens", "keymap"] {
+        assert!(is_secret_key(key), "{key} is unknown, must be masked");
+    }
+    for key in ["max_tokens", "thinking", "model", "temperature"] {
         assert!(!is_secret_key(key), "{key} must be shown");
     }
 }
@@ -429,4 +426,153 @@ fn config_get_max_tokens_prints_the_value() {
     cfg.insert("api_key".to_string(), "sk-real".to_string());
     let (_, text) = crate::commands_config_get::config_get_report("api_key", &cfg, src);
     assert_eq!(strip_dim(&text), format!("  api_key = ***  ({src})\n"));
+}
+
+// === #1197: every name the pre-#1194 rule masked is masked again ===
+
+/// The rule before 18296f08 (`git show 18296f08 -- src/commands_config.rs`),
+/// copied as the reference for the differential: it is the old behaviour,
+/// not an outside authority.
+fn pre_1194_rule(key: &str) -> bool {
+    let lower = key.to_ascii_lowercase();
+    ["key", "token", "secret", "password"]
+        .iter()
+        .any(|w| lower.contains(w))
+}
+
+/// The #1194 segment rule as it shipped in 18296f08, copied the same way.
+fn rule_1194(key: &str) -> bool {
+    const ENDINGS: &[&str] = &[
+        "key",
+        "keys",
+        "token",
+        "secret",
+        "secrets",
+        "password",
+        "passwd",
+        "credential",
+        "credentials",
+    ];
+    let lower = key.to_ascii_lowercase();
+    ["secret", "password", "apikey"]
+        .iter()
+        .any(|w| lower.contains(w))
+        || lower
+            .split(['_', '-', '.'])
+            .any(|seg| ENDINGS.iter().any(|e| seg.ends_with(e)))
+}
+
+/// Generated names: credential word x prefix x suffix x case. Includes the
+/// no-credential-word families #1197 called pre-existing (bearer, pat,
+/// cookie, auth).
+fn secret_name_corpus() -> Vec<String> {
+    let words = [
+        "token",
+        "tokens",
+        "key",
+        "keys",
+        "secret",
+        "secrets",
+        "password",
+        "passwd",
+        "apikey",
+        "credential",
+        "credentials",
+        "bearer",
+        "pat",
+        "cookie",
+        "auth",
+    ];
+    let prefixes = ["", "github_", "slack-", "my.", "X_", "max_"];
+    let suffixes = ["", "2", "s", "value", "_old", "-backup"];
+    let mut out = Vec::new();
+    for w in words {
+        for p in prefixes {
+            for s in suffixes {
+                let name = format!("{p}{w}{s}");
+                out.push(name.to_ascii_uppercase());
+                out.push(name);
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn every_name_an_earlier_rule_masked_is_still_masked_unless_a_known_exemption() {
+    use crate::config_secret::{is_secret_key, SHOWN_KNOWN_KEYS};
+    let corpus = secret_name_corpus();
+    let exempt = |k: &str| SHOWN_KNOWN_KEYS.iter().any(|(e, _)| *e == k);
+    let leaked: Vec<&String> = corpus
+        .iter()
+        .filter(|k| (pre_1194_rule(k) || rule_1194(k)) && !exempt(k) && !is_secret_key(k))
+        .collect();
+    let old_masked = corpus
+        .iter()
+        .filter(|k| pre_1194_rule(k) || rule_1194(k))
+        .count();
+    assert!(
+        leaked.is_empty(),
+        "{} of {} names an earlier rule masked now print raw ({} names checked): {leaked:?}",
+        leaked.len(),
+        old_masked,
+        corpus.len()
+    );
+    // The families #1197 called pre-existing are masked too now.
+    for k in [
+        "auth_bearer",
+        "openai_pat",
+        "session_cookie",
+        "github.pat",
+        "oauth",
+    ] {
+        assert!(is_secret_key(k), "{k} must be masked");
+    }
+    // `pat` is a whole segment only: these are not credentials.
+    for k in ["path", "pattern", "system_file"] {
+        assert!(!is_secret_key(k), "{k} must be shown");
+    }
+}
+
+#[test]
+fn issue_1197_repro_names_are_masked_and_max_tokens_is_not() {
+    use crate::config_secret::is_secret_key;
+    for k in ["github_token2", "slack_tokens", "tokenvalue"] {
+        assert!(is_secret_key(k), "{k} must be masked (#1197)");
+    }
+    assert!(!is_secret_key("max_tokens"), "#1194 near-miss");
+}
+
+/// Exemptions are known yoyo keys only, each with a reason, and each one is
+/// load-bearing (the word rule alone would mask it).
+#[test]
+fn shown_known_keys_are_known_and_each_exempts_something() {
+    use crate::config_secret::SHOWN_KNOWN_KEYS;
+    for (k, why) in SHOWN_KNOWN_KEYS {
+        let known = crate::config::SETTABLE_KEYS.iter().any(|(s, _)| s == k)
+            || crate::config_unknown_keys::TOP_LEVEL_KEYS.contains(k);
+        assert!(known, "{k} is not a key yoyo reads; it may not be exempt");
+        assert!(!why.trim().is_empty(), "{k} needs a reason");
+        assert!(pre_1194_rule(k), "{k} exempts nothing");
+    }
+}
+
+/// End to end through `config show`'s formatter: the raw value never prints.
+#[test]
+fn config_show_masks_github_token2_value() {
+    let mut cfg = std::collections::HashMap::new();
+    cfg.insert("github_token2".to_string(), "ghp_LEAK1".to_string());
+    cfg.insert("slack_tokens".to_string(), "xoxb_LEAK2".to_string());
+    cfg.insert("max_tokens".to_string(), "2048".to_string());
+    let path = std::path::PathBuf::from("/x/.yoyo.toml");
+    let out = crate::commands_config::format_config_output(&cfg, Some(&path));
+    assert!(!out.contains("ghp_LEAK1"), "{out}");
+    assert!(!out.contains("xoxb_LEAK2"), "{out}");
+    assert!(out.contains("***"), "{out}");
+    assert!(out.contains("2048"), "{out}");
+    // And `config get` on the same key.
+    let (_, text) =
+        crate::commands_config_get::config_get_report("github_token2", &cfg, "/x/.yoyo.toml");
+    assert!(!text.contains("ghp_LEAK1"), "{text}");
+    assert!(text.contains("***"), "{text}");
 }

@@ -1361,7 +1361,7 @@ mod tests {
 
     // ── /config show tests ────────────────────────────────────────────
     // Runtime config introspection — see `format_config_output` and
-    // `is_secret_key` above. These tests pin the two most important
+    // `is_secret_key` (src/config_secret.rs). These tests pin the two most important
     // invariants: (1) secrets are NEVER printed raw, and (2) the
     // no-config-loaded path produces a clear message instead of
     // crashing or printing an empty block.
