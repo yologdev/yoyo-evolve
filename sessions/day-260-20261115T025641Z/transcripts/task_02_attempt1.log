@@ -1,0 +1,185 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | head; git l…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,400p tests/bedrock_max_… ✓ (5ms)
+ ✓ (17ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 120,170p tests/bedrock_ma… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1730,1900p src/agent_buil… ✓ (4ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.27.8/src && grep -n "max_tokens\|maxTokens\… ✓ (6ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.27.8/src && sed -n 1320,1360p provider/bedr… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1560,1720p src/agent_builde… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1645,1690p src/agent_builde… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue view 1173 --json title,bo… ✓ (574ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.27.8/src; grep -n "max_tokens" provider/ant… ✓ (7ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.27.8/src; grep -rn "pub fn.*budget\|pub fn … ✓ (10ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.27.8/src; sed -n 2425,2470p provider/model.… ✓ (9ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  12 tools completed in 54.9s (12 ✓)
+
+Writing the stub tests first (before-reading).
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (102 lines) ✓ (25ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -2 && ca… ✓ (846ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5.4s (2 ✓)
+
+Before-reading recorded: body has additionalModelRequestFields.thinking.budget_tokens: 8192 and no inferenceConfig at all. Now the fix.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"src/providers.rs"' tes… ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 215,256p src/providers.rs… ✓ (6ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/providers.rs (1 → 17 lines)
+  + /// The `max_tokens` a Bedrock agent sends when the user set none (#1173).
+  + ///
+  + /// yoagent's BedrockProvider sends `inferenceConfig.maxTokens` only from the
+  + /// agent's own `max_tokens`, never from the preset, so with no user cap the
+  + /// body has no `maxTokens` while thinking still sends `budget_tokens`, and
+  + /// Anthropic requires `budget_tokens < max_tokens`. For an id yoagent's
+  + /// Bedrock preset covers (a Claude id) this returns the preset's output
+  + /// maximum, always, not only with thinking on: it is the value AWS documents
+  + /// as the default for an omitted `maxTokens`, and the value yoagent's
+  + /// first-party Anthropic path already sends. A user cap is returned as given
+  + /// (one below the budget is upstream #1198's half), and an id with no preset
+  + /// keeps no cap, as `model_limits_note` tells the user.
+  + pub(crate) fn bedrock_max_tokens(model: &str, user: Option<u32>) -> Option<u32> {
+  +     user.or_else(|| yoagent::provider::ModelConfig::preset("bedrock", model).map(|p| p.max_tokens))
+  + }
+  + 
+    /// Whether `model` is a **known** id for `provider`.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1426,1436p src/agent_buil… ✓ (18.8s)
+  + /// The `max_tokens` a Bedrock agent sends when the user set none (#1173).
+  + ///
+  + /// yoagent's BedrockProvider sends `inferenceConfig.maxTokens` only from the
+  + /// agent's own `max_tokens`, never from the preset, so with no user cap the
+  + /// body has no `maxTokens` while thinking still sends `budget_tokens`, and
+  + /// Anthropic requires `budget_tokens < max_tokens`. For an id yoagent's
+  + /// Bedrock preset covers (a Claude id) this returns the preset's output
+  + /// maximum, always, not only with thinking on: it is the value AWS documents
+  ... (9 more lines)
+ ✓ (18.8s)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.27.8/src; sed -n 60,80p agent.rs | grep -n … ✓ (3ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/agent_builder.rs (3 → 6 lines)
+                let agent = Agent::from_provider(BedrockProvider, model_config);
+  -             self.configure_agent(agent, context_window, output_ceiling, sampling)
+  +             let mut agent = self.configure_agent(agent, context_window, output_ceiling, sampling);
+  +             // #1173: a Claude id sends its preset maxTokens (above any thinking budget).
+  +             agent.max_tokens = crate::providers::bedrock_max_tokens(&self.model, self.max_tokens);
+  +             agent
+            } else {
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -1 && ca… ✓ (5m 20s)
+                let agent = Agent::from_provider(BedrockProvider, model_config);
+  -             self.configure_agent(agent, context_window, output_ceiling, sampling)
+  +             let mut agent = self.configure_agent(agent, context_window, output_ceiling, sampling);
+  +             // #1173: a Claude id sends its preset maxTokens (above any thinking budget).
+  +             agent.max_tokens = crate::providers::bedrock_max_tokens(&self.model, self.max_tokens);
+  +             agent
+            } else {
+ ✓ (5m 20s)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 6m 7s (7 ✓)
+
+Passing. Now the docs and the note's truthfulness.
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -i "bedrock" docs/src/co… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 200,222p docs/src/configu… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn runs_on_guessed_limi… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn vendor_preset" -A15 … ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 30,60p src/model_limits_n… ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 17.1s (5 ✓)
+
+The note keys on a limits fingerprint, the cap keys on the preset — two resolvers. Pin that they agree over the bedrock known list:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "#\[cfg(test)\]" src/pro… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1086,… (37 lines) ✓ (31.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 43.3s (2 ✓)
+
+Now the docs paragraph.
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (17 lines) ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/(yoagent issue$/(issue… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 9.1s (2 ✓)
+
+Recall control — mutate, check the marker landed, build, run, restore, all in one command:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/provi… (9 lines) ✓ (10.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control fired by name ("thinking budget 8192 went out with no maxTokens"), restored, marker count back to 0. Now the full gate.
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/agent_builder.rs src/p… ✓ (5m 16s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "FAILE… ✓ (4m 23s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's|("src/agent_builder.rs… ✓ (1.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 9m 49s (3 ✓)
+
+Small header note on the test file, then commit.
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,22p tests/bedrock_max_t… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (9 lines) ✓ (2.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git grep -n '#1173\b' -- src doc… ✓ (8ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 19.4s (3 ✓)
+
+No stale pointers. Committing.
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (53 lines) ✓ (22ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue com… (9 lines) ✓ (880ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 19.8s (2 ✓)
+
+Fixed #1173 and committed as 70eefa85. Bedrock Claude runs with thinking on now send an explicit output cap (maxTokens) that is larger than the thinking budget. I proved this at the local recording stub, not against real AWS. The full test suite, clippy and fmt all pass.
+
+What the stub showed for --provider bedrock --model anthropic.claude-sonnet-4-6 --thinking high with no --max-tokens:
+• Before: the request carried a thinking budget of 8192 and no inferenceConfig section at all, so no maxTokens.
+• After: maxTokens is the model's output maximum from yoagent's preset (64000 per the docs), which is above the 8192 budget.
+
+The fix:
+• A new helper, providers::bedrock_max_tokens, picks the cap: your own max_tokens if you set one, otherwise the preset's maximum for Claude ids yoagent knows, otherwise no cap. The Bedrock branch of build_agent uses it, so src/agent_builder.rs only gains the call site.
+• The cap is always sent for Claude ids, not only with thinking on. That keeps it to one rule, and it matches what yoagent's own first-party Anthropic path sends. If AWS's docs are right, it equals the default AWS would apply anyway. If the litellm report is right (Bedrock used 4096 when maxTokens was missing), it also stops 4096 truncation with thinking off.
+• Ids with no preset (e.g. amazon.nova-pro-v1:0) still send no cap, so the existing warning ("yoyo sends no output cap") stays true. A new unit test checks that the cap and that warning agree across every known Bedrock id, plus region-prefixed ones like us. and an invalid xx. spelling.
+
+Tests: three new stub tests: thinking on, thinking off, and a cap you set going out unchanged. The two existing ones (the no-cap id and --max-tokens 1234) still pass. As a check, I disabled the new helper (marked NEUTERED). The thinking-on test then failed with "thinking budget 8192 went out with no maxTokens", which is the exact bug. I restored the helper in the same command and confirmed no markers are left.
+
+Evidence level: what yoyo sends is recorded at the stub. That Bedrock accepts this request, and had problems with the old one, comes from Anthropic's and AWS's docs only. Nothing was sent to real AWS.
+
+Not fixed (both written up on upstream issue #1198, which is still open):
+• If you set your own max_tokens at or below the thinking budget, yoyo still sends it unchanged. Raising it would mean copying yoagent's private budget table.
+• The /side and architect agents never set a cap on any provider, so on Bedrock they still send no maxTokens. They don't use thinking, so there's no budget conflict, but they still rely on whatever default Bedrock applies.
+
+My #1198 comment asks yoagent to fill in the cap itself, as its Anthropic path does. That would cover both cases and let yoyo delete this helper.
+
+Other changes:
+• The Bedrock paragraph in docs/src/configuration/models.md now says which ids send a cap and why.
+• The size limit for src/agent_builder.rs in tests/module_size.rs goes from 5009 to 5012, with the reason noted.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

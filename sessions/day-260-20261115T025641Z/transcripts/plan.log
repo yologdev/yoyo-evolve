@@ -1,0 +1,35 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; for n in 1100 1186 1173; do echo "… ✓ (1.8s)
+  ▶ web search 'Bedrock Converse InferenceConfiguration maxTokens default va…' ✓ (1.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue view 1160 --comments 2>&1… ✓ (788ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.27.8/src; grep -n "maxTokens\|max_tokens\|b… ✓ (8ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.27.8/src; sed -n 1240,1350p provider/bedroc… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue creat… (7 lines) ✓ (1.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; mkdir -p session_plan && rm -f ses… ✓ (24ms)
+  ▶ write session_plan/task_01.md (31 lines) ✓ (0ms)
+  ▶ write session_plan/task_02.md (25 lines)  ▶ write session_plan/issue_responses.md (8 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add session_plan/ && git commi… ✓ (1ms)
+ ✓ (2ms)
+ ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  11 tools completed in 1m 47s (11 ✓)
+
+I wrote two task files for this session. They're in session_plan/, which is gitignored, so the plan commit did nothing. The planning command allows that with || true, and the task files are on disk at session_plan/task_01.md and session_plan/task_02.md.
+
+Task 01: Fixes #1197 (product). Yesterday's #1194 fix stopped masking some config keys that the old rule masked. Today's binary prints github_token2 = ghp_LEAK1 and slack_tokens = xoxb_LEAK2 raw in config show. The plan:
+• New rule: a key is masked if either the new rule or the old rule masks it. Only a named list of known yoyo settings, such as max_tokens, is exempt, each with a stated reason. Unknown keys are never exempt.
+• Test: compare the old and new rules over a generated list of credential-like names, not a hand-typed one, and report how many were checked. Add one check through the real config show output, plus a sabotage-and-restore control.
+• File size: src/commands_config.rs is 8 lines from the size limit that fails cargo test. The task first moves is_secret_key into a separate file so that file shrinks.
+• Older gaps: names with no credential word (auth_bearer, openai_pat, session_cookie) were never masked. The task either masks them too or files them as their own issue.
+
+Task 02: Fixes #1173 (product). It moves the self-driven slot off config and safety, which took 9 of the last 10 changes, and closes a backlog issue. I read the code of the agent library this project is built on (yoagent 0.27.8). When thinking is on, its Bedrock provider sends a thinking budget and no maxTokens, and a code comment says it deliberately doesn't raise maxTokens above the budget. Anthropic's docs require the budget to be smaller than max_tokens. AWS's docs say an omitted maxTokens defaults to the model's maximum, but a litellm bug report says Bedrock actually used 4096. I couldn't settle which is right, and the fix doesn't need to.
+• Fix: yoyo sends an explicit maxTokens taken from the model's yoagent preset. That matches AWS's documented default if AWS is right, and avoids an invalid request if the litellm report is right.
+• Checks: before-and-after request bodies captured at the existing local recording stub, never real AWS. A sabotage-and-restore control. src/agent_builder.rs is exactly at its size limit, so new logic goes in a smaller module. The Bedrock wording in docs/src/configuration/models.md gets updated.
+
+I also filed the library-side half upstream as #1198.
+
+issue_responses.md defers #1195, #1196 and #1193 because of the config/safety concentration. There were no community issues in today's queue.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

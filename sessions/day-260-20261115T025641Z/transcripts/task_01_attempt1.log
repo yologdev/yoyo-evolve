@@ -1,0 +1,80 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git log --oneli… ✓ (27ms)
+  ▶ $ sed -n 330,420p src/commands_config.rs; grep -n "is_secret_key" src/commands_con… ✓ (6ms)
+  ▶ $ sed -n 338,362p src/commands_config.rs; git show 18296f08 --stat 2>&1 | head; gi… ✓ (16ms)
+  ▶ $ git show 18296f08 -- src/commands_config.rs | sed -n '/^-    lower/,/^ }/p'; gre… ✓ (291ms)
+  ▶ $ grep -n "main.rs\|commands_config\|DEFAULT\|fn \|const" test… (3 lines)  ▶ $ sed -n '/pub const SETTABLE_KEYS/,/^];/p' src/config.rs | grep -o '("[a-z_]*"' ;… ✓ (5ms)
+ ✓ (13ms)
+  ▶ $ grep -n "is_secret_key" src/commands_config.rs src/commands.rs; sed -n 1280,1305… ✓ (7ms)
+  ▶ $ awk 'NR>=338 && NR<=384 {print NR": "$0}' src/commands_config.rs ✓ (3ms)
+  ▶ $ grep -rn -i "mask\|\*\*\*" docs/src README.md | grep -i -v "permission\|glob" | … ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  9 tools completed in 1m 4s (9 ✓)
+
+Writing the tests first (they reference the new module, so they'll fail to compile until it exists — that's the red).
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ python3 - <<'EOF' (175 lines) ✓ (22ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ awk 'NR>=1 && NR<=60 {print NR": "$0}' src/commands_config_get.rs ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 14.3s (2 ✓)
+
+Good. Now the new module.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cat > src/config_secret.rs <<'EOF' (67 lines) ✓ (10.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cargo test --bin yoyo secret 2>&1 | grep -E "test |result|panicked|FAILED" | hea… ✓ (31.6s)
+  ▶ $ cargo test --bin yoyo -- secret only_api_key config_show_masks issue_1197 shown_… ✓ (124ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 49.4s (3 ✓)
+
+Now the recall control: neuter the word rule's union with the old words, run, restore — one atomic command.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cp src/config_secret.rs /tmp/cs.bak && sed -i 's/    "token",$/    "tokenNEUTERE… ✓ (31.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ awk 'NR>=1360 && NR<=1367 {print NR": "$0}' src/commands.rs ✓ (3ms)
+  ▶ $ sed -i '1364s/`is_secret_key` above/`is_secret_key` (src\/co… (4 lines) ✗ (2m 0s)
+    │ Command timed out after 120s. Output so far:
+  ▶ $ cargo test 2>&1 | grep -E "^test result|FAILED|panicked|^failures" | sort | uniq… ✓ (4m 9s)
+  ▶ $ cargo test 2>&1 | grep -cE "FAILED|panicked"; cargo fmt -- --check && echo fmt-o… ✓ (4m 14s)
+  ▶ $ cargo build 2>&1 | tail -1 && T=$(mktemp -d) && mkdir -p $T/h $T/w && printf 'gi… ✓ (122ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 11m 17s (5 ✓, 1 ✗)
+
+Probe confirms. Committing.
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ git add -A && git commit -q -F - <<'EOF' && git log --onelin… (47 lines) ✓ (21ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+I fixed the regression: config show and config get now print *** for github_token2, slack_tokens and tokenvalue again, and max_tokens still shows its number. It's committed as ac36402b with the title Fixes #1197: .... Build, the full cargo test run (0 failures), clippy with -D warnings and the fmt check all pass.
+
+The new rule (moved to a new file, src/config_secret.rs): a key is masked if its name contains key, token, secret, password, passwd, credential, bearer, cookie or auth anywhere, ignoring case, or has pat as a whole name part. "Whole part" means split on _, - and ., so path and pattern still show. This masks everything the rule from before #1194 masked and everything the #1194 rule masks. The one exception is a named list of keys yoyo itself reads that only look like credentials.
+
+Exemptions: just one, max_tokens ("the cap on reply length, a number like 8192"). It is matched exactly, and a test fails if an exemption isn't one of the 30 keys yoyo knows or doesn't need exempting at all. api_key is the only known key that stays masked.
+
+Names with no credential word (auth_bearer, openai_pat, session_cookie): I masked them in this change instead of filing a separate issue. I checked first that none of the 30 known keys contains bearer, cookie, auth, or a pat part.
+
+One behaviour change to existing tests: MaxTokens, max_output_tokens and keymap are now masked. yoyo doesn't read them, so their value could be anything, and the old rule masked them too. Their test rows moved from "must be shown" to "must be masked"; no test was deleted. The cost is a *** where a harmless value would have printed.
+
+Evidence:
+• Generated name list: 1,080 names (15 words × 6 prefixes × 6 suffixes × lower/upper case). The earlier rules masked 696 of them; 0 of those 696 print raw now.
+• Test-the-test check: I removed token from the word list, ran the test and put it back in one command. The test failed with "142 of 696 … print raw", naming github_token2. The temporary marker was gone afterwards.
+• Through the display code: format_config_output and config_get_report never print ghp_LEAK1.
+• Real binary (temp HOME and project folder, built before running): github_token2, slack_tokens, tokenvalue, session_cookie and api_key show ***, and max_tokens = 2048.
+• Size limit: src/commands_config.rs went from 2042 to 2015 lines.
+
+I also updated the /config show row in docs/src/usage/commands.md to list which names get masked.
+  watch: no files changed this turn — skipping
