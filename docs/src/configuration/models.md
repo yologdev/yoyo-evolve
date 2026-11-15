@@ -207,17 +207,24 @@ On `bedrock`, the limits come from yoagent's Bedrock preset: a Claude id it know
 of AWS's cross-region prefixes (`global.`, `us.`, `us-gov.`, `eu.`, `apac.`, `jp.`, `au.`, `ca.`,
 `in.`), takes the same limits as the Anthropic model, so the default `anthropic.claude-sonnet-4-6`
 runs on a 1,000,000 window with `max_tokens = 64000` and is not warned about. For these Claude ids
-yoyo always sends that output maximum as `inferenceConfig.maxTokens` when you set no `max_tokens`
-(#1173): with `--thinking` on, the request carries a thinking budget, and Anthropic requires the
-budget to be below `max_tokens`, so yoyo does not leave the cap to whatever default Bedrock applies.
-A `max_tokens` you set is sent as given, even if it is below the thinking budget (issue #1198,
-filed upstream for yoagent, tracks raising it, as the first-party Anthropic path does). Your `base_url` (the
+the request always carries an `inferenceConfig.maxTokens`, so the answer length is never left to
+whatever default Bedrock applies (#1173, #1198). With `--thinking` off and no `max_tokens` set,
+yoyo sends that output maximum. With `--thinking` on, yoagent (0.27.9 and later) picks the cap, by
+the same rule as the first-party Anthropic path: your `max_tokens`, else the preset's output
+maximum, raised to the thinking budget + 1024 when it is not above the budget (Anthropic requires
+the budget to be below `max_tokens`). So `--thinking high --max-tokens 2048` sends `maxTokens = 9216`
+against a budget of 8192, not 2048. A `max_tokens` above the budget is sent as given. Per yoagent's
+0.27.9 release note, Bedrock reserves the cap it is sent against your account's tokens-per-minute quota while the request runs,
+so a 64000 preset cap reserves 64000. Your `base_url` (the
 Region) is kept. Any other `bedrock` id (`amazon.nova-pro-v1:0`, a Claude id yoagent has no preset
 for, or a Claude id spelled with a prefix or version suffix AWS doesn't use, such as
-`xx.anthropic.claude-sonnet-4-6`) runs on a guessed 200,000-token window and warns. As on `google`,
-the 16000 `max_tokens` in that guess is not sent: the Converse request carries no
-`inferenceConfig.maxTokens` unless you set `max_tokens`, so Bedrock applies the model's own default
-output limit, and the warning says that instead of naming a cap.
+`xx.anthropic.claude-sonnet-4-6`) runs on a guessed 200,000-token window and warns. With
+`--thinking` off, the 16000 `max_tokens` in that guess is not sent, as on `google`: the Converse
+request carries no `inferenceConfig.maxTokens` unless you set `max_tokens`, so Bedrock applies the
+model's own default output limit. With `--thinking` on, the guessed 16000 is sent as the cap (raised
+above the budget if it is not already above it). The warning names both cases instead of
+naming one cap. The `/side` and `/architect` agents set no `max_tokens` and no thinking, so on
+`bedrock` they send no `inferenceConfig.maxTokens` and Bedrock's own default applies to them.
 
 A value for `--max-tokens`, `--temperature`, `--max-turns` or `--context-window` that is not a
 number (`--max-tokens abc`) is refused at startup with exit 2, before any request is sent; it no
