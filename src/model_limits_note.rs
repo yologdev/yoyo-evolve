@@ -95,19 +95,28 @@ pub(crate) fn unknown_model_limits_note(
     // at all without one), so the 8192 guess in ModelConfig never goes
     // out and "capped at {max_tokens}" would be false for google.
     // #1160: BedrockProvider likewise sets `inferenceConfig.maxTokens` only
-    // from a user cap (tests/bedrock_max_tokens_request.rs: no
-    // `inferenceConfig` at all without one), so bedrock's 16000 guess is held,
-    // not sent. The window guess IS used (compaction), so it is still named.
+    // from a user cap with thinking off (tests/bedrock_max_tokens_request.rs
+    // row (a): no `inferenceConfig` at all), so bedrock's 16000 guess is held.
+    // #1198: with thinking on, yoagent 0.27.9 falls back to that guess and
+    // sends it (raised above the budget if needed; row (g)), so the bedrock
+    // sentence names both cases. The window guess IS used (compaction).
     let vendor = match provider {
         "google" => Some("Google"),
         "bedrock" => Some("Bedrock"),
         _ => None,
     };
     if let Some(vendor) = vendor {
-        let no_cap = format!(
-            "yoyo sends no output cap, so {vendor} applies the model's own default \
-output limit; set max_tokens in .yoyo.toml (or pass --max-tokens) to cap replies"
-        );
+        let when = if provider == "bedrock" {
+            format!(
+                "With thinking off, yoyo sends no output cap, so {vendor} applies the model's own \
+default output limit; with thinking on, the guessed max_tokens = {max_tokens} goes out as the cap \
+(raised above the thinking budget if it is not already above it)"
+            )
+        } else {
+            format!("yoyo sends no output cap, so {vendor} applies the model's own default output limit")
+        };
+        let no_cap =
+            format!("{when}; set max_tokens in .yoyo.toml (or pass --max-tokens) to cap replies");
         return Some(match user_context_window {
             Some(_) => {
                 format!("{marker}no preset is known for {provider} model '{shown}'. {no_cap}.")
@@ -425,25 +434,28 @@ pass --max-tokens) to cap replies."
         assert_eq!(guessing, expected);
     }
 
-    /// #1160 (Day 255): BedrockProvider sends `inferenceConfig.maxTokens` only
-    /// from a user cap; with none the Converse body has no `inferenceConfig`
-    /// at all (observed in tests/bedrock_max_tokens_request.rs, which also
-    /// fails if the note claims a cap again). So bedrock's 16000 guess is held,
-    /// not sent, and the note says no cap goes out, like google's (#1158).
+    /// #1160 (Day 255): with thinking off, BedrockProvider sends
+    /// `inferenceConfig.maxTokens` only from a user cap; with none the Converse
+    /// body has no `inferenceConfig` at all (row (a) of
+    /// tests/bedrock_max_tokens_request.rs). #1198 (yoagent 0.27.9): with
+    /// thinking on it falls back to the guessed 16000 and sends it (row (g)).
+    /// So the note names both cases, and the wire test fails if either drifts.
     #[test]
-    fn bedrock_note_names_the_window_and_claims_no_cap() {
+    fn bedrock_note_names_the_window_and_the_cap_per_thinking_state() {
         let c = create_model_config("bedrock", "amazon.nova-pro-v1:0", None);
         assert_eq!((c.context_window, c.max_tokens), (200_000, 16_000));
         assert_eq!(
             note_for("bedrock", "amazon.nova-pro-v1:0", true).as_deref(),
             Some(
                 "warning: no preset is known for bedrock model 'amazon.nova-pro-v1:0', so yoyo \
-is using a guessed 200000-token context window. yoyo sends no output cap, so Bedrock applies the \
-model's own default output limit; set max_tokens in .yoyo.toml (or pass --max-tokens) to cap \
-replies, and context_window (or --context-window) if the model's window differs."
+is using a guessed 200000-token context window. With thinking off, yoyo sends no output cap, so \
+Bedrock applies the model's own default output limit; with thinking on, the guessed max_tokens = \
+16000 goes out as the cap (raised above the thinking budget if it is not already above it); set \
+max_tokens in .yoyo.toml (or pass --max-tokens) to cap replies, and context_window (or \
+--context-window) if the model's window differs."
             )
         );
-        // With the window set by the user, only the no-cap fact remains.
+        // With the window set by the user, only the cap facts remain.
         assert_eq!(
             unknown_model_limits_note(
                 "bedrock",
@@ -456,9 +468,11 @@ replies, and context_window (or --context-window) if the model's window differs.
             )
             .as_deref(),
             Some(
-                "warning: no preset is known for bedrock model 'amazon.nova-pro-v1:0'. yoyo sends \
-no output cap, so Bedrock applies the model's own default output limit; set max_tokens in \
-.yoyo.toml (or pass --max-tokens) to cap replies."
+                "warning: no preset is known for bedrock model 'amazon.nova-pro-v1:0'. With \
+thinking off, yoyo sends no output cap, so Bedrock applies the model's own default output limit; \
+with thinking on, the guessed max_tokens = 16000 goes out as the cap (raised above the thinking \
+budget if it is not already above it); set max_tokens in .yoyo.toml (or pass --max-tokens) to cap \
+replies."
             )
         );
         // A user cap silences it (that cap IS sent, row (b) of the wire test).

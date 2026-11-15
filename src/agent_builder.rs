@@ -1769,8 +1769,11 @@ impl AgentConfig {
             let sampling = model_config.accepts_sampling_params;
             let agent = Agent::from_provider(BedrockProvider, model_config);
             let mut agent = self.configure_agent(agent, context_window, output_ceiling, sampling);
-            // #1173: a Claude id sends its preset maxTokens (above any thinking budget).
-            agent.max_tokens = crate::providers::bedrock_max_tokens(&self.model, self.max_tokens);
+            // #1173/#1198: thinking off, a Claude id sends its preset maxTokens;
+            // thinking on, yoagent's rule alone (see `bedrock_max_tokens`).
+            let thinking_on = self.thinking != ThinkingLevel::Off;
+            agent.max_tokens =
+                crate::providers::bedrock_max_tokens(&self.model, self.max_tokens, thinking_on);
             agent
         } else {
             // All other providers use OpenAI-compatible API

@@ -23,6 +23,14 @@
 //! #1173 adds rows (c)-(e) on a Claude id yoagent has a Bedrock preset for:
 //! with no user cap the preset's output maximum goes out, so a thinking
 //! budget always rides with a larger `maxTokens`; a user cap goes out as given.
+//!
+//! #1198 (yoagent 0.27.9): with thinking on, `build_bedrock_body` itself now
+//! sends `maxTokens` above `budget_tokens`: the request's cap, else the
+//! `ModelConfig`'s, raised to budget + 1024 when not above it. Rows (f) and (g)
+//! are the regression test for that rule with yoyo's `bedrock_max_tokens`
+//! out of the path (it returns the user's 2048 in (f) and `None` in (g), so
+//! only yoagent can put a value above the budget). Row (a) stays thinking-off:
+//! there yoagent still sends only an explicit cap, and the note says so.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
@@ -292,7 +300,9 @@ fn user_max_tokens_reaches_the_wire_as_inference_config_max_tokens() {
 /// thinking budget goes out, and so must an explicit `maxTokens` above it:
 /// Anthropic requires `budget_tokens < max_tokens`, and an omitted
 /// `maxTokens` leaves that comparison to whatever default Bedrock applies.
-/// The value sent is the model's output maximum from yoagent's preset.
+/// The value sent is the model's output maximum from yoagent's preset; since
+/// #1198 it comes from yoagent 0.27.9's own fallback to the `ModelConfig`,
+/// not from yoyo (`bedrock_max_tokens` returns `None` with thinking on).
 #[test]
 fn claude_with_thinking_sends_max_tokens_above_the_thinking_budget() {
     let run = run_bedrock_model(CLAUDE_ID, &["--thinking", "high"]);
@@ -338,4 +348,49 @@ fn claude_user_max_tokens_is_sent_unchanged() {
     let run = run_bedrock_model(CLAUDE_ID, &["--thinking", "high", "--max-tokens", "20000"]);
     let ctx = run.ctx();
     assert_eq!(run.max_tokens(), serde_json::json!(20000), "{ctx}");
+}
+
+/// #1198, row (f): a user cap at or below the thinking budget on a Claude id.
+/// yoyo passes the 2048 through unchanged (row (e)'s rule), and yoagent 0.27.9
+/// raises it above `budget_tokens` (budget + 1024), as the first-party
+/// Anthropic path does. Before 0.27.9 this went out as 2048 under a budget
+/// of 8192, which Anthropic's extended-thinking rule forbids.
+#[test]
+fn claude_user_cap_below_the_thinking_budget_is_raised_above_it() {
+    let run = run_bedrock_model(CLAUDE_ID, &["--thinking", "high", "--max-tokens", "2048"]);
+    let ctx = run.ctx();
+    let budget = run
+        .thinking_budget()
+        .as_u64()
+        .unwrap_or_else(|| panic!("no thinking budget went out\n{ctx}"));
+    assert!(
+        budget >= 2048,
+        "budget {budget} no longer above the cap; row is vacuous\n{ctx}"
+    );
+    assert_eq!(run.max_tokens(), serde_json::json!(budget + 1024), "{ctx}");
+}
+
+/// #1198, row (g): an id with no preset, thinking on, no user cap. yoyo sets
+/// no request cap here, so yoagent 0.27.9 falls back to the `ModelConfig`'s
+/// guessed 16000 and sends it. The guessed-limits note must say that, and
+/// not only "sends no output cap", which is true only with thinking off.
+#[test]
+fn unlisted_id_with_thinking_sends_the_guessed_cap_and_the_note_says_so() {
+    let run = run_bedrock(&["--thinking", "high"]);
+    let ctx = run.ctx();
+    let budget = run
+        .thinking_budget()
+        .as_u64()
+        .unwrap_or_else(|| panic!("no thinking budget went out\n{ctx}"));
+    let max = run
+        .max_tokens()
+        .as_u64()
+        .unwrap_or_else(|| panic!("thinking budget {budget} went out with no maxTokens\n{ctx}"));
+    assert!(max > budget, "maxTokens {max} <= budget {budget}\n{ctx}");
+    assert_eq!(max, 16_000, "not the guessed ModelConfig cap\n{ctx}");
+    assert!(
+        run.stderr
+            .contains("with thinking on, the guessed max_tokens = 16000 goes out as the cap"),
+        "note does not say what goes on the wire with thinking on\n{ctx}"
+    );
 }

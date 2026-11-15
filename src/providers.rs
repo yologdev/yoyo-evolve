@@ -234,19 +234,28 @@ pub(crate) fn openrouter_routed_preset(model: &str) -> Option<yoagent::provider:
     })
 }
 
-/// The `max_tokens` a Bedrock agent sends when the user set none (#1173).
+/// The `max_tokens` a Bedrock agent sends (#1173, #1198): one rule per
+/// thinking state, never two computing the same cell.
 ///
-/// yoagent's BedrockProvider sends `inferenceConfig.maxTokens` only from the
-/// agent's own `max_tokens`, never from the preset, so with no user cap the
-/// body has no `maxTokens` while thinking still sends `budget_tokens`, and
-/// Anthropic requires `budget_tokens < max_tokens`. For an id yoagent's
-/// Bedrock preset covers (a Claude id) this returns the preset's output
-/// maximum, always, not only with thinking on: it is the value AWS documents
-/// as the default for an omitted `maxTokens`, and the value yoagent's
-/// first-party Anthropic path already sends. A user cap is returned as given
-/// (one below the budget is upstream #1198's half), and an id with no preset
-/// keeps no cap, as `model_limits_note` tells the user.
-pub(crate) fn bedrock_max_tokens(model: &str, user: Option<u32>) -> Option<u32> {
+/// Thinking on: yoagent 0.27.9's `build_bedrock_body` is the only rule. It
+/// sends the request's cap, else the `ModelConfig`'s (the preset's output
+/// maximum for a Claude id, the 16000 guess otherwise), raised to budget +
+/// 1024 when not above the budget, so this returns just the user's cap.
+///
+/// Thinking off: yoagent sends only an explicit cap, so this is the only
+/// rule. For an id yoagent's Bedrock preset covers (a Claude id) it returns
+/// the preset's output maximum: the length a reply may reach then does not
+/// depend on the thinking level (with thinking on yoagent sends that same
+/// value), it matches what yoagent's first-party Anthropic path sends, and an
+/// omitted `maxTokens` is left to a Bedrock default AWS documents as the model
+/// maximum and one third-party report (litellm) saw as 4096. The cost: Bedrock
+/// reserves that cap against the account's tokens-per-minute quota while a
+/// request runs. An id with no preset keeps no cap, as `model_limits_note`
+/// tells the user. A user cap is returned as given in both states.
+pub(crate) fn bedrock_max_tokens(model: &str, user: Option<u32>, thinking_on: bool) -> Option<u32> {
+    if thinking_on {
+        return user;
+    }
     user.or_else(|| yoagent::provider::ModelConfig::preset("bedrock", model).map(|p| p.max_tokens))
 }
 
@@ -1090,7 +1099,10 @@ mod tests {
     /// #1173: the cap sent (`bedrock_max_tokens`) and the guessed-limits note
     /// (a limits fingerprint) are two resolvers over one question. They must
     /// agree: an id that gets a preset cap is not warned about, and an id
-    /// that is warned about ("yoyo sends no output cap") really sends none.
+    /// that is warned about ("yoyo sends no output cap") really sends none,
+    /// with thinking off. With thinking on yoyo sets no default at all and
+    /// yoagent's rule decides (#1198; the note's thinking-on clause and the
+    /// wire are pinned in tests/bedrock_max_tokens_request.rs rows (c), (f), (g)).
     #[test]
     fn bedrock_preset_cap_and_guessed_limits_note_agree() {
         let mut ids: Vec<String> = known_models_for_provider("bedrock")
@@ -1101,7 +1113,9 @@ mod tests {
         ids.push("xx.anthropic.claude-sonnet-4-6".into());
         let mut capped = 0;
         for id in &ids {
-            let cap = bedrock_max_tokens(id, None);
+            let cap = bedrock_max_tokens(id, None, false);
+            // Thinking on: yoyo leaves the cap to yoagent's rule (#1198).
+            assert_eq!(bedrock_max_tokens(id, None, true), None, "{id}");
             let warned = crate::model_limits_note::runs_on_guessed_limits("bedrock", id);
             assert_ne!(cap.is_some(), warned, "{id}: cap {cap:?}, warned {warned}");
             capped += usize::from(cap.is_some());
@@ -1113,11 +1127,11 @@ mod tests {
             ids.len()
         );
         assert_eq!(
-            bedrock_max_tokens("amazon.nova-pro-v1:0", Some(77)),
+            bedrock_max_tokens("amazon.nova-pro-v1:0", Some(77), false),
             Some(77)
         );
         assert_eq!(
-            bedrock_max_tokens("anthropic.claude-sonnet-4-6", Some(77)),
+            bedrock_max_tokens("anthropic.claude-sonnet-4-6", Some(77), true),
             Some(77)
         );
     }
