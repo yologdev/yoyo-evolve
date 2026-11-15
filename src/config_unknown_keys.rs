@@ -112,8 +112,9 @@ pub(crate) enum UnknownKey {
     },
 }
 
-/// Is `key` a flat-map name some reader looks up?
-fn is_top_level_key(key: &str) -> bool {
+/// Is `key` a flat-map name some reader looks up? Also the authority for
+/// which `config show` / `config get` values are masked (#1199).
+pub(crate) fn is_top_level_key(key: &str) -> bool {
     TOP_LEVEL_KEYS.contains(&key)
         || key
             .strip_prefix(HOOK_KEY_PREFIX)

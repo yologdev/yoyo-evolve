@@ -3,7 +3,7 @@
 //! module-size gate.
 
 use crate::commands_config::settable_keys_list;
-use crate::config_secret::is_secret_key;
+use crate::config_secret::is_masked_key;
 use crate::format::{DIM, RESET, YELLOW};
 
 /// Pure core of `/config get <key>`: the exact text printed and the shell exit
@@ -17,7 +17,7 @@ pub(crate) fn config_get_report(
     match config.get(key) {
         // #1172: the run reads this value as if the key were absent; say so.
         Some(value) if run_reads_as_unset(key, value) == Some(true) => {
-            let shown = if is_secret_key(key) && !value.trim().is_empty() {
+            let shown = if is_masked_key(key) && !value.trim().is_empty() {
                 "\"***\"".to_string()
             } else {
                 format!("{value:?}")
@@ -30,7 +30,7 @@ pub(crate) fn config_get_report(
             )
         }
         Some(value) => {
-            let display = if is_secret_key(key) {
+            let display = if is_masked_key(key) {
                 "***".to_string()
             } else {
                 value.clone()
@@ -166,7 +166,7 @@ pub(crate) fn shadowed_key_note(
         .iter()
         .filter_map(|path| {
             let value = crate::cli::parse_config_file(&read(path)?).remove(key)?;
-            let shown = if is_secret_key(key) {
+            let shown = if is_masked_key(key) {
                 "***".to_string()
             } else {
                 value

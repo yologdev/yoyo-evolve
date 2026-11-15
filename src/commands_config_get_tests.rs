@@ -576,3 +576,99 @@ fn config_show_masks_github_token2_value() {
     assert!(!text.contains("ghp_LEAK1"), "{text}");
     assert!(text.contains("***"), "{text}");
 }
+
+// === #1199: a key yoyo does not read has its value masked (option A) ===
+
+/// The #1199 file: known keys, a known secret, three unknown keys (two
+/// credentials with no credential word, one typo) and an unknown key under
+/// `[permissions]`.
+const UNKNOWN_KEYS_FILE: &str = "model = \"claude-x\"\n\
+max_tokens = 8000\n\
+api_key = \"sk-abc\"\n\
+openai = \"sk-abc\"\n\
+dsn = \"postgres://u:pw@h/db\"\n\
+modle = \"claude-x\"\n\
+[permissions]\n\
+allw = [\"sk-sec\"]\n";
+
+/// `config show` on that file, line by line: known keys print raw, every
+/// other value is `***`, and the section key (not in the flat map) never prints.
+#[test]
+fn config_show_masks_every_unknown_keys_value() {
+    let cfg = crate::cli::parse_config_file(UNKNOWN_KEYS_FILE);
+    let out = crate::commands_config::format_config_output(
+        &cfg,
+        Some(std::path::Path::new("/x/.yoyo.toml")),
+    );
+    assert_eq!(
+        out,
+        "Loaded config: /x/.yoyo.toml\n\n\
+         \x20 api_key     = ***\n\
+         \x20 dsn         = ***\n\
+         \x20 max_tokens  = 8000\n\
+         \x20 model       = claude-x\n\
+         \x20 modle       = ***\n\
+         \x20 openai      = ***\n"
+    );
+    assert!(!out.contains("sk-sec") && !out.contains("allw"), "{out}");
+}
+
+/// `config get` on the same keys: the unknown ones print `***`.
+#[test]
+fn config_get_masks_an_unknown_keys_value() {
+    let cfg = crate::cli::parse_config_file(UNKNOWN_KEYS_FILE);
+    let src = "/x/.yoyo.toml";
+    let get = |k: &str| strip_dim(&crate::commands_config_get::config_get_report(k, &cfg, src).1);
+    assert_eq!(get("openai"), format!("  openai = ***  ({src})\n"));
+    assert_eq!(get("dsn"), format!("  dsn = ***  ({src})\n"));
+    assert_eq!(get("modle"), format!("  modle = ***  ({src})\n"));
+    assert_eq!(get("model"), format!("  model = claude-x  ({src})\n"));
+    assert_eq!(get("max_tokens"), format!("  max_tokens = 8000  ({src})\n"));
+    assert_eq!(get("api_key"), format!("  api_key = ***  ({src})\n"));
+}
+
+/// The warning still names each unknown key (and the typo's remedy), so
+/// masking the value loses nothing a typo needs.
+#[test]
+fn unknown_key_warnings_survive_the_mask() {
+    use crate::config_unknown_keys::{unknown_config_key_warnings, unknown_config_keys};
+    let warnings =
+        unknown_config_key_warnings("f", &unknown_config_keys(UNKNOWN_KEYS_FILE)).join("\n");
+    assert_eq!(
+        warnings,
+        "f line 4: `openai` is not a key yoyo reads, so it has no effect\n\
+         f line 5: `dsn` is not a key yoyo reads, so it has no effect\n\
+         f line 6: `modle` is not a key yoyo reads, so it has no effect; did you mean `model`?\n\
+         f line 8: `allw` (in [permissions]) is not a key yoyo reads, so it has no effect; did you mean `allow`?"
+    );
+}
+
+/// The display and the warning share one authority: every flat-map key the
+/// warning names is masked, and every key it is silent on is masked only if
+/// its name is a credential's.
+#[test]
+fn masked_for_being_unknown_iff_the_warning_names_it() {
+    use crate::config_secret::{is_masked_key, is_secret_key};
+    use crate::config_unknown_keys::{unknown_config_key_warnings, unknown_config_keys};
+    let file = UNKNOWN_KEYS_FILE.to_string();
+    // Every top-level key yoyo reads, plus a hook, set at top level.
+    let mut top: String = crate::config_unknown_keys::TOP_LEVEL_KEYS
+        .iter()
+        .map(|k| format!("{k} = \"v\"\n"))
+        .collect();
+    top.push_str("stripe_sk = \"sk_live_x\"\nhooks.pre.bash = \"echo\"\n");
+    for contents in [top, file] {
+        let warnings = unknown_config_key_warnings("f", &unknown_config_keys(&contents)).join("\n");
+        let cfg = crate::cli::parse_config_file(&contents);
+        assert!(cfg.len() > 5, "anti-vacuous: {cfg:?}");
+        for key in cfg.keys() {
+            // The finding's subject, not a did-you-mean naming it.
+            let warned = warnings.contains(&format!(": `{key}`"));
+            assert_eq!(
+                is_masked_key(key),
+                warned || is_secret_key(key),
+                "{key}: masked and warned disagree\n{warnings}"
+            );
+        }
+    }
+}

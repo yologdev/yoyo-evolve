@@ -164,7 +164,7 @@ See [Session Persistence](../features/sessions.md) for details.
 | `/cost` | Show estimated session cost |
 | `/changelog [N]` | Show recent git commit history (default: 15, max: 100) |
 | `/config` | Show all current settings |
-| `/config show` | Show loaded config file path and merged key-value pairs (values masked as `***` when the key name contains a credential word: key, token, secret, password, passwd, credential, bearer, cookie, auth, or a `pat` segment; `max_tokens` is shown) |
+| `/config show` | Show loaded config file path and merged key-value pairs (values masked as `***` when the key name contains a credential word: key, token, secret, password, passwd, credential, bearer, cookie, auth, or a `pat` segment; `max_tokens` is shown. A key yoyo does not read always has its value masked; its name and the "is not a key yoyo reads" warning still print. `config get` masks the same way) |
 | `/config edit` | Open config file in `$EDITOR` |
 | `/hooks` | Show active hooks (pre/post tool execution) |
 | `/permissions` | Show active security and permission configuration |

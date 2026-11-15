@@ -352,13 +352,13 @@ pub fn handle_config(cfg: &ConfigDisplay<'_>) {
 // a runtime mirror and `/config show` stays a file-introspection
 // tool. They're complementary, not redundant.
 
-pub(crate) use crate::config_secret::is_secret_key;
+use crate::config_secret::is_masked_key;
 
 /// Pure, testable formatter for `/config show` output. Takes the
 /// already-loaded config HashMap and an optional path to the file
 /// it came from, and returns a stable, human-readable block.
 ///
-/// Secrets (keys matching `is_secret_key`) are always masked with
+/// Secrets and keys yoyo does not read (`is_masked_key`, #1199) are masked with
 /// `***` — the raw value must never appear in the output, even in
 /// debug builds. This is the whole point of the test below.
 ///
@@ -403,7 +403,7 @@ pub fn format_config_output(
     out.push('\n');
     for key in keys {
         let value = config.get(key).map(String::as_str).unwrap_or("");
-        let display_value = if is_secret_key(key) {
+        let display_value = if is_masked_key(key) {
             "***".to_string()
         } else {
             value.to_string()
@@ -1170,6 +1170,7 @@ pub fn handle_mcp(
 mod tests {
     use super::*;
     use crate::commands::{is_unknown_command, KNOWN_COMMANDS};
+    use crate::config_secret::is_secret_key;
     use serial_test::serial;
     use std::collections::HashMap;
     use std::path::PathBuf;

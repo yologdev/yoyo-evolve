@@ -48,3 +48,13 @@ pub(crate) fn is_secret_key(key: &str) -> bool {
             .split(['_', '-', '.'])
             .any(|seg| CREDENTIAL_SEGMENTS.contains(&seg))
 }
+
+/// Whether `config show` / `config get` print `key`'s value as `***` (#1199):
+/// a credential-named key, or any key yoyo does not read. yoyo never uses an
+/// unread key's value, so printing it buys nothing and can leak a pasted
+/// credential (`openai = "sk-..."`); the name and the unknown-key warning are
+/// what a typo needs. "Does not read" is the warning's own predicate,
+/// `config_unknown_keys::is_top_level_key`, so the two cannot disagree.
+pub(crate) fn is_masked_key(key: &str) -> bool {
+    is_secret_key(key) || !crate::config_unknown_keys::is_top_level_key(key)
+}
