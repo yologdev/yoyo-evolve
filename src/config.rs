@@ -39,6 +39,7 @@ impl PermissionConfig {
                 && !allow_wildcard_swallows_options(pattern, command)
                 && !allow_wildcard_spans_a_command_chain(pattern, command)
                 && !allow_wildcard_reaches_cloud_metadata(pattern, command)
+                && !crate::bash_parse::allow_wildcard_not_one_plain_command(pattern, command)
             {
                 return Some(true);
             }

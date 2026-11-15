@@ -73,13 +73,14 @@ Patterns use simple glob matching where `*` matches any sequence of characters (
 | `*.rs` | `main.rs`, `src/main.rs` | `main.py` |
 | `cargo * --release` | `cargo build --release` | `cargo build --debug` |
 | `rm -rf *` | `rm -rf /`, `rm -rf /tmp` | `rm file.txt` |
-| `*` | everything | — |
+| `*` | every single plain command (see below) | chains, redirections, `$VAR` arguments |
 
 Glob matching is purely textual: `*` spans **any** characters, including shell operators like
-`&&` and `|`. Three rules narrow what an **allow** pattern will auto-approve on top of that raw
+`&&` and `|`. Four rules narrow what an **allow** pattern will auto-approve on top of that raw
 match — see [option tokens](#a-wildcard-before-a-literal-does-not-swallow-option-tokens),
-[chained commands](#a-wildcard-does-not-auto-approve-a-chained-command) and
-[cloud-metadata fetches](#a-wildcard-does-not-auto-approve-a-cloud-metadata-fetch) below. None of
+[chained commands](#a-wildcard-does-not-auto-approve-a-chained-command),
+[cloud-metadata fetches](#a-wildcard-does-not-auto-approve-a-cloud-metadata-fetch) and
+[one plain command](#a-wildcard-approves-only-one-plain-command) below. None of
 them applies to `deny`, and each narrows only — a rejected match falls through to the normal
 prompt rather than being refused.
 
@@ -157,6 +158,18 @@ narrowing a deny pattern would make a fence stop matching — it would **fail op
 This is a **separator rule, not a shell.** A command reached through a variable, a shell alias,
 or an operator produced by expansion rather than typed is invisible to it. As always, prefer
 patterns that are as literal as you can stand.
+
+### A wildcard approves only one plain command
+
+On top of the separator rule, yoyo reads the command with a real bash parser (tree-sitter-bash).
+A **wildcard** allow pattern that is itself one plain command (`git *`, `cargo *`, `*`)
+auto-approves only a command the parser reads as **one plain command**: words and quoted
+strings, with no chain, substitution, redirection (`>`, `2>&1`, here-docs), variable (`$HOME`),
+`VAR=value` prefix, subshell or comment, and no parse error. Anything else falls through to the
+normal prompt. So under `allow = ["cargo *"]`, `cargo test 2>&1` now asks: a redirect writes
+somewhere the pattern never named. To approve it, name it: `allow = ["cargo * 2>&1"]` spells
+out the redirect, so this rule leaves it alone (the other rules still apply), and a
+wildcard-free pattern is matched as typed.
 
 ### A wildcard does not auto-approve a cloud-metadata fetch
 

@@ -36,6 +36,92 @@ pub fn extract_check_units(cmd: &str) -> Result<Vec<String>, ParseIssue> {
     collect_nodes(cmd, &["command", "pipeline", "redirected_statement"])
 }
 
+/// The prove-safe contract: true only when `cmd` is ONE plain command, read
+/// from a clean tree. Mirrors Codex's `try_parse_word_only_commands_sequence`
+/// (codex-rs/shell-command/src/bash.rs), narrowed to a single command: no
+/// error or missing node, exactly one `command`, and every node a word-only
+/// kind, so no redirect, substitution, expansion, assignment, heredoc,
+/// subshell, comment or operator. Parse failure is false.
+///
+/// `extract_check_units` is the other contract (find dangerous literals,
+/// tolerant of anything it can read) and must never be used to prove safe.
+pub(crate) fn is_single_word_only_command(cmd: &str) -> bool {
+    const WORD_ONLY: &[&str] = &[
+        "program",
+        "command",
+        "command_name",
+        "word",
+        "string",
+        "string_content",
+        "raw_string",
+        "concatenation",
+        "number",
+    ];
+    let mut parser = tree_sitter::Parser::new();
+    let language: tree_sitter::Language = tree_sitter_bash::LANGUAGE.into();
+    if parser.set_language(&language).is_err() {
+        return false;
+    }
+    let Some(tree) = parser.parse(cmd, None) else {
+        return false;
+    };
+    let root = tree.root_node();
+    if root.has_error() || root.named_child_count() != 1 {
+        return false;
+    }
+    let mut commands = 0;
+    let mut cursor = root.walk();
+    loop {
+        let node = cursor.node();
+        if node.is_missing() || node.is_error() {
+            return false;
+        }
+        if node.is_named() {
+            if !WORD_ONLY.contains(&node.kind()) {
+                return false;
+            }
+            commands += usize::from(node.kind() == "command");
+        } else if node.kind() != "\"" {
+            // The only anonymous token a plain command has is a string's quote.
+            return false;
+        }
+        if cursor.goto_first_child() {
+            continue;
+        }
+        loop {
+            if cursor.goto_next_sibling() {
+                break;
+            }
+            if !cursor.goto_parent() {
+                return commands == 1;
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Test-only: switches the tree rule off on this thread so the
+    /// differential in bash_parse_tests.rs can read the text-only verdict.
+    pub(crate) static TREE_RULE_OFF: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// A wildcard `allow` pattern auto-approves only one plain command (#1202
+/// step 2): true (falls through to the prompt) when the pattern has a
+/// wildcard, is itself one plain command, and `command` is not. A pattern
+/// that spells out a chain, redirect or substitution (`cargo * 2>&1`) is the
+/// user naming that shape, the same hatch the text predicate gives; it is
+/// left to the text predicates, so nothing approves that did not before.
+pub(crate) fn allow_wildcard_not_one_plain_command(pattern: &str, command: &str) -> bool {
+    #[cfg(test)]
+    if TREE_RULE_OFF.with(|c| c.get()) {
+        return false;
+    }
+    (pattern.contains('*') || pattern.contains('?'))
+        && is_single_word_only_command(pattern)
+        && !is_single_word_only_command(command)
+}
+
 fn collect_nodes(cmd: &str, kinds: &[&str]) -> Result<Vec<String>, ParseIssue> {
     let mut parser = tree_sitter::Parser::new();
     let language: tree_sitter::Language = tree_sitter_bash::LANGUAGE.into();
@@ -159,3 +245,7 @@ mod tests {
             .any(|c| c.starts_with("mentions") || c.starts_with("kill")));
     }
 }
+
+#[cfg(test)]
+#[path = "bash_parse_tests.rs"]
+mod bash_parse_tests;
