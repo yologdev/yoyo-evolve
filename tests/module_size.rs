@@ -379,7 +379,10 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // their tests incl. the list-vs-parser pin), pasted.
     // Day 249 (#1133): 4755 -> 4778 (+23): parse_grep_tokens / handle_grep_args_status /
     // handle_outline_split_status let the shell door hand argv in without a re-split, pasted.
-    ("src/commands_search.rs", 4778),
+    // Day 260 (#1201): re-recorded at 4784. HEAD was already 4780 (2 over); the
+    // `-e <pattern> --` fix is net 0 production lines (three 2-line pushes
+    // became three 2-line pushes), +4 is the commands_search_grep_rev_tests mod.
+    ("src/commands_search.rs", 4784),
     // Day 163 (#716): +99 lines — spawn_dir_restrictions confines a spawn
     // worker's file tools to its worktree (bash_cwd only pinned bash), plus
     // three regression tests covering no-worktree passthrough, the confined

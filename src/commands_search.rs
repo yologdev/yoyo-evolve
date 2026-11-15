@@ -1530,8 +1530,8 @@ pub(crate) fn run_grep_in(
         if args.count_only {
             argv.push("-c".to_string());
         }
-        argv.push("--".to_string());
-        argv.push(args.pattern.clone());
+        // `-e <pattern> --`: every later word is a path, never a revision (#1201)
+        argv.extend(["-e".to_string(), args.pattern.clone(), "--".to_string()]);
         if args.paths != ["."] {
             argv.extend(args.paths.iter().cloned());
         }
@@ -1580,7 +1580,7 @@ pub(crate) fn run_grep_in(
 
     match output {
         Ok(out) => {
-            let (stdout, error) = grep_output_parts(&out, &args.paths.join("`, `"));
+            let (stdout, error) = grep_output_parts(&out, &args.paths, in_git_repo.then_some(root));
             let matches: Vec<GrepMatch> = stdout
                 .lines()
                 .filter(|l| !l.is_empty())
@@ -1671,8 +1671,8 @@ pub(crate) fn run_grep_count_in(
         if !args.case_sensitive {
             argv.push("-i".to_string());
         }
-        argv.push("--".to_string());
-        argv.push(args.pattern.clone());
+        // `-e <pattern> --`: every later word is a path, never a revision (#1201)
+        argv.extend(["-e".to_string(), args.pattern.clone(), "--".to_string()]);
         if args.paths != ["."] {
             argv.extend(args.paths.iter().cloned());
         }
@@ -1715,7 +1715,7 @@ pub(crate) fn run_grep_count_in(
 
     match output {
         Ok(out) => {
-            let (stdout, error) = grep_output_parts(&out, &args.paths.join("`, `"));
+            let (stdout, error) = grep_output_parts(&out, &args.paths, in_git_repo.then_some(root));
             let entries: Vec<GrepCountEntry> = stdout
                 .lines()
                 .filter(|l| !l.is_empty())
@@ -1841,8 +1841,8 @@ pub(crate) fn run_grep_with_context_in(
             argv.push("-A".to_string());
             argv.push(after.to_string());
         }
-        argv.push("--".to_string());
-        argv.push(args.pattern.clone());
+        // `-e <pattern> --`: every later word is a path, never a revision (#1201)
+        argv.extend(["-e".to_string(), args.pattern.clone(), "--".to_string()]);
         if args.paths != ["."] {
             argv.extend(args.paths.iter().cloned());
         }
@@ -1894,7 +1894,7 @@ pub(crate) fn run_grep_with_context_in(
 
     match output {
         Ok(out) => {
-            let (found, error) = grep_output_parts(&out, &args.paths.join("`, `"));
+            let (found, error) = grep_output_parts(&out, &args.paths, in_git_repo.then_some(root));
             Ok(GrepRun { found, error })
         }
         // Both arms already wrapped their own error above, so no second wrap here.
@@ -4778,3 +4778,7 @@ mod commands_search_grep_h_tests;
 #[cfg(test)]
 #[path = "commands_search_grep_paths_tests.rs"]
 mod commands_search_grep_paths_tests;
+
+#[cfg(test)]
+#[path = "commands_search_grep_rev_tests.rs"]
+mod commands_search_grep_rev_tests;

@@ -166,15 +166,21 @@ fn missing_second_path_keeps_the_first_paths_matches_and_reports_the_error() {
 }
 
 #[test]
-fn missing_path_in_the_git_arm_is_gits_own_fatal() {
-    // git grep refuses an unknown pathspec outright (exit 128, nothing printed),
-    // so the git arm reports the error with no matches: git's convention, kept.
+fn missing_path_in_the_git_arm_is_named_beside_the_matches() {
+    // Superseded (#1201): this test was `..._is_gits_own_fatal` and pinned
+    // exit 128 with no matches. That fatal was git reading `nope` as a
+    // *revision* ("unknown revision or path"), the bug #1201 fixed. After
+    // `-e <pattern> --` git grep says nothing about a missing pathspec, so
+    // yoyo names it, beside `a`'s matches, as the plain-grep arm does.
     let tmp = git_scratch();
     let run = run_grep_in(tmp.path(), &args("/grep hello a nope")).unwrap();
-    assert!(run.found.is_empty());
-    let err = run.error.expect("unknown pathspec is an error");
+    assert_eq!(run.found, matches(&["a"]));
+    let err = run
+        .error
+        .expect("a missing operand is an error, not a no-match");
     assert!(
-        err.contains("exit status 128") && err.contains("nope"),
+        err.starts_with("grep could not search `a`, `nope`")
+            && err.contains("nope: no such file or directory"),
         "{err}"
     );
 }

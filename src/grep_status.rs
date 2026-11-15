@@ -65,14 +65,38 @@ pub(crate) fn grep_failure_message(code: Option<i32>, stderr: &str, path: &str) 
 }
 
 /// Turn a grep `Output` into its stdout text plus the classified error.
+///
+/// `git_root` is `Some(root)` for the git arm. That arm sends
+/// `-e <pattern> -- <paths>` (#1201), and after `--` git grep matches a
+/// missing pathspec to nothing and exits 0/1 without a word. So the git arm
+/// names each missing literal path itself, beside whatever the other operands
+/// matched, which is what plain grep does with its own exit 2. Pathspec magic
+/// (`:(...)`) and globs are git's to interpret and are never called missing.
 pub(crate) fn grep_output_parts(
     out: &std::process::Output,
-    path: &str,
+    paths: &[String],
+    git_root: Option<&std::path::Path>,
 ) -> (String, Option<String>) {
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&out.stderr);
-    (
-        stdout,
-        grep_failure_message(out.status.code(), &stderr, path),
-    )
+    let shown = paths.join("`, `");
+    let error = grep_failure_message(out.status.code(), &stderr, &shown);
+    let missing: Vec<&String> = match (git_root, &error) {
+        (Some(root), None) => paths
+            .iter()
+            .filter(|p| !p.starts_with(':') && !p.contains(['*', '?', '[']))
+            .filter(|p| !root.join(p).exists())
+            .collect(),
+        _ => Vec::new(),
+    };
+    if missing.is_empty() {
+        return (stdout, error);
+    }
+    let shown = crate::cli::sanitize_for_display(&shown);
+    let mut msg = format!("grep could not search `{shown}` (no such path)");
+    for p in missing {
+        let p = crate::cli::sanitize_for_display(p);
+        msg.push_str(&format!("\n    {p}: no such file or directory"));
+    }
+    (stdout, Some(msg))
 }
