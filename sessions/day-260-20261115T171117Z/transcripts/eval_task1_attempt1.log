@@ -1,0 +1,28 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || true; git log -3 --f… ✓ (16ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 205,225p docs/src/configura… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n -i -E "side|architect|resi… ✓ (5ms)
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 19.7s (4 ✓)
+
+Verdict: FAIL. I wrote it to session_plan/eval_task_1.md.
+
+The code itself is right. With thinking on, yoyo now passes only the user's cap and leaves the rest to yoagent 0.27.9's rule. With thinking off, yoyo still sends the preset cap. So only one rule decides each case. The two new wire tests cover the cases the task asked for:
+• User cap 2048, thinking high: the cap goes out as the budget + 1024.
+• Unknown model id, thinking on: the guessed 16000 goes out, above the budget.
+
+Every call site was updated for the new argument and the build passes.
+
+It fails for two reasons:
+• User docs are now wrong. docs/src/configuration/models.md (around lines 210–220) wasn't touched and makes two claims that are now false:
+  • A max_tokens below the thinking budget "is sent as given", with #1198 still pending upstream. It is now raised above the budget.
+  • The 16000 guess "is not sent". It is sent when thinking is on.
+• The commit message is missing what the task required. The body of 825601a3 is empty: no 8-row table, no stated decision, no evidence grade. I also found no follow-up issue filed for the /side and architect agents sending no maxTokens on Bedrock; session_plan/issue_responses.md only lists it as a plan.
+
+To pass, it needs the two doc sentences fixed, that follow-up issue filed, and a commit message with the table, the decision and the issue number.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

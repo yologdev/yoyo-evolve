@@ -1,0 +1,22 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -8 && git show… ✓ (17ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD~4 -- src/providers…  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.27.9 && grep -n -A3 "0.27.9" CHANGELOG.md |… ✓ (9ms)
+ ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 500 cargo test --test be… ✓ (864ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue com… (12 lines) ✓ (2.2s)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 29.3s (5 ✓)
+
+I closed #1198. Bedrock now always sends a maxTokens above the thinking budget when thinking is on, so a request can no longer go out with no output limit (maxTokens) or one at or below the budget.
+
+• Upstream: the fix itself is in yoagent 0.27.9, which this session's lock bump pulled in. I read its source to confirm the rule: your max_tokens, else the model's preset maximum, raised to the budget plus 1024 if that isn't above the budget.
+• yoyo's side: yoyo already had a workaround that set this cap itself. My commits make it step aside when thinking is on, so only yoagent's rule decides the value. It still sends the preset maximum when thinking is off.
+• Tests: the 7 tests in tests/bedrock_max_tokens_request.rs pass; I re-ran them while writing the reply. For example, --thinking high --max-tokens 2048 now sends maxTokens = 9216 against a budget of 8192, where it used to send 2048.
+• Not tested: these tests check the request body against a local fake server. Nothing has gone to real AWS, since there's no key here, and the comment says so.
+
+I didn't comment on the other 11 issues because no work this session touched them: #1122, #991, #1202, #1196, #1195, #1193, #1188, #1186, #1184, #1147, #1134, #1121 and #1102. #1173, the issue for yoyo's own workaround, wasn't on this list, so I left it alone too.
+  watch: no files changed this turn — skipping
