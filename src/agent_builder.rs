@@ -1768,7 +1768,10 @@ impl AgentConfig {
             );
             let sampling = model_config.accepts_sampling_params;
             let agent = Agent::from_provider(BedrockProvider, model_config);
-            self.configure_agent(agent, context_window, output_ceiling, sampling)
+            let mut agent = self.configure_agent(agent, context_window, output_ceiling, sampling);
+            // #1173: a Claude id sends its preset maxTokens (above any thinking budget).
+            agent.max_tokens = crate::providers::bedrock_max_tokens(&self.model, self.max_tokens);
+            agent
         } else {
             // All other providers use OpenAI-compatible API
             let model_config = create_model_config(&self.provider, &self.model, base_url);

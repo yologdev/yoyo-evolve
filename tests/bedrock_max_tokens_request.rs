@@ -19,6 +19,10 @@
 //! again this file fails while the stub shows none. Row (b) is the positive
 //! control: a user cap does reach `inferenceConfig.maxTokens`, so row (a)'s
 //! absence is not a parse miss.
+//!
+//! #1173 adds rows (c)-(e) on a Claude id yoagent has a Bedrock preset for:
+//! with no user cap the preset's output maximum goes out, so a thinking
+//! budget always rides with a larger `maxTokens`; a user cap goes out as given.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
@@ -130,6 +134,17 @@ impl Run {
     /// The first request's `inferenceConfig.maxTokens`, as JSON (`Null` when
     /// the key, or the whole `inferenceConfig`, is absent).
     fn max_tokens(&self) -> serde_json::Value {
+        self.body()["inferenceConfig"]["maxTokens"].clone()
+    }
+
+    /// The first request's `additionalModelRequestFields.thinking.budget_tokens`
+    /// (`Null` when thinking is off).
+    fn thinking_budget(&self) -> serde_json::Value {
+        self.body()["additionalModelRequestFields"]["thinking"]["budget_tokens"].clone()
+    }
+
+    /// The first request's body, checked to be a Bedrock Converse body.
+    fn body(&self) -> serde_json::Value {
         let ctx = self.ctx();
         let (line, body) = self
             .posts
@@ -145,7 +160,7 @@ impl Run {
             req["messages"].is_array(),
             "request body has no `messages`; not a Converse body\n{ctx}"
         );
-        req["inferenceConfig"]["maxTokens"].clone()
+        req
     }
 }
 
@@ -154,22 +169,29 @@ impl Run {
 const UNLISTED_ID: &str = "amazon.nova-pro-v1:0";
 
 fn run_bedrock(extra: &[&str]) -> Run {
+    run_bedrock_model(UNLISTED_ID, extra)
+}
+
+/// A Claude id yoagent's Bedrock preset covers (yoyo's bedrock default).
+const CLAUDE_ID: &str = "anthropic.claude-sonnet-4-6";
+
+fn run_bedrock_model(model: &str, extra: &[&str]) -> Run {
     let tmp = tempfile::tempdir().expect("tempdir");
     let proj = tmp.path().join("proj");
     let home = tmp.path().join("home");
     std::fs::create_dir_all(&proj).unwrap();
     std::fs::create_dir_all(&home).unwrap();
-    run_in(&proj, &home, extra)
+    run_in(&proj, &home, model, extra)
 }
 
-fn run_in(proj: &Path, home: &Path, extra: &[&str]) -> Run {
+fn run_in(proj: &Path, home: &Path, model: &str, extra: &[&str]) -> Run {
     let (port, posts) = start_capturing_stub();
     let base_url = format!("http://127.0.0.1:{port}");
     let mut args: Vec<&str> = vec![
         "--provider",
         "bedrock",
         "--model",
-        UNLISTED_ID,
+        model,
         "--base-url",
         &base_url,
     ];
@@ -264,4 +286,56 @@ fn user_max_tokens_reaches_the_wire_as_inference_config_max_tokens() {
         !run.stderr.contains("no preset is known"),
         "note fired despite a user max_tokens\n{ctx}"
     );
+}
+
+/// #1173, row (c): a Claude id with thinking on and no `--max-tokens`. The
+/// thinking budget goes out, and so must an explicit `maxTokens` above it:
+/// Anthropic requires `budget_tokens < max_tokens`, and an omitted
+/// `maxTokens` leaves that comparison to whatever default Bedrock applies.
+/// The value sent is the model's output maximum from yoagent's preset.
+#[test]
+fn claude_with_thinking_sends_max_tokens_above_the_thinking_budget() {
+    let run = run_bedrock_model(CLAUDE_ID, &["--thinking", "high"]);
+    let ctx = run.ctx();
+    let budget = run
+        .thinking_budget()
+        .as_u64()
+        .unwrap_or_else(|| panic!("no thinking budget went out\n{ctx}"));
+    let max = run
+        .max_tokens()
+        .as_u64()
+        .unwrap_or_else(|| panic!("thinking budget {budget} went out with no maxTokens\n{ctx}"));
+    assert!(max > budget, "maxTokens {max} <= budget {budget}\n{ctx}");
+    let preset = yoagent::provider::ModelConfig::preset("bedrock", CLAUDE_ID)
+        .expect("yoagent has a bedrock preset for the default Claude id");
+    assert_eq!(
+        max,
+        u64::from(preset.max_tokens),
+        "maxTokens is not the preset's output maximum\n{ctx}"
+    );
+}
+
+/// #1173, row (d): the same Claude id with thinking off still sends the
+/// preset's cap, one rule for preset-backed ids (the first-party Anthropic
+/// path in yoagent always sends a `max_tokens` too).
+#[test]
+fn claude_without_thinking_sends_the_preset_max_tokens() {
+    let run = run_bedrock_model(CLAUDE_ID, &[]);
+    let ctx = run.ctx();
+    assert_eq!(run.thinking_budget(), serde_json::Value::Null, "{ctx}");
+    let preset = yoagent::provider::ModelConfig::preset("bedrock", CLAUDE_ID).unwrap();
+    assert_eq!(
+        run.max_tokens(),
+        serde_json::json!(preset.max_tokens),
+        "{ctx}"
+    );
+}
+
+/// #1173, row (e): a user cap on a Claude id is sent as given, never
+/// replaced by the preset's maximum.
+#[test]
+fn claude_user_max_tokens_is_sent_unchanged() {
+    let run = run_bedrock_model(CLAUDE_ID, &["--thinking", "high", "--max-tokens", "20000"]);
+    let ctx = run.ctx();
+    assert_eq!(run.max_tokens(), serde_json::json!(20000), "{ctx}");
 }

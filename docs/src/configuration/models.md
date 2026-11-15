@@ -206,7 +206,12 @@ those too. Anthropic ids with a preset, such as the default `claude-opus-5-5`, a
 On `bedrock`, the limits come from yoagent's Bedrock preset: a Claude id it knows, bare or behind one
 of AWS's cross-region prefixes (`global.`, `us.`, `us-gov.`, `eu.`, `apac.`, `jp.`, `au.`, `ca.`,
 `in.`), takes the same limits as the Anthropic model, so the default `anthropic.claude-sonnet-4-6`
-runs on a 1,000,000 window with `max_tokens = 64000` and is not warned about. Your `base_url` (the
+runs on a 1,000,000 window with `max_tokens = 64000` and is not warned about. For these Claude ids
+yoyo always sends that output maximum as `inferenceConfig.maxTokens` when you set no `max_tokens`
+(#1173): with `--thinking` on, the request carries a thinking budget, and Anthropic requires the
+budget to be below `max_tokens`, so yoyo does not leave the cap to whatever default Bedrock applies.
+A `max_tokens` you set is sent as given, even if it is below the thinking budget (issue #1198,
+filed upstream for yoagent, tracks raising it, as the first-party Anthropic path does). Your `base_url` (the
 Region) is kept. Any other `bedrock` id (`amazon.nova-pro-v1:0`, a Claude id yoagent has no preset
 for, or a Claude id spelled with a prefix or version suffix AWS doesn't use, such as
 `xx.anthropic.claude-sonnet-4-6`) runs on a guessed 200,000-token window and warns. As on `google`,

@@ -234,6 +234,22 @@ pub(crate) fn openrouter_routed_preset(model: &str) -> Option<yoagent::provider:
     })
 }
 
+/// The `max_tokens` a Bedrock agent sends when the user set none (#1173).
+///
+/// yoagent's BedrockProvider sends `inferenceConfig.maxTokens` only from the
+/// agent's own `max_tokens`, never from the preset, so with no user cap the
+/// body has no `maxTokens` while thinking still sends `budget_tokens`, and
+/// Anthropic requires `budget_tokens < max_tokens`. For an id yoagent's
+/// Bedrock preset covers (a Claude id) this returns the preset's output
+/// maximum, always, not only with thinking on: it is the value AWS documents
+/// as the default for an omitted `maxTokens`, and the value yoagent's
+/// first-party Anthropic path already sends. A user cap is returned as given
+/// (one below the budget is upstream #1198's half), and an id with no preset
+/// keeps no cap, as `model_limits_note` tells the user.
+pub(crate) fn bedrock_max_tokens(model: &str, user: Option<u32>) -> Option<u32> {
+    user.or_else(|| yoagent::provider::ModelConfig::preset("bedrock", model).map(|p| p.max_tokens))
+}
+
 /// Whether `model` is a **known** id for `provider`.
 ///
 /// One matching rule, consulted by every surface that asks "is this id known?"
@@ -1068,6 +1084,41 @@ mod tests {
         assert!(
             !models.contains(&"claude-sonnet-4-20250514"),
             "anthropic must no longer offer claude-sonnet-4-20250514"
+        );
+    }
+
+    /// #1173: the cap sent (`bedrock_max_tokens`) and the guessed-limits note
+    /// (a limits fingerprint) are two resolvers over one question. They must
+    /// agree: an id that gets a preset cap is not warned about, and an id
+    /// that is warned about ("yoyo sends no output cap") really sends none.
+    #[test]
+    fn bedrock_preset_cap_and_guessed_limits_note_agree() {
+        let mut ids: Vec<String> = known_models_for_provider("bedrock")
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        ids.extend(["amazon.nova-pro-v1:0", "us.anthropic.claude-sonnet-4-6"].map(String::from));
+        ids.push("xx.anthropic.claude-sonnet-4-6".into());
+        let mut capped = 0;
+        for id in &ids {
+            let cap = bedrock_max_tokens(id, None);
+            let warned = crate::model_limits_note::runs_on_guessed_limits("bedrock", id);
+            assert_ne!(cap.is_some(), warned, "{id}: cap {cap:?}, warned {warned}");
+            capped += usize::from(cap.is_some());
+        }
+        // Both branches are populated, so the agreement is not vacuous.
+        assert!(
+            capped > 0 && capped < ids.len(),
+            "{capped} of {}",
+            ids.len()
+        );
+        assert_eq!(
+            bedrock_max_tokens("amazon.nova-pro-v1:0", Some(77)),
+            Some(77)
+        );
+        assert_eq!(
+            bedrock_max_tokens("anthropic.claude-sonnet-4-6", Some(77)),
+            Some(77)
         );
     }
 
