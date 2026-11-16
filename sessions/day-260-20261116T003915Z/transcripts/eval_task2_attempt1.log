@@ -1,0 +1,28 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la target/debug/yoyo && B=$P… ✓ (28ms)
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 16.3s (2 ✓)
+
+PASS. The change does what #1195 asked. I wrote the verdict to session_plan/eval_task_2.md.
+
+What I checked on the built binary: I used a temporary home and project directory, with a .yoyo.toml holding thinking = "", temperature = 5 and provider = "github".
+• config get thinking printed thinking =   (.yoyo.toml)  (read as medium).
+• config get temperature printed temperature = 5  (.yoyo.toml)  (read as 1.0).
+• config get provider said it was read as a retired provider that startup refuses unless a base URL is given.
+• config show printed the same notes on its lines.
+• No warning lines appeared in any of that output.
+
+What I checked in the diff:
+• Intent: src/cli.rs now has two warning-free functions, thinking_level_from_str and clamped_temperature. The old functions wrap them and keep their warnings, so a normal run behaves as before. The new RunReading type (as written, unset, or read as something else) gets its answers from the run's own code rather than copying its rules.
+• Tests: the new table test goes through every key in SETTABLE_KEYS. The extra rows the ticket asked for are there: thinking "", max, bogus, high and off; temperature 5, -1 and 0.7.
+• Nothing left dangling: every new function and every enum case is used, and the old function has no remaining callers. The existing caller of unset_reading_note in commands_config.rs compiles unchanged.
+• Docs: docs/src/getting-started/installation.md, where config get is described, has one new sentence explaining the "(read as X)" notes.
+• Product surface: the only change is to what config get and config show print. No defaults or flags changed.
+
+One small thing I didn't check: the provider note says "unless a base URL is given" for retired providers too. I didn't confirm that a base URL actually gets a retired provider past startup.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
