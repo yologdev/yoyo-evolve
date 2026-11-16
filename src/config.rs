@@ -1160,7 +1160,7 @@ pub const SETTABLE_KEYS: &[(&str, &str)] = &[
     ("model", "AI model name"),
     ("provider", "AI provider"),
     ("thinking", "thinking level (none/low/medium/high)"),
-    ("temperature", "sampling temperature (0.0–2.0)"),
+    ("temperature", "sampling temperature (0.0–1.0)"),
     ("max_tokens", "maximum response tokens"),
     ("max_turns", "maximum agent turns per prompt"),
     ("auto_watch", "auto-enable watch mode on start (true/false)"),
@@ -1233,8 +1233,11 @@ pub fn validate_config_value(key: &str, value: &str) -> Result<String, String> {
             }
         }
         "temperature" => match value.parse::<f32>() {
-            Ok(t) if (0.0..=2.0).contains(&t) => Ok(format!("{t}")),
-            Ok(t) => Err(format!("temperature {t} out of range (0.0–2.0)")),
+            // #1204: accept what the run sends unchanged; cli.rs owns the bound.
+            Ok(t) if crate::cli::clamped_temperature(t) == t => Ok(format!("{t}")),
+            Ok(t) => Err(format!(
+                "temperature {t} out of range (0.0–1.0): yoyo sends at most 1.0"
+            )),
             Err(_) => Err(format!("'{value}' is not a valid number")),
         },
         "max_tokens" => match value.parse::<u32>() {
@@ -2517,6 +2520,25 @@ env = { API_KEY = "secret" }
         assert!(validate_config_value("max_tokens", "0").is_err());
         assert!(validate_config_value("max_tokens", "-1").is_err());
         assert!(validate_config_value("unknown_key", "val").is_err());
+    }
+
+    /// #1204: `config set temperature` accepts exactly what the run sends,
+    /// i.e. the values `cli::clamped_temperature` leaves unchanged.
+    #[test]
+    fn temperature_set_range_is_the_range_the_run_sends() {
+        for v in ["0", "0.0", "0.7", "1", "1.0"] {
+            let t: f32 = v.parse().unwrap();
+            assert!(validate_config_value("temperature", v).is_ok(), "{v}");
+            assert_eq!(crate::cli::clamped_temperature(t), t, "{v}");
+        }
+        for v in ["1.0001", "1.5", "2.0", "-0.1", "NaN", "inf", "abc"] {
+            assert!(validate_config_value("temperature", v).is_err(), "{v}");
+        }
+        let err = validate_config_value("temperature", "1.5").unwrap_err();
+        assert!(
+            err.contains("0.0–1.0") && err.contains("at most 1.0"),
+            "{err}"
+        );
     }
 
     #[test]
