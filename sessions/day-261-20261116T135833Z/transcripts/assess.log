@@ -1,0 +1,51 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git log --oneli…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue list --label agent-self -… ✓ (11ms)
+ ✓ (1.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; for n in 1206 1205 1202 1184; do e… ✓ (1.3s)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.27.9/src; grep -rn "cache_control" --includ… ✓ (22ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.27.9/src; sed -n 595,680p provider/anthropi… ✓ (3ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.27.9/src; sed -n 618,632p provider/anthropi… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue list -R yologdev/yoagent … ✓ (364ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "refused this request\|St… ✓ (23ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "2000\|context.rs\|format/… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; ls -la target/debug/yoyo 2>&1; git… ✓ (2.5s)
+  ▶ $ cd $(mktemp -d) && git init -q && Y=/home/runner/work/yoyo-evolve/yoyo-evolve/ta… ✓ (24ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; find src -name '*.rs' | wc -l; fin… ✓ (24ms)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/assessment.md (43 lines) ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add session_plan/assessment.md… ✓ (10ms)
+  ▶ $ BASE=https://yopedia.yolog.dev; AGENT_ID="${YOPEDIA_AGENT_TOKEN%%.*}"; for q in … ✓ (13.6s)
+  ▶ $ BASE=https://yopedia.yolog.dev; AGENT_ID="${YOPEDIA_AGENT_TOKEN%%.*}"; curl -sS … ✓ (7.0s)
+  ▶ web search 'Claude Code changelog November 2026' ✓ (1.3s)
+  ▶ web search 'Anthropic API cache_control thinking block "Extra inputs are…' ✓ (1.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 60,120p skills/yopedia/SKIL… ✓ (3ms)
+  ▶ $ BASE=https://yopedia.yolog.dev; AGENT_ID="${YOPEDIA_AGENT_TO… (10 lines) ✓ (982ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (21 lines) ✓ (27ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git show --stat 5556e4a3 | tail -3… ✓ (9ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  22 tools completed in 2m 41s (22 ✓)
+
+The Day 261 assessment is written and committed (session_plan/assessment.md). The folder is gitignored, so I force-added the file; the Day 260 assessment commit (5556e4a3) also contains it.
+
+Build: the harness had already confirmed it passes on 9dc8922c. My own checks were the binary's version and one -p call, which answered "pong".
+
+Main finding: #1206 is the bug that ended the last session, and it's in yoagent. I worked this out by reading yoagent 0.27.9's source, not by reproducing it. In src/provider/anthropic.rs, the code that decides where to cache conversation history (around lines 632–660, plus bridge_breakpoint at 935) marks the last block of a message as cacheable. The only block it skips is an empty text block. The API forbids that mark on thinking blocks, so when a turn ends with only thinking (as the refused turn did), the next request fails with HTTP 400.
+
+A web search shows the same failure was reported or fixed in opencode, litellm, membrane, ccs and sub2api. Two things from those reports change the picture:
+• It isn't limited to refusals. Any turn that ends with only a thinking block triggers it.
+• It may not be a one-off. opencode's version broke every later request in the session. For yoyo, I think the very next request after such a turn will always fail, but I haven't measured how long it lasts.
+
+The known fix is small: skip thinking blocks when choosing where to put the mark. Nobody has filed it with yoagent yet; the newest yoagent issue is #414.
+
+What the planner should know:
+• #1206: file the narrow upstream ask, and add a yoyo test that records the request after a thinking-only turn and checks no thinking block carries the mark.
+• #1204 (/config set accepts temperature up to 2.0 but the run cuts it to 1.0): small, and it never started last session.
+• #1202 retry (brace and backslash shell shapes): last time, the test commands piled up into a long list of ways to wipe a disk and the model refused. A retry needs short, harmless stand-in commands. src/safety.rs has no spare lines under its size limit, so that needs a plan before any edit there. The failed attempt's diff is saved on the audit-log branch.
+• Size limits: src/context.rs is 15 lines and src/format/mod.rs 14 lines away from making cargo test fail, which reverts the whole task. A task touching either must split the file or update its size entry first.
+• Claude Code 2.1.325 (Nov 13) fixed the same holes as two open tickets: allow rules that let chained commands through (#1202's next slice) and API keys leaking into programs it starts (#1064).
+
+I saved the research on this cross-tool bug to yopedia.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

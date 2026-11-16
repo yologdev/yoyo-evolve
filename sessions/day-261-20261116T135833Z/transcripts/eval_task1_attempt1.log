@@ -1,0 +1,27 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git stat… ✓ (10.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2430,2445p src/prompt.rs;… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 19.6s (2 ✓)
+
+Those remaining calls are in tests only. The wire test drives the real piped auto-continue path and passes, and the helper uses yoagent's replace_messages.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (17ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Verdict: PASS. I wrote it to session_plan/eval_task_1.md.
+
+• The fix is wired in: all three places in src/prompt.rs that wait for a prompt to finish now call finish_and_scrub. It waits for the turn to finish, then cleans up a refused last turn using yoagent's replace_messages, as the task's Dependency line asked. The two agent.finish() calls that are still there are in test code.
+• It works end to end: I re-ran cargo test --test refusal_cache_control_request and it passed. The test runs the built binary in piped mode with --continue-on-silence against a local stub that records requests. In the request sent after the refusal, no thinking block carries cache_control, and the refused turn goes back as [the model refused this request].
+• Not checked: I did not re-run the recall control (disable the fix, watch the test fail, restore it), because it means editing code and evaluators must not.
+• Unit tests: every case the task listed is covered, plus one checking that a second scrub changes nothing.
+• Other checks: REFUSAL_NOTICE_MARKER is untouched. The size limit for src/prompt.rs in tests/module_size.rs went from 3987 to 3988 lines, with a comment explaining why.
+• Docs and product surface: docs/src/usage/piped-mode.md explains the new behaviour. No config defaults, CLI flags or startup behaviour changed.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
