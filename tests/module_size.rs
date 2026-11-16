@@ -641,7 +641,9 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 251 (#1026 item 1): 3977 -> 3987 (+10, 3 earlier unregistered drift), the
     // stream-json AgentEnd arm now prints the cut/refusal note on stderr; the
     // printer and the json field builder live in src/prompt/output_limit.rs.
-    ("src/prompt.rs", 3987),
+    // +1 Day 261 (#1206): `mod refusal_history;`; the three `agent.finish()` joins
+    // became `finish_and_scrub` in place, the logic lives in that module.
+    ("src/prompt.rs", 3988),
     // Day 183: first entry for this file — 2042, i.e. 42 past MAX_MODULE_LINES and
     // so inside OVERSHOOT_GRACE_LINES, which is why it warned instead of failing.
     // Registering it is this gate's OWN stated remedy for a grace-band overshoot

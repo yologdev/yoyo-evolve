@@ -18,6 +18,7 @@ mod interrupt;
 mod loopback_refused;
 pub(crate) mod network_error_summary;
 mod output_limit;
+mod refusal_history;
 pub(crate) mod reserved_dns;
 mod retry_after_partial;
 mod retry_safe_pipe;
@@ -118,7 +119,7 @@ async fn finish_prompt_epilogue(
     // truncation is indistinguishable from a clean finish. So the Agent must stay
     // alive for the whole drain (see `handle_prompt_events(&mut Agent, ...)`);
     // pinned by `agent_alive_across_drain_yields_agent_end` below.
-    agent.finish().await;
+    refusal_history::finish_and_scrub(agent).await;
     let ctx_used = total_tokens(agent.messages()) as u64;
     let ctx_max = crate::cli::effective_context_tokens();
     print_context_usage(ctx_used, ctx_max);
@@ -2121,8 +2122,8 @@ async fn handle_stream_json_events(
                                 }
                             }
                         }
-                        // Finalize agent state
-                        agent.finish().await;
+                        // Finalize agent state (#1206: and scrub a refused turn)
+                        refusal_history::finish_and_scrub(agent).await;
                         break;
                     }
                     AgentEvent::InputRejected { reason } => {
@@ -2151,7 +2152,7 @@ async fn handle_stream_json_events(
 
     // If we exited without AgentEnd, still try to finalize
     if usage.input == 0 && usage.output == 0 {
-        agent.finish().await;
+        refusal_history::finish_and_scrub(agent).await;
     }
 
     let outcome = PromptOutcome {
