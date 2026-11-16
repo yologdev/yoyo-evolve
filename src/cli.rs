@@ -647,15 +647,24 @@ pub fn help_text() -> String {
 // Banner/welcome display — extracted to banner.rs for readability.
 pub use crate::banner::{print_banner, print_welcome};
 
-/// Parse a thinking level string into a ThinkingLevel enum.
-pub fn parse_thinking_level(s: &str) -> ThinkingLevel {
-    match s.to_lowercase().as_str() {
+/// The level a thinking string names, or `None` for an unknown word. Pure (no
+/// warning), so `config get` can read it too (#1195).
+pub fn thinking_level_from_str(s: &str) -> Option<ThinkingLevel> {
+    Some(match s.to_lowercase().as_str() {
         "off" | "none" => ThinkingLevel::Off,
         "minimal" | "min" => ThinkingLevel::Minimal,
         "low" => ThinkingLevel::Low,
         "medium" | "med" => ThinkingLevel::Medium,
         "high" | "max" => ThinkingLevel::High,
-        _ => {
+        _ => return None,
+    })
+}
+
+/// Parse a thinking level string into a ThinkingLevel enum.
+pub fn parse_thinking_level(s: &str) -> ThinkingLevel {
+    match thinking_level_from_str(s) {
+        Some(level) => level,
+        None => {
             eprintln!(
                 "{YELLOW}warning:{RESET} Unknown thinking level '{s}', using 'medium'. \
                  Valid: off, minimal, low, medium, high"
@@ -665,17 +674,19 @@ pub fn parse_thinking_level(s: &str) -> ThinkingLevel {
     }
 }
 
+/// `t` clamped to 0.0–1.0, with no warning (#1195: `config get` reads it).
+pub fn clamped_temperature(t: f32) -> f32 {
+    t.clamp(0.0, 1.0) // a NaN stays NaN, as before
+}
+
 /// Clamp temperature to the valid 0.0–1.0 range, warning if out of bounds.
 pub fn clamp_temperature(t: f32) -> f32 {
     if t < 0.0 {
         eprintln!("{YELLOW}warning:{RESET} Temperature {t} is below 0.0, clamping to 0.0");
-        0.0
     } else if t > 1.0 {
         eprintln!("{YELLOW}warning:{RESET} Temperature {t} is above 1.0, clamping to 1.0");
-        1.0
-    } else {
-        t
     }
+    clamped_temperature(t)
 }
 
 /// Compute the list of disallowed tools for lite mode.

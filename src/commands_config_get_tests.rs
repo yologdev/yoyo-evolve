@@ -258,16 +258,17 @@ fn suggested_config_commands_round_trip_to_the_shell_arm() {
 /// "show the raw value" while the run ignores it. Iterates the authority.
 #[test]
 fn every_settable_key_has_an_unset_reading() {
-    use crate::commands_config_get::run_reads_as_unset;
+    use crate::commands_config_get::run_reading;
     for (key, _) in crate::config::SETTABLE_KEYS {
-        assert!(run_reads_as_unset(key, "").is_some(), "{key} unclassified");
+        assert!(run_reading(key, "").is_some(), "{key} unclassified");
     }
-    assert_eq!(run_reads_as_unset("not_a_key", ""), None);
+    assert_eq!(run_reading("not_a_key", ""), None);
 }
 
 /// `key = ""` for every settable key: the full printed line and exit code.
 /// provider and thinking are the two the run does NOT read as unset
-/// (provider "" is refused as unknown; thinking "" warns and uses medium).
+/// (provider "" is refused as unknown; thinking "" warns and uses medium),
+/// and since #1195 the line says what the run does instead.
 #[test]
 fn empty_value_rows_say_what_the_run_does() {
     let src = "/x/.yoyo.toml";
@@ -276,8 +277,10 @@ fn empty_value_rows_say_what_the_run_does() {
         cfg.insert(key.to_string(), String::new());
         let (code, text) = crate::commands_config_get::config_get_report(key, &cfg, src);
         assert_eq!(code, 0, "{key}");
-        let expected = if matches!(*key, "provider" | "thinking") {
-            format!("\x1b[2m  {key} =   ({src})\x1b[0m\n")
+        let expected = if *key == "provider" {
+            format!("\x1b[2m  {key} =   ({src})  (read as an unknown provider; startup refuses it unless a base URL is given)\x1b[0m\n")
+        } else if *key == "thinking" {
+            format!("\x1b[2m  {key} =   ({src})  (read as medium)\x1b[0m\n")
         } else {
             format!(
                 "\x1b[2m  {key} is not set: {src} has {key} = \"\", which yoyo reads as unset (using default)\x1b[0m\n"
@@ -358,6 +361,124 @@ fn config_show_marks_a_value_read_as_unset() {
         "{out}"
     );
     assert!(out.contains("  provider  = openai\n"), "{out}");
+}
+
+// === #1195: `config get` / `config show` name the value the run uses ===
+
+/// The census: every settable key (iterated from `SETTABLE_KEYS`, not typed)
+/// with an unusual value, and what the run does with it. A key missing from
+/// `rows` fails, so a new key must be read before it ships. Each row's value
+/// was chosen to hit the key's reader at a boundary (clamp, fold, synonym).
+/// No key is exempt: `max_tokens` above a model's ceiling is warned about at
+/// build time but sent as written (agent_builder `max_tokens_ceiling_warning`),
+/// so "as written" is the run's reading, not a default.
+#[test]
+fn run_reading_census_over_every_settable_key() {
+    use crate::commands_config_get::{run_reading, RunReading::*};
+    let as_ = |s: &str| As(s.to_string());
+    let rows = [
+        ("model", " ", Unset),
+        ("provider", "OpenAI", as_("openai")),
+        ("thinking", "max", as_("high")),
+        ("temperature", "5", as_("1.0")),
+        ("max_tokens", "999999999", AsWritten),
+        ("max_turns", "0", AsWritten),
+        ("auto_watch", "yes", as_("true")),
+        ("auto_edit", "1", as_("true")),
+        ("auto_commit", "off", as_("false")),
+        ("auto_continue", "no", as_("false")),
+        ("max_auto_continues", "50", as_("20")),
+        ("continue_on_silence", "on", as_("true")),
+        ("wait_for_reset", "0", as_("false")),
+        ("retry_after_partial", "True", Unset),
+        ("hints", "false", AsWritten),
+        ("lite", "true", AsWritten),
+        ("no_bell", "yes", as_("true")),
+        ("quiet", "maybe", Unset),
+        ("no_color", "1", as_("true")),
+        ("notify_command", "  ", Unset),
+        ("cost_warn_usd", "-1", Unset),
+    ];
+    for (key, _) in crate::config::SETTABLE_KEYS {
+        let row = rows.iter().find(|(k, _, _)| k == key);
+        let (_, value, expected) = row.unwrap_or_else(|| panic!("census has no row for {key}"));
+        assert_eq!(
+            run_reading(key, value).as_ref(),
+            Some(expected),
+            "{key} = {value:?}"
+        );
+    }
+}
+
+/// The ticket's own rows: thinking and temperature, each side of the change.
+#[test]
+fn run_reading_thinking_and_temperature_rows() {
+    use crate::commands_config_get::{run_reading, RunReading::*};
+    let as_ = |s: &str| Some(As(s.to_string()));
+    for (value, expected) in [
+        ("", as_("medium")),
+        ("max", as_("high")),
+        ("bogus", as_("medium")),
+        ("med", as_("medium")),
+        ("high", Some(AsWritten)),
+        ("High", Some(AsWritten)),
+        ("off", Some(AsWritten)),
+        ("none", as_("off")),
+    ] {
+        assert_eq!(
+            run_reading("thinking", value),
+            expected,
+            "thinking {value:?}"
+        );
+    }
+    for (value, expected) in [
+        ("5", as_("1.0")),
+        ("-1", as_("0.0")),
+        ("0.7", Some(AsWritten)),
+        ("1", Some(AsWritten)),
+        ("hot", Some(Unset)),
+    ] {
+        assert_eq!(
+            run_reading("temperature", value),
+            expected,
+            "temperature {value:?}"
+        );
+    }
+    // Provider: the startup refusals are the run's reading.
+    assert_eq!(
+        run_reading("provider", "github"),
+        as_("a retired provider; startup refuses it unless a base URL is given")
+    );
+    assert_eq!(
+        run_reading("provider", "bogus"),
+        as_("an unknown provider; startup refuses it unless a base URL is given")
+    );
+    assert_eq!(run_reading("provider", "openai"), Some(AsWritten));
+}
+
+/// The printed lines for the ticket's two motivating configs, both doors.
+#[test]
+fn config_get_and_show_print_the_value_the_run_uses() {
+    let src = "/x/.yoyo.toml";
+    let mut cfg = std::collections::HashMap::new();
+    cfg.insert("thinking".to_string(), String::new());
+    cfg.insert("temperature".to_string(), "5".to_string());
+    let get =
+        |key: &str| strip_dim(&crate::commands_config_get::config_get_report(key, &cfg, src).1);
+    assert_eq!(
+        get("thinking"),
+        format!("  thinking =   ({src})  (read as medium)\n")
+    );
+    assert_eq!(
+        get("temperature"),
+        format!("  temperature = 5  ({src})  (read as 1.0)\n")
+    );
+    let out = crate::commands_config::format_config_output(&cfg, Some(std::path::Path::new(src)));
+    assert!(out.contains("  temperature  = 5  (read as 1.0)\n"), "{out}");
+    assert!(
+        out.contains("  thinking     =   (read as medium)\n"),
+        "{out}"
+    );
 }
 
 // === #1194: `is_secret_key` matches name segments, not substrings ===

@@ -16,7 +16,7 @@ pub(crate) fn config_get_report(
 ) -> (i32, String) {
     match config.get(key) {
         // #1172: the run reads this value as if the key were absent; say so.
-        Some(value) if run_reads_as_unset(key, value) == Some(true) => {
+        Some(value) if run_reading(key, value) == Some(RunReading::Unset) => {
             let shown = if is_masked_key(key) && !value.trim().is_empty() {
                 "\"***\"".to_string()
             } else {
@@ -35,7 +35,15 @@ pub(crate) fn config_get_report(
             } else {
                 value.clone()
             };
-            (0, format!("{DIM}  {key} = {display}  ({source}){RESET}\n"))
+            // #1195: the run uses a different value than the text; name it.
+            let note = match run_reading(key, value) {
+                Some(RunReading::As(used)) => format!("  (read as {used})"),
+                _ => String::new(),
+            };
+            (
+                0,
+                format!("{DIM}  {key} = {display}  ({source}){note}{RESET}\n"),
+            )
         }
         None => {
             let known: Vec<&str> = crate::config::SETTABLE_KEYS
@@ -61,19 +69,29 @@ pub(crate) fn config_get_report(
     }
 }
 
-/// #1172: `Some(true)` when the run reads `value` for `key` exactly as it reads
-/// the key being absent (the default is used), `Some(false)` when it reads the
-/// value, `None` for a key that is not settable. Every arm asks the run's own
-/// reader; none restates its rule. Not unset: `provider` ("" is refused as an
-/// unknown provider) and `thinking` ("" warns and runs at medium).
-pub(crate) fn run_reads_as_unset(key: &str, value: &str) -> Option<bool> {
+/// What the run does with `value` for `key` (#1172, #1195).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum RunReading {
+    /// The run uses the value as written.
+    AsWritten,
+    /// The run reads it as if the key were absent (the default is used).
+    Unset,
+    /// The run uses something else, named here: a level, a clamped number, a
+    /// canonical spelling, or a startup refusal.
+    As(String),
+}
+
+/// #1172/#1195: what the run does with `value` for `key`, or `None` for a key
+/// that is not settable. Every arm asks the run's own reader (the warning-free
+/// halves of `cli::parse_thinking_level` / `clamp_temperature`, the startup
+/// provider refusals, `config_flag`, ...); none restates its rule.
+pub(crate) fn run_reading(key: &str, value: &str) -> Option<RunReading> {
     use crate::config::*;
+    use RunReading::*;
     let one: std::collections::HashMap<String, String> =
         [(key.to_string(), value.to_string())].into();
+    let unset_if = |unset: bool| if unset { Unset } else { AsWritten };
     let numeric_none = |flag: &str| match key {
-        "temperature" => crate::cli_config::resolve_numeric_setting::<f32>(&[], flag, &one, key)
-            .0
-            .is_none(),
         "max_turns" => crate::cli_config::resolve_numeric_setting::<usize>(&[], flag, &one, key)
             .0
             .is_none(),
@@ -82,19 +100,45 @@ pub(crate) fn run_reads_as_unset(key: &str, value: &str) -> Option<bool> {
             .is_none(),
     };
     Some(match key {
-        "model" => crate::config_value::named_model(value).is_none(),
-        "provider" | "thinking" => false,
-        "temperature" => numeric_none("--temperature"),
-        "max_tokens" => numeric_none("--max-tokens"),
-        "max_turns" => numeric_none("--max-turns"),
-        "max_auto_continues" => parse_max_auto_continues_from_config(&one).is_none(),
-        "notify_command" => parse_notify_command_from_config(&one).is_none(),
-        "cost_warn_usd" => {
-            crate::prompt_budget::parse_cost_threshold(parse_cost_warn_from_config(&one).as_deref())
-                .is_none()
+        "model" => unset_if(crate::config_value::named_model(value).is_none()),
+        "provider" => provider_reading(value),
+        "thinking" => {
+            let level = crate::cli::thinking_level_from_str(value)
+                .unwrap_or(yoagent::ThinkingLevel::Medium);
+            let used = crate::commands::thinking_level_name(level);
+            if value.to_lowercase() == used {
+                AsWritten
+            } else {
+                As(used.to_string())
+            }
         }
+        "temperature" => {
+            let parsed =
+                crate::cli_config::resolve_numeric_setting::<f32>(&[], "--temperature", &one, key)
+                    .0;
+            match parsed {
+                None => Unset,
+                Some(t) if t.is_nan() || crate::cli::clamped_temperature(t) == t => AsWritten,
+                Some(t) => As(format!("{:?}", crate::cli::clamped_temperature(t))),
+            }
+        }
+        "max_tokens" => unset_if(numeric_none("--max-tokens")),
+        "max_turns" => unset_if(numeric_none("--max-turns")),
+        "max_auto_continues" => match parse_max_auto_continues_from_config(&one) {
+            None => Unset,
+            Some(n) if value.parse::<u32>().ok() == Some(n) => AsWritten,
+            Some(n) => As(n.to_string()),
+        },
+        "notify_command" => unset_if(parse_notify_command_from_config(&one).is_none()),
+        "cost_warn_usd" => unset_if(
+            crate::prompt_budget::parse_cost_threshold(
+                parse_cost_warn_from_config(&one).as_deref(),
+            )
+            .is_none(),
+        ),
         // Booleans go through `config_flag`: a value it does not recognise is
         // the one whose result depends on the default, i.e. the default is used.
+        // A synonym it does recognise (`yes`, `1`, `on`) is named as true/false.
         "auto_watch"
         | "auto_edit"
         | "auto_commit"
@@ -106,17 +150,44 @@ pub(crate) fn run_reads_as_unset(key: &str, value: &str) -> Option<bool> {
         | "lite"
         | "no_bell"
         | "quiet"
-        | "no_color" => config_flag(&one, key, false) != config_flag(&one, key, true),
+        | "no_color" => {
+            let used = config_flag(&one, key, false);
+            if used != config_flag(&one, key, true) {
+                Unset
+            } else if value == used.to_string() {
+                AsWritten
+            } else {
+                As(used.to_string())
+            }
+        }
         _ => return None,
     })
 }
 
-/// `config show`'s marker for a value the run reads as unset (#1172).
-pub(crate) fn unset_reading_note(key: &str, value: &str) -> &'static str {
-    if run_reads_as_unset(key, value) == Some(true) {
-        "  (read as unset; using default)"
+/// The `provider` row of [`run_reading`]: startup lowercases the name, then
+/// refuses a retired or unknown one unless a base URL is given (`--base-url`
+/// or `base_url`, which this key alone cannot see, so the note says "unless").
+fn provider_reading(value: &str) -> RunReading {
+    let lower = value.to_lowercase();
+    let unless = "startup refuses it unless a base URL is given";
+    if crate::providers::retired_provider_refusal(&lower).is_some() {
+        RunReading::As(format!("a retired provider; {unless}"))
+    } else if crate::providers::unknown_provider_refusal(&lower, false).is_some() {
+        RunReading::As(format!("an unknown provider; {unless}"))
+    } else if lower != value {
+        RunReading::As(lower)
     } else {
-        ""
+        RunReading::AsWritten
+    }
+}
+
+/// `config show`'s marker for a value the run does not use as written (#1172,
+/// #1195): "read as unset" or "read as <what it uses>", else empty.
+pub(crate) fn unset_reading_note(key: &str, value: &str) -> String {
+    match run_reading(key, value) {
+        Some(RunReading::Unset) => "  (read as unset; using default)".to_string(),
+        Some(RunReading::As(used)) => format!("  (read as {used})"),
+        _ => String::new(),
     }
 }
 
