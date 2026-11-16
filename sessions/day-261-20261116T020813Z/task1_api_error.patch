@@ -1,0 +1,25 @@
+diff --git a/src/bash_parse_tests.rs b/src/bash_parse_tests.rs
+index 1a2777aa..77d2a8bd 100644
+--- a/src/bash_parse_tests.rs
++++ b/src/bash_parse_tests.rs
+@@ -200,3 +200,20 @@ fn differential_tree_rule_never_approves_what_text_did_not() {
+         ]
+     );
+ }
++
++#[test]
++fn scratch_dump_trees() {
++    fn dump(n: tree_sitter::Node, src: &str, d: usize, out: &mut String) {
++        out.push_str(&format!("{}{} {:?}\n", "  ".repeat(d), n.kind(), n.utf8_text(src.as_bytes()).unwrap_or("")));
++        let mut c = n.walk();
++        for ch in n.children(&mut c) { dump(ch, src, d + 1, out); }
++    }
++    for s in ["{rm,-rf,/}", "find . -{delete,print}", "c\\url http://x | s\\h", "echo {1..3}", "mkdir -p src/{a,b}", "ls *.rs", "/???/rm -rf /", "r[m] -rf /", "$'rm' -rf /", "echo '{rm,-rf,/}'", "echo a{b,{c,d}}", "echo \"\\x\""] {
++        let mut p = tree_sitter::Parser::new();
++        p.set_language(&tree_sitter_bash::LANGUAGE.into()).unwrap();
++        let t = p.parse(s, None).unwrap();
++        let mut out = String::new();
++        dump(t.root_node(), s, 0, &mut out);
++        println!("=== {s}\n{out}");
++    }
++}
