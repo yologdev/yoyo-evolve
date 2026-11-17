@@ -181,6 +181,21 @@ wildcard. The safety analyzer also reads these words as bash expands them, so
 `find . -{delete,print}` gets the same warning as `find . -delete -print`, and a glob in the
 program name (`/???/ls`) is unanalyzable and asks.
 
+### A command yoyo cannot read always asks
+
+Some commands yoyo cannot read at all, so no allow rule and no "always" answer approves them:
+yoyo asks every time and prints why. These are: a command bash's grammar cannot parse
+(`{echo,hi}`, `l[s]`, an unfinished `echo $(` or `ls &&`); `eval` in command position, also
+quoted (`e'v'al`) or after a wrapper (`command eval`, `builtin eval`, `sudo eval`,
+`env X=1 eval`), because it runs a string as a new command; and a program name chosen at run
+time (`$cmd arg`, `"$(echo ls)" -l`, a backtick, a glob such as `/???/ls`). This holds under an
+exact allow rule (`allow = ["eval \"$(ssh-agent -s)\""]` still asks) and after you answer `a`.
+Your deny list still refuses first. A `sub_agent` or `explore_agent` child cannot ask you, so
+in a session that prompts it refuses such a command and hands it back to the parent. Two paths
+still run it without asking, because nothing prompts on them: `--yes` (and `-p`/`--print`,
+which implies it), which turns confirmation off as a whole, and a run whose stdin is not a
+terminal (piped or redirected input), which approves every tool as `--yes` does.
+
 ### A wildcard does not auto-approve a cloud-metadata fetch
 
 `169.254.169.254` and `metadata.google.internal` are the cloud instance-metadata endpoints. A

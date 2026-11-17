@@ -32,7 +32,7 @@
 use std::sync::LazyLock;
 
 mod indirect_command;
-pub(crate) use indirect_command::user_deny_spelling_refusal;
+pub(crate) use indirect_command::{check_indirect_command_word, user_deny_spelling_refusal};
 
 use regex::Regex;
 
@@ -308,7 +308,7 @@ fn check_fd_redirect(cmd: &str, _cmd_lower: &str) -> Option<String> {
 /// Shell wrappers that run their argument as a command, so the word after
 /// them (and after their `-flag` / `VAR=value` words) is still in command
 /// position for [`normalise_rm_command_words`].
-const RM_COMMAND_WRAPPERS: &[&str] = &[
+pub(crate) const RM_COMMAND_WRAPPERS: &[&str] = &[
     "sudo", "doas", "env", "command", "builtin", "exec", "nohup", "time", "nice",
 ];
 

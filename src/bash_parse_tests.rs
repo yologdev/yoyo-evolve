@@ -306,3 +306,140 @@ fn a_wildcard_allow_asks_for_dynamic_words() {
     assert_eq!(check("ls *", "ls '*.rs'"), Some(true));
     assert_eq!(check("echo *", "echo '{a,b}'"), Some(true));
 }
+
+// ---- #1202 step 1, the bolded clause: what yoyo cannot read asks ----------
+
+use crate::bash_parse::{pre_prompt_route, unanalyzable_reason, PrePrompt};
+
+/// Each shape the owner named (parse error, `eval`, a name chosen by an
+/// expansion) is Unanalyzable, so "always" and an allow rule stop approving it.
+#[test]
+fn a_command_yoyo_cannot_read_has_an_unanalyzable_reason() {
+    for cmd in [
+        // parse errors in tree-sitter-bash 0.25.1
+        "{echo,hi}",
+        "l[s]",
+        "echo $(",
+        "ls &&",
+        // eval, bare, quoted, behind a wrapper
+        "eval \"$x\"",
+        "eval echo hi",
+        "e'v'al echo hi",
+        "command eval echo hi",
+        "builtin eval echo hi",
+        "env X=1 eval echo hi",
+        "sudo eval echo hi",
+        "ls && eval echo hi",
+        "echo $(eval echo hi)",
+        // the program name comes from an expansion
+        "$cmd arg",
+        "\"$(echo ls)\" -l",
+        "`echo ls` -l",
+        "${TOOL} --version",
+        "/???/ls",
+        "l* -la",
+    ] {
+        let got = unanalyzable_reason(cmd);
+        assert!(
+            got.as_deref()
+                .is_some_and(|r| r.starts_with("Unanalyzable command")),
+            "{cmd:?}: {got:?}"
+        );
+    }
+}
+
+/// The false-positive census: ordinary commands, including the shapes most
+/// likely to trip a parser (heredoc, `[[ ]]`, arithmetic, here-string,
+/// process substitution, loops), and words that only mention `eval`.
+#[test]
+fn ordinary_commands_are_readable() {
+    for cmd in [
+        "ls -la",
+        "git status",
+        "cargo build && cargo test",
+        "cat <<'EOF' > f\nhi\nEOF",
+        "for f in *.rs; do wc -l \"$f\"; done",
+        "[[ -f x ]] && echo y",
+        "echo $((1+2))",
+        "grep -c x <<< \"$s\"",
+        "diff <(ls a) <(ls b)",
+        "cargo clippy --all-targets -- -D warnings",
+        "cargo fmt -- --check",
+        "git log --oneline -5",
+        "git diff HEAD~1 -- src/",
+        "grep -rn \"eval\" src/",
+        "echo eval",
+        "rg -n 'fn main' src",
+        "find . -name '*.rs' | xargs wc -l",
+        "npm test",
+        "python3 -m pytest -q",
+        "go test ./...",
+        "make -j4",
+        "ls ~/projects",
+        "cd /tmp && ls",
+        "export FOO=bar && echo $FOO",
+        "FOO=1 cargo test",
+        "if [ -d target ]; then echo yes; fi",
+        "echo \"$(date)\"",
+        "sed -n '1,20p' src/main.rs",
+        "$HOME/bin/tool --help",
+        "git commit -m \"$(cat <<'EOF'\nmsg\nEOF\n)\"",
+    ] {
+        assert_eq!(unanalyzable_reason(cmd), None, "{cmd:?}");
+    }
+}
+
+/// The routing table: a deny verdict wins, an unreadable command always
+/// asks, and otherwise "always" or an allow match approves as before.
+#[test]
+fn an_unreadable_command_is_never_auto_approved() {
+    use PrePrompt::*;
+    for (always, allow, unreadable, want) in [
+        (false, None, false, Ask),
+        (true, None, false, Approve),
+        (false, Some(true), false, Approve),
+        (true, Some(true), false, Approve),
+        (false, Some(false), false, Refuse),
+        (true, Some(false), false, Refuse),
+        (false, None, true, Ask),
+        (true, None, true, Ask),
+        (false, Some(true), true, Ask),
+        (true, Some(true), true, Ask),
+        (false, Some(false), true, Refuse),
+        (true, Some(false), true, Refuse),
+    ] {
+        assert_eq!(
+            pre_prompt_route(always, allow, unreadable),
+            want,
+            "always={always} allow={allow:?} unreadable={unreadable}"
+        );
+    }
+}
+
+/// The confirm callback reads the command back out of a warned confirm text,
+/// so a warned `$cmd arg` is still recognised as unreadable.
+#[test]
+fn the_warned_confirm_text_yields_its_command() {
+    use crate::tools::warned_command;
+    assert_eq!(warned_command("ls -la"), "ls -la");
+    let warned = "⚠️  Unanalyzable command: x\nCommand: $cmd arg";
+    assert_eq!(warned_command(warned), "$cmd arg");
+    assert!(unanalyzable_reason(warned_command(warned)).is_some());
+    let multi = "⚠️  w\nCommand: echo a\nCommand: b";
+    assert_eq!(warned_command(multi), "echo a\nCommand: b");
+}
+
+/// The sub-agent child door: where the parent would ask, the child cannot,
+/// so an unreadable command the analyzer does not warn about is refused there
+/// too; with no parent prompt (`--yes`, piped) it runs, as before.
+#[test]
+fn a_child_refuses_what_its_parent_would_ask_about() {
+    use crate::tools::child_confirm_refusal;
+    for cmd in ["{echo,hi}", "eval echo hi", "ls &&"] {
+        assert_eq!(analyze_bash_command(cmd), None, "anti-vacuous: {cmd:?}");
+        let got = child_confirm_refusal(true, cmd).unwrap_or_default();
+        assert!(got.contains("Unanalyzable command"), "{cmd:?}: {got:?}");
+        assert_eq!(child_confirm_refusal(false, cmd), None, "{cmd:?}");
+    }
+    assert_eq!(child_confirm_refusal(true, "ls -la"), None);
+}

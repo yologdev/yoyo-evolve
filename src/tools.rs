@@ -385,7 +385,7 @@ impl AgentTool for StreamingBashTool {
         // Safety analysis — soft warning that routes through confirmation
         if let Some(warning) = analyze_bash_command(command) {
             if let Some(ref confirm) = self.confirm_fn {
-                if !confirm(&format!("⚠️  {warning}\nCommand: {command}")) {
+                if !confirm(&format!("⚠️  {warning}{WARNED_COMMAND_SEP}{command}")) {
                     return Err(ToolError::Failed(
                         "Command was not confirmed by the user.".into(),
                     ));
@@ -1228,6 +1228,17 @@ pub fn build_tools(
     )
 }
 
+/// What sits between a soft warning and the command in the confirm text.
+const WARNED_COMMAND_SEP: &str = "\nCommand: ";
+
+/// The command inside a confirm text: `execute` hands the callback either the
+/// command or `⚠️  {warning}{WARNED_COMMAND_SEP}{command}`.
+pub(crate) fn warned_command(text: &str) -> &str {
+    text.strip_prefix("⚠️")
+        .and_then(|t| t.split_once(WARNED_COMMAND_SEP))
+        .map_or(text, |(_, c)| c)
+}
+
 /// Build the bash tool for one session. User `deny` patterns are installed on
 /// the tool itself (`StreamingBashTool::user_deny`, checked in `execute`), so
 /// they bind on every path: `--yes` gets no confirm closure at all, and a prior
@@ -1254,29 +1265,31 @@ pub(crate) fn build_bash_tool(
         deny: Vec::new(),
     };
     base_bash.with_confirm(move |cmd: &str| {
-            // If user previously chose "always", skip the prompt
-            if flag.load(Ordering::Relaxed) {
-                eprintln!(
-                    "{GREEN}  ✓ Auto-approved: {RESET}{}",
-                    truncate_with_ellipsis(cmd, 120)
-                );
-                return true;
-            }
-            // Check permission patterns before prompting
-            if let Some(allowed) = perms.check(cmd) {
-                if allowed {
-                    eprintln!(
-                        "{GREEN}  ✓ Permitted: {RESET}{}",
-                        truncate_with_ellipsis(cmd, 120)
-                    );
+            // "always", then the allow list, approve without asking, except a
+            // command yoyo cannot read (#1202 step 1: fails closed to a prompt).
+            use crate::bash_parse::{pre_prompt_route, unanalyzable_reason, PrePrompt};
+            let always = flag.load(Ordering::Relaxed);
+            let allow = perms.check(cmd);
+            let unreadable = unanalyzable_reason(warned_command(cmd));
+            match pre_prompt_route(always, allow, unreadable.is_some()) {
+                PrePrompt::Approve => {
+                    let label = if always { "Auto-approved" } else { "Permitted" };
+                    let shown = truncate_with_ellipsis(cmd, 120);
+                    eprintln!("{GREEN}  ✓ {label}: {RESET}{shown}");
                     return true;
-                } else {
-                    eprintln!(
-                        "{RED}  ✗ Denied by permission rule: {RESET}{}",
-                        truncate_with_ellipsis(cmd, 120)
-                    );
+                }
+                PrePrompt::Refuse => {
+                    let shown = truncate_with_ellipsis(cmd, 120);
+                    eprintln!("{RED}  ✗ Denied by permission rule: {RESET}{shown}");
                     return false;
                 }
+                PrePrompt::Ask => {}
+            }
+            if let Some(reason) = unreadable.filter(|r| !cmd.contains(r.as_str())) {
+                eprintln!("{YELLOW}  ⚠ {reason}{RESET}");
+            }
+            if always || allow == Some(true) {
+                eprintln!("{DIM}  (asking even though \"always\" or an allow rule matched){RESET}");
             }
             use std::io::BufRead;
             // Show the command and ask for approval
@@ -1653,7 +1666,9 @@ pub(crate) fn child_confirm_refusal(parent_confirms: bool, command: &str) -> Opt
     if !parent_confirms {
         return None;
     }
-    let warning = analyze_bash_command(command)?;
+    // #1202 step 1: what the parent would ask about even after "always".
+    let warning = analyze_bash_command(command)
+        .or_else(|| crate::bash_parse::unanalyzable_reason(command))?;
     Some(format!(
         "Command needs user confirmation that a sub-agent cannot obtain: {warning} \
          Return this step to the parent agent and let it run the command itself, \

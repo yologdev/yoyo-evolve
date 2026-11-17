@@ -297,7 +297,7 @@ fn strip_heredoc_bodies(cmd: &str) -> String {
 /// warning line (it already asked), a sub-agent child under a confirming
 /// parent refuses, and plan/read mode blocks it. Piped `-p` runs — the
 /// evolve loop's — have no confirm callback, so their bash is unaffected.
-pub(super) fn check_indirect_command_word(cmd: &str, _cmd_lower: &str) -> Option<String> {
+pub(crate) fn check_indirect_command_word(cmd: &str, _cmd_lower: &str) -> Option<String> {
     let cmd = strip_heredoc_bodies(cmd);
     let tokens = lex_shell_words(&cmd);
     let mut at_cmd = true;

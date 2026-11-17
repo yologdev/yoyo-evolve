@@ -170,6 +170,83 @@ pub(crate) fn allow_wildcard_not_one_plain_command(pattern: &str, command: &str)
         && !is_single_word_only_command(command)
 }
 
+/// #1202 step 1's bolded clause: why yoyo cannot read `cmd` well enough for
+/// a session "always" or an allow rule to approve it unasked, or `None`.
+/// Three shapes: a parse error (ERROR/MISSING node, e.g. `{echo,hi}`,
+/// `l[s]`, `ls &&`); `eval` in command position, also behind a wrapper
+/// (`command eval …`); and a word bash resolves at run time, from the two
+/// existing producers: `argv_text`'s Unanalyzable (glob or `$'…'` program
+/// name, an unexpandable brace) and `check_indirect_command_word` (`$cmd`).
+pub(crate) fn unanalyzable_reason(cmd: &str) -> Option<String> {
+    let mut found = None;
+    let walked = walk_nodes(cmd, &["command"], &mut |_, node| {
+        if found.is_none() {
+            found = eval_in_command_position(node, cmd).or_else(|| argv_text(node, cmd).err());
+        }
+    });
+    if walked.is_err() {
+        return Some(
+            "Unanalyzable command: bash's grammar cannot parse it, so the safety \
+             check cannot see what runs"
+                .to_string(),
+        );
+    }
+    found.or_else(|| crate::safety::check_indirect_command_word(cmd, ""))
+}
+
+/// `Some(reason)` when this simple command runs `eval`: its name, or the first
+/// word after a wrapper (`sudo`, `command`, `builtin`, `env X=1`, …) and its
+/// `-flags`. Quotes are removed first, so `e'v'al` is `eval`.
+fn eval_in_command_position(node: tree_sitter::Node, src: &str) -> Option<String> {
+    let mut cursor = node.walk();
+    let mut seen_name = false;
+    for word in node.named_children(&mut cursor) {
+        if !seen_name && word.kind() != "command_name" {
+            continue;
+        }
+        seen_name = true;
+        let text = word.utf8_text(src.as_bytes()).ok()?;
+        let lexed: String = lex_word(text)?.chars.iter().map(|ch| ch.c).collect();
+        let base = lexed.rsplit('/').next().unwrap_or("");
+        if base == "eval" {
+            return Some(
+                "Unanalyzable command: `eval` runs a string as a new command, so the \
+                 safety check cannot see what runs"
+                    .to_string(),
+            );
+        }
+        let skip = crate::safety::RM_COMMAND_WRAPPERS.contains(&base)
+            || (word.kind() != "command_name" && (lexed.starts_with('-') || lexed.contains('=')));
+        if !skip {
+            return None;
+        }
+    }
+    None
+}
+
+/// What the bash confirm callback does before it would prompt (#1202 step 1).
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum PrePrompt {
+    /// Run without asking.
+    Approve,
+    /// Refuse without asking (an allow-closure deny verdict).
+    Refuse,
+    /// Show the prompt.
+    Ask,
+}
+
+/// `always`: the session "always" flag. `allow`: the allow list's verdict on
+/// the command. `unanalyzable`: [`unanalyzable_reason`] is `Some`. A command
+/// yoyo cannot read is never auto-approved; a deny verdict still wins.
+pub(crate) fn pre_prompt_route(always: bool, allow: Option<bool>, unanalyzable: bool) -> PrePrompt {
+    match (allow, always) {
+        (Some(false), _) => PrePrompt::Refuse,
+        _ if unanalyzable => PrePrompt::Ask,
+        (_, true) | (Some(true), _) => PrePrompt::Approve,
+        (None, false) => PrePrompt::Ask,
+    }
+}
+
 #[cfg(test)]
 fn collect_nodes(cmd: &str, kinds: &[&str]) -> Result<Vec<String>, ParseIssue> {
     let mut out = Vec::new();
