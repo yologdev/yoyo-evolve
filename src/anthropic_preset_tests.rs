@@ -521,6 +521,51 @@ fn every_offered_claude_id_is_known_to_yoagent() {
     assert!(!yoagent_knows("bedrock", "anthropic.claude-sonnet-4-7"));
 }
 
+/// #1121: every Claude id on yoyo's Bedrock list (the picker, the setup
+/// wizard, the unknown-model warning's "Known models") resolves yoagent's own
+/// Bedrock preset, so recommending it never means running on guessed limits.
+/// This is stricter than `every_offered_claude_id_is_known_to_yoagent`, which
+/// also accepts an anthropic price row: that is how `anthropic.claude-opus-4-7`
+/// (priced in yoagent, no named preset, no Bedrock row) passed while its
+/// Bedrock run guessed.
+/// Amazon Nova ids are exempt by name: yoagent has no Claude preset for them,
+/// and their guessed-limits warning is correct.
+#[test]
+fn every_listed_bedrock_claude_id_resolves_a_yoagent_bedrock_preset() {
+    use crate::model_limits_note::runs_on_guessed_limits;
+    let listed = crate::providers::known_models_for_provider("bedrock");
+    let claude: Vec<&str> = listed
+        .iter()
+        .copied()
+        .filter(|id| id.starts_with("anthropic."))
+        .collect();
+    assert!(claude.len() >= 3, "anti-vacuous: {listed:?}");
+    for id in listed {
+        if id.starts_with("amazon.nova-") {
+            continue;
+        }
+        assert!(
+            id.starts_with("anthropic."),
+            "{id}: a new vendor on the Bedrock list needs its own rule here"
+        );
+    }
+    for id in &claude {
+        assert!(
+            ModelConfig::preset("bedrock", id).is_some(),
+            "bedrock list offers {id}, which has no yoagent Bedrock preset"
+        );
+        assert!(!runs_on_guessed_limits("bedrock", id), "{id}");
+    }
+    // Near miss: opus-4-7 passes the weaker "known to yoagent" rule (price
+    // row) but has no Bedrock preset, so it fails this one if listed again.
+    assert!(yoagent_knows("bedrock", "anthropic.claude-opus-4-7"));
+    assert!(ModelConfig::preset("bedrock", "anthropic.claude-opus-4-7").is_none());
+    assert!(runs_on_guessed_limits(
+        "bedrock",
+        "anthropic.claude-opus-4-7"
+    ));
+}
+
 #[test]
 fn anthropic_default_leads_the_list_the_404_hint_suggests_from() {
     let known = crate::providers::known_models_for_provider("anthropic");
@@ -610,8 +655,9 @@ fn claude_ids_yoagent_does_not_know_get_the_default_window_not_1m() {
             "{id}: unknown stays unknown"
         );
     }
-    // Bedrock opus-4-7 has no yoagent Bedrock mapping in 0.27.2 (#1121): it
-    // runs at the arm's 200K, and /model info now says so instead of 1M.
+    // Bedrock opus-4-7 has no yoagent Bedrock mapping (still none in 0.27.9,
+    // #1121, ask in #1148): typed by hand it runs at the arm's 200K, and /model
+    // info says so instead of 1M. It is no longer on the Bedrock list.
     let bedrock = "anthropic.claude-opus-4-7";
     let built = u64::from(create_model_config("bedrock", bedrock, None).context_window);
     assert_eq!(model_context_window(bedrock), Some(built));

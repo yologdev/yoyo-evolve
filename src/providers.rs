@@ -179,7 +179,7 @@ pub fn known_models_for_provider(provider: &str) -> &'static [&'static str] {
         ],
         "bedrock" => &[
             "anthropic.claude-sonnet-4-6",
-            "anthropic.claude-opus-4-7",
+            "anthropic.claude-opus-5-5",
             "anthropic.claude-haiku-4-5-20251001-v1:0",
             "amazon.nova-pro-v1:0",
             "amazon.nova-lite-v1:0",
@@ -1137,11 +1137,20 @@ mod tests {
     }
 
     #[test]
-    fn test_bedrock_known_models_includes_new_variants() {
+    /// #1121: the Bedrock list offers an Opus that yoagent maps to a Bedrock
+    /// preset (opus-5-5), not opus-4-7, which yoagent 0.27.9's Bedrock table
+    /// lacks and so ran on guessed limits. The flip from "includes opus-4-7"
+    /// is that behaviour change; the class rule is
+    /// `every_listed_bedrock_claude_id_resolves_a_yoagent_bedrock_preset`.
+    fn test_bedrock_known_models_offer_a_preset_backed_opus_not_opus_4_7() {
         let models = known_models_for_provider("bedrock");
         assert!(
-            models.contains(&"anthropic.claude-opus-4-7"),
-            "bedrock should include anthropic.claude-opus-4-7"
+            models.contains(&"anthropic.claude-opus-5-5"),
+            "bedrock should include anthropic.claude-opus-5-5"
+        );
+        assert!(
+            !models.contains(&"anthropic.claude-opus-4-7"),
+            "bedrock must not offer anthropic.claude-opus-4-7 (no yoagent Bedrock preset)"
         );
         assert!(
             models.contains(&"anthropic.claude-sonnet-4-6"),
