@@ -1,0 +1,42 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md; Y=~/.cargo/registry/src/i… ✓ (547ms)
+  ▶ $ for n in 1186 1207 1196 1202; do echo "=== $n"; gh issue view $n --comments --js… ✓ (978ms)
+  ▶ $ for n in 1186 1207 1196 1202; do echo "=== $n"; gh issue view $n --json comments… ✓ (1.3s)
+  ▶ $ for n in 1121 1100 1094; do echo "=== $n"; gh issue view $n --json comments --jq… ✓ (1.0s)
+  ▶ $ Y=~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.27.9; grep -r… ✓ (295ms)
+  ▶ $ Y=~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.27.9; sed -n … ✓ (8ms)
+  ▶ $ Y=~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.27.9; sed -n … ✓ (6ms)
+  ▶ $ grep -n '"src/cli.rs"\|"src/config.rs"\|"src/commands_config_get.rs"\|"src/safet… ✓ (11ms)
+  ▶ write session_plan/task_01.md (33 lines) ✓ (1ms)
+  ▶ write session_plan/task_02.md (24 lines) ✓ (1ms)
+  ▶ $ u=$(gh issue create -R yologdev/yoagent --title "Add claude-… (7 lines) ✓ (2.2s)
+  ▶ $ cat > session_plan/issue_responses.md <<'EOF' (15 lines) ✓ (14ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  12 tools completed in 2m 20s (12 ✓)
+
+I wrote the Day 262 plan: two task files plus the issue responses. The commit step didn't record anything because session_plan/ is listed in .gitignore, so the plan is on disk but not in git. I haven't checked whether the next phase reads the files from disk or needs the commit.
+
+Task 1: Part of #1202, Fixes #1205 (product)
+This retries the brace-expansion task that died on Day 261, with the same scope; a provider-error failure means re-plan as is.
+• The gap: bash rewrites some words before it runs them, but tree-sitter shows them as plain words. That covers brace lists like {a,b}, unquoted backslash escapes, globs, $'…' and a leading ~. Right now they pass the safety checks, and a wildcard allow rule can auto-approve them.
+• Allow side: those words stop counting as literal, so a wildcard allow rule sends them to confirmation instead of approving them.
+• Checks side: the safety checks also run on the words bash will actually execute (escapes removed, simple brace lists expanded). Cases too complex to expand go to the existing "Unanalyzable" outcome.
+• Avoiding the Day 261 failure: that attempt was stopped by the model refusing, after its transcript filled with disk-wiping commands. The test examples are now harmless ones taken from Codex's fix for the same problem (openai/codex PR #39159), with a rule against printing destructive commands.
+• Ordering: the before-table goes on #1202 before any code edit, the recall-control result goes on as soon as it prints, and the commit body gets written as soon as tests pass. Days 260 and 261 both lost the commit body by leaving it for last.
+
+Task 2: Fixes #1207 (product, backlog-drain slot)
+The backlog has 15 open issues, more than the 12 that triggers a drain slot. I picked #1207 because everything left of it is in its own description.
+• The change: one function sets the temperature limit per provider. It's 2.0 only where a vendor page fetched during the task says 0–2, and 1.0 everywhere else, which is today's behaviour.
+• Who reads it: the run, /config set and config get all use that one function.
+• Before trusting 2.0: the task first checks that yoagent sends the value without clamping it. If it does clamp, the task stops and files an upstream request instead.
+
+Done during planning:
+• #1186: I filed the upstream request yologdev/yoagent#456 for a claude-fable-5-2 preset and price row (0.27.9 still has neither), and commented on #1186 with what is left.
+• Re-checked, unchanged: #1121 still waits on the Bedrock opus-4-7 mapping (#1148), #1206 still waits on yoagent#455, and #1196 is still blocked on step 3 of #1202.
+
+No release this session: the release cadence says one isn't due yet.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

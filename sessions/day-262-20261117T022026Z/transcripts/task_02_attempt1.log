@@ -1,0 +1,220 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | head; git l…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 1207 --json title,… ✓ (19ms)
+ ✓ (385ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 660,700p src/cli.rs; sed …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "temperature" src/config… ✓ (10ms)
+ ✓ (20ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat src/temperature_support.rs |… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "validate_config_value(…  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.27.9/src && grep -rn "temperature" --includ… ✓ (8ms)
+ ✓ (30ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.27.9/src && ls provider* -d; grep -rn "temp… ✓ (10ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.27.9/src && grep -n "temperature" provider/… ✓ (8ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.27.9/src && sed -n 525,533p provider/openai… ✓ (12ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.27.9/src && grep -n "clamp" agent_loop.rs p… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub const KNOWN_PROVIDE… ✓ (3ms)
+  ▶ $ cd /tmp; for u in "https://api-docs.deepseek.com/api/create-chat-completion" "ht… ✓ (4.8s)
+  ▶ $ cd /tmp; for f in *.html; do echo "== $f"; python3 -c " (8 lines) ✓ (346ms)
+  ▶ $ cd /tmp; for u in "https://api-docs.deepseek.com/api/create-… (11 lines) ✓ (121ms)
+  ▶ $ cd /tmp; for u in https://raw.githubusercontent.com/openai/openai-openapi/manual… ✓ (210ms)
+  ▶ $ cd /tmp; awk 'NR>=16380 && NR<=16435' oa.yml | grep -n "^   … (6 lines) ✓ (43ms)
+  ▶ $ cd /tmp; code=$(curl -sL -m 30 -A "Mozilla/5.0" -o an.html -… (8 lines) ✓ (1.4s)
+  ▶ $ cd /tmp; grep -o "temperature[^<]\{0,300\}" an.html | grep -i "range\|0\.0\|1\.0… ✓ (384ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "validate_config_value\… ✓ (25ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 280,300p src/cli.rs; sed … ✓ (16ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rc "validate_config_value(… ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1138,1160p src/cli.rs; gr… ✓ (20ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "ModelConfig {" src/cli.… ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rc "run_reading(\|unset_re… ✓ (17ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "temperature" src/agent_… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1670,1690p src/agent_buil… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "effective_temperature(… ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "parse_model_config(" sr… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "run_reading(\|unset_rea… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,45p src/temperature_sup… ✓ (8ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  31 tools completed in 2m 35s (31 ✓)
+
+Now write the authority (in temperature_support.rs, the temperature module) with its table test.
+  ╭─ Turn 29 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/temperature_support.rs (1 → 45 lines)
+    use std::sync::atomic::{AtomicBool, Ordering};
+  + 
+  + /// #1207: the highest temperature yoyo sends to `provider`, the ONE bound read
+  + /// by the run (`cli::clamp_temperature`, every agent build), `/config set` and
+  + /// `config get`. 2.0 only where the vendor's own API reference, read on Day
+  + /// 262, says 0–2; yoagent sends the value unclamped (openai_compat.rs:529,
+  + /// google.rs:787). Everything else keeps the old 1.0:
+  + /// - xai: its reference says a request may send 0–2 but "sampling uses at most
+  + ///   temperature 1", so >1 would only be echoed (https://docs.x.ai/docs/api-reference).
+  + /// - zai: "Required range: 0 <= x <= 1" (https://docs.z.ai/api-reference/llm/chat-completion).
+  + /// - openrouter: the gateway takes 0–2, but the routed vendor's range varies
+  + ///   (Anthropic's is 0–1) and its handling of >1 was not checked.
+  + /// - mistral: the reference gives a recommendation, not a range. Unsourced.
+  + /// - anthropic, bedrock, minimax: unsourced here, kept at 1.0.
+  + /// - ollama, custom, and any other name: a user-run or unknown server.
+  + pub fn temperature_max_for_provider(provider: &str) -> f32 {
+  +     match provider.to_ascii_lowercase().as_str() {
+  +         // https://github.com/openai/openai-openapi (manual_spec): "between 0 and 2", maximum: 2
+  +         "openai"
+  +         // https://ai.google.dev/api/generate-content: "Values can range from [0.0, 2.0]"
+  ... (25 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 120,145p src/temperature_… ✓ (22.9s)
+    use std::sync::atomic::{AtomicBool, Ordering};
+  + 
+  + /// #1207: the highest temperature yoyo sends to `provider`, the ONE bound read
+  + /// by the run (`cli::clamp_temperature`, every agent build), `/config set` and
+  + /// `config get`. 2.0 only where the vendor's own API reference, read on Day
+  + /// 262, says 0–2; yoagent sends the value unclamped (openai_compat.rs:529,
+  + /// google.rs:787). Everything else keeps the old 1.0:
+  + /// - xai: its reference says a request may send 0–2 but "sampling uses at most
+  ... (13 more lines)
+ ✓ (22.9s)
+  2 tools completed in 30.1s (2 ✓)
+
+Expected dead code until wired. Now the test, then cli.rs.
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/temperature_support.rs (2 → 24 lines)
+  +     /// #1207: the bound per provider, over every name in KNOWN_PROVIDERS (a
+  +     /// new provider must get a row here, sourced or 1.0), plus near-misses.
+  +     #[test]
+  +     fn temperature_bound_per_provider_table() {
+  +         let two = ["openai", "google", "deepseek", "groq", "cerebras"];
+  +         for p in crate::providers::KNOWN_PROVIDERS {
+  +             let want = if two.contains(p) { 2.0 } else { 1.0 };
+  +             assert_eq!(temperature_max_for_provider(p), want, "{p}");
+  +         }
+  +         assert_eq!(temperature_max_for_provider("OpenAI"), 2.0);
+  +         assert_eq!(temperature_max_for_provider("github"), 1.0);
+  +         assert_eq!(temperature_max_for_provider("some-proxy"), 1.0);
+  +         assert_eq!(clamped_temperature_for("openai", 1.5), 1.5);
+  +         assert_eq!(clamped_temperature_for("openai", 2.5), 2.0);
+  +         assert_eq!(clamped_temperature_for("anthropic", 1.5), 1.0);
+  +         assert_eq!(clamped_temperature_for("xai", 1.5), 1.0);
+  +         assert_eq!(clamped_temperature_for("google", -0.1), 0.0);
+  +         assert!(clamped_temperature_for("openai", f32::NAN).is_nan());
+  +         assert_eq!(temperature_range_label("openai"), "0.0–2.0 for openai");
+  +         assert_eq!(temperature_range_label("anthropic"), "0.0–1.0 for anthropic");
+  ... (4 more lines)
+ ✓ (23.4s)
+  +     /// #1207: the bound per provider, over every name in KNOWN_PROVIDERS (a
+  +     /// new provider must get a row here, sourced or 1.0), plus near-misses.
+  +     #[test]
+  +     fn temperature_bound_per_provider_table() {
+  +         let two = ["openai", "google", "deepseek", "groq", "cerebras"];
+  +         for p in crate::providers::KNOWN_PROVIDERS {
+  +             let want = if two.contains(p) { 2.0 } else { 1.0 };
+  +             assert_eq!(temperature_max_for_provider(p), want, "{p}");
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (38 lines) ✓ (24ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (28 lines) ✓ (32ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 41.7s (3 ✓)
+
+Now validate_config_value. Its single production caller (REPL /config set) has agent_config.provider.
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn handle_config_set" -… ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (77 lines) ✓ (38ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (6 lines) ✓ (26ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 22.6s (3 ✓)
+
+Now config get / config show run reading.
+  ╭─ Turn 36 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 40,80p src/commands_confi… ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (47 lines) ✓ (32ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (7 lines) ✓ (20ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i -E 's/run_reading\(([^()]… ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 24.6s (4 ✓)
+
+Add the openai rows plus a config_get_report end-to-end row reading the file's provider.
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (52 lines) ✓ (24ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (26 lines) ✓ (27ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | grep -E "^(er… ✓ (13.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2356,2398p src/agent_buil… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn .*() -> AgentConfig… ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 265,340p src/temperature_… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (27 lines) ✓ (53.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo -- tempera… ✓ (149ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo -- tempera… ✓ (147ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/temperature_support.rs /t… ✓ (38.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/c… (25 lines) ✓ (798ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  11 tools completed in 2m 40s (11 ✓)
+
+Now docs.
+  ╭─ Turn 51 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 225,240p docs/src/configu… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (16 lines) ✓ (31ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 88,96p src/help.rs; grep … ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/"  --temperature <f> S… ✓ (28.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ D=$(mktemp -d); cd $D; HOME=$D OPENAI_API_KEY=sk-stub timeout 30 /home/runner/wo… ✓ (7.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (24.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 1500 cargo test 2>&1 | g… ✓ (5m 31s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 590 cargo test 2>&1 > /t… ✓ (4m 50s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 590 cargo test > /tmp/te… ✓ (5m 4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short && git diff -… ✓ (20ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/m… (53 lines) ✓ (43ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue list --state open --sea… ✓ (765ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 1060 --json body,l… ✓ (410ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/n… (8 lines) ✓ (1.2s)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.27.9/src && sed -n 1093,1130p provider/mode… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue comment 1208 --body "Ro… ✓ (1.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/^Not covered (posted o… ✓ (16ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && S=$(git rev-parse --short HEAD);… ✓ (3.0s)
+
+────────────────────────────────────────────────────────────────────────────────
+  18 tools completed in 18m 25s (18 ✓)
+
+The temperature limit now depends on the provider. Five providers whose own API docs say 0–2 now accept up to 2.0; every other provider stays at 1.0 as before. It's committed as 58717a77 ("Fixes #1207") but not pushed yet. Build, the full test suite, clippy and fmt all pass.
+
+What changed
+• One function, temperature_max_for_provider in src/temperature_support.rs, sets the limit. Everything else reads it:
+  • the startup clamp, whose warning now names the range, e.g. Temperature 1.5 is outside 0.0–1.0 for anthropic, clamping to 1.0
+  • /config set temperature, which checks against the session's provider
+  • config get / config show, which use the provider named in the config file (anthropic if none)
+  • --help, the settable-keys text, and three docs pages
+• Every agent build clamps again to its own provider's limit. I added this beyond the plan: without it, a session started on openai at 1.5 that falls back (or /provider-switches) to anthropic would send 1.5 to a provider that only accepts up to 1.0. Now it sends 1.0.
+
+The table (each 2.0 row's source URL is in a code comment and in the commit body):
+• 2.0: openai (OpenAI's published OpenAPI spec, since platform.openai.com returned 403), google, deepseek, groq, cerebras.
+• 1.0, sourced: xai (its API accepts up to 2 but documents that it samples at most 1) and zai (documents 0–1).
+• 1.0, not sourced: openrouter (the gateway takes 0–2, but the routed vendor's range varies), mistral (its docs give a recommendation, not a range), anthropic, bedrock, minimax, ollama, custom and unknown names.
+• Does yoagent clamp? No. It sends the value as given (openai_compat.rs:529, google.rs:787), and the existing accepts_sampling_params drop is untouched.
+
+How I checked it
+• Tests: one row per provider plus edge cases (1.5 on openai stays 1.5, 2.5 becomes 2.0, 1.5 on anthropic becomes 1.0). Each of the three readers and the agent builders has its own tests too.
+• Sabotage check: setting one 2.0 row back to 1.0 made 5 tests fail, and the file is restored.
+• Real-binary probe (run right after cargo build, against a dead local URL):
+  • openai at 1.5: no warning
+  • anthropic at 1.5: clamp warning
+  • openai at 2.5: clamps to 2.0
+
+Still open, filed as #1208
+• The limit follows the provider name, so provider = "openai" with a base_url pointing at some other server still gets 2.0.
+• OpenRouter stays capped at 1.0 even for GPT or DeepSeek models routed through it.
+• Google's docs say Gemini 3.6 Flash and newer silently ignore temperature. From yoagent's source, nothing drops it for those models, so users get no note. That's probably a fix for yoagent rather than yoyo.
+
+The sourced table and the trace are also posted on #1207.
+
+cli.rs, config.rs and agent_builder.rs grew 6, 33 and 13 lines. All three stay inside the size check's grace band, so I didn't change the recorded sizes in tests/module_size.rs.
+
+  (interrupted)

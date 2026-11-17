@@ -1,0 +1,26 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log -1 --format='%s%n%b' | h… ✓ (25ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 28,36p src/bash_parse.rs;… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -c "NEUTERED\|DO NOT COMMIT… ✓ (8ms)
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 35.1s (4 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_1.md. I judged the diff and the commit message; I did not re-run the test suite or clippy, and I didn't run the binary.
+
+• What the task asked: Both halves are done.
+  • Allow side: In is_single_word_only_command, a word with an unquoted backslash, brace list or sequence, glob character, $'…', or a leading ~ is no longer word-only, so a wildcard allow rule asks instead of approving. Allow patterns are still read the old way, since they contain * by design.
+  • Check side: The safety checks now run on each command twice: once as typed, and once rewritten the way bash will actually run it (tree_refusal / argv_text in src/bash_parse.rs). A glob in the program name, nested braces, or a brace list producing more than 16 words gets the existing "Unanalyzable" refusal. {1..3} stays unexpanded, with a comment saying why.
+• Tests: src/bash_parse_tests.rs covers every acceptance specimen: the refusals match the plain forms' reason text, the unanalyzable cases, the near-misses that must not be refused, the word-only checks in both directions, and a wildcard-allow check end to end. The existing differential test is unchanged.
+• Nothing left dangling: Every new helper has a caller in the diff. The functions that lost their production callers are now test-only. The new enum is matched exhaustively, and no NEUTERED/SABOTAGE markers remain.
+• `src/safety.rs` was edited: the change went from 4818 to 4814 lines, and the size register in tests/module_size.rs was updated in the same diff, as the task required.
+• Docs: docs/src/configuration/permissions.md explains the new behaviour, including the cost that under allow = ["ls *"], ls *.rs now always asks.
+• Commit body: It has the before/after table, the list of commands that now ask, both recall-control results, the #1202 clauses still open, and Fixes #1205.
+• Product safety: The change only makes things stricter: more commands ask, more get refused. The commit body reports none that newly auto-approve.
+
+The commit body says the before-table and recall-control results were posted to #1202, but I didn't check the issue to confirm.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

@@ -1,0 +1,37 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | head && git… ✓ (17ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+The commit is in place and its body has everything (sourced table, trace, probe, recall control, residue #1208). What's left is to confirm the full gate passes on that commit.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo FMT… ✓ (5m 2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E 'FAILE… ✓ (9m 56s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 15m 20s (2 ✓)
+
+The task was already finished before the interruption, and I've now confirmed the commit (58717a77, "Fixes #1207") passes every check: cargo fmt -- --check, cargo clippy --all-targets -- -D warnings, and cargo test, where all 45 test runs passed with nothing failing. The working tree is clean, so there was nothing left to commit, and I didn't redo any of the work.
+
+What the commit does: one function, temperature_support::temperature_max_for_provider, now decides the highest temperature for each provider. The startup clamp, every agent build (including a fallback or /provider switch), /config set, config get/config show, and the help text all use it.
+
+Which providers get which limit:
+• Up to 2.0: openai, google, deepseek, groq and cerebras. Each one's API docs say 0–2, and the commit lists each docs URL.
+• Stays at 1.0:
+  • xai and zai: their own docs limit it to 1.
+  • mistral: its docs only give a recommended range.
+  • openrouter: what it accepts depends on the vendor it routes to.
+  • anthropic, bedrock, minimax, ollama, custom and any unknown name: no source fetched, so behaviour is unchanged.
+
+Checks recorded in the commit:
+• yoagent 0.27.9 passes the temperature through without clamping it (openai_compat.rs:529-530, google.rs:787-788).
+• Running the built binary: openai at 1.5 gave no warning, anthropic at 1.5 was clamped with a warning, and openai at 2.5 was clamped to 2.0.
+• As a deliberate break, lowering cerebras's limit to 1.0 made 5 tests fail. It was put back, and no NEUTERED marker is left in the code.
+
+Still open: #1208. The limit is chosen by provider name, so an openai config pointed at a different server through base_url still gets 2.0. Google's docs also say temperature is ignored on Gemini 3.6 Flash and newer, which I haven't checked.
+  watch: no files changed this turn — skipping
