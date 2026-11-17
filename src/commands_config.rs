@@ -397,6 +397,7 @@ pub fn format_config_output(
     // pathological key doesn't throw off everything else.
     let max_key_len = config.keys().map(|k| k.len()).max().unwrap_or(0).min(24);
 
+    let run_provider = crate::commands_config_get::run_provider(config);
     let mut keys: Vec<&String> = config.keys().collect();
     keys.sort();
 
@@ -412,7 +413,7 @@ pub fn format_config_output(
             "  {:<width$}  = {}{}\n",
             key,
             display_value,
-            crate::commands_config_get::unset_reading_note(key, value),
+            crate::commands_config_get::unset_reading_note(key, value, &run_provider),
             width = max_key_len
         ));
     }
@@ -735,13 +736,14 @@ pub fn handle_config_set(input: &str, agent_config: &mut crate::AgentConfig, age
     };
 
     // Validate the value for this key
-    let canonical = match crate::config::validate_config_value(&key, &value) {
-        Ok(v) => v,
-        Err(msg) => {
-            println!("{RED}  {msg}{RESET}");
-            return;
-        }
-    };
+    let canonical =
+        match crate::config::validate_config_value_for(&key, &value, &agent_config.provider) {
+            Ok(v) => v,
+            Err(msg) => {
+                println!("{RED}  {msg}{RESET}");
+                return;
+            }
+        };
 
     // Write to disk. Capture the precedence chain BEFORE the write: after it,
     // a newly created file is already in the list, which is precisely what

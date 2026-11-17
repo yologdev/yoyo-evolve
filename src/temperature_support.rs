@@ -30,6 +30,50 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
+/// #1207: the highest temperature yoyo sends to `provider`, the ONE bound read
+/// by the run (`cli::clamp_temperature`, every agent build), `/config set` and
+/// `config get`. 2.0 only where the vendor's own API reference, read on Day
+/// 262, says 0–2; yoagent sends the value unclamped (openai_compat.rs:529,
+/// google.rs:787). Everything else keeps the old 1.0:
+/// - xai: its reference says a request may send 0–2 but "sampling uses at most
+///   temperature 1", so >1 would only be echoed (https://docs.x.ai/docs/api-reference).
+/// - zai: "Required range: 0 <= x <= 1" (https://docs.z.ai/api-reference/llm/chat-completion).
+/// - openrouter: the gateway takes 0–2, but the routed vendor's range varies
+///   (Anthropic's is 0–1) and its handling of >1 was not checked.
+/// - mistral: the reference gives a recommendation, not a range. Unsourced.
+/// - anthropic, bedrock, minimax: unsourced here, kept at 1.0.
+/// - ollama, custom, and any other name: a user-run or unknown server.
+pub fn temperature_max_for_provider(provider: &str) -> f32 {
+    match provider.to_ascii_lowercase().as_str() {
+        // https://github.com/openai/openai-openapi (manual_spec): "between 0 and 2", maximum: 2
+        "openai"
+        // https://ai.google.dev/api/generate-content: "Values can range from [0.0, 2.0]"
+        | "google"
+        // https://api-docs.deepseek.com/api/create-chat-completion: ">= 0 and <= 2"
+        | "deepseek"
+        // https://console.groq.com/docs/api-reference: "Range: 0 - 2"
+        | "groq"
+        // https://inference-docs.cerebras.ai/api-reference/chat-completions: "between 0 and 2"
+        | "cerebras" => 2.0,
+        _ => 1.0,
+    }
+}
+
+/// `t` clamped to `provider`'s range (0.0 to [`temperature_max_for_provider`]),
+/// with no warning. A NaN stays NaN, as before.
+pub fn clamped_temperature_for(provider: &str, t: f32) -> f32 {
+    t.clamp(0.0, temperature_max_for_provider(provider))
+}
+
+/// The range as users read it, e.g. "0.0–2.0 for openai".
+pub fn temperature_range_label(provider: &str) -> String {
+    format!(
+        "0.0–{:.1} for {}",
+        temperature_max_for_provider(provider),
+        provider.to_ascii_lowercase()
+    )
+}
+
 /// The stderr note printed when a configured temperature is dropped.
 ///
 /// The reason names the vendor whose rule dropped it. The family is read off
@@ -95,6 +139,31 @@ mod tests {
     /// per provider x id: yoagent's rule, reached through each arm.
     fn accepts(provider: &str, model: &str) -> bool {
         crate::agent_builder::create_model_config(provider, model, None).accepts_sampling_params
+    }
+
+    /// #1207: the bound per provider, over every name in KNOWN_PROVIDERS (a
+    /// new provider must get a row here, sourced or 1.0), plus near-misses.
+    #[test]
+    fn temperature_bound_per_provider_table() {
+        let two = ["openai", "google", "deepseek", "groq", "cerebras"];
+        for p in crate::providers::KNOWN_PROVIDERS {
+            let want = if two.contains(p) { 2.0 } else { 1.0 };
+            assert_eq!(temperature_max_for_provider(p), want, "{p}");
+        }
+        assert_eq!(temperature_max_for_provider("OpenAI"), 2.0);
+        assert_eq!(temperature_max_for_provider("github"), 1.0);
+        assert_eq!(temperature_max_for_provider("some-proxy"), 1.0);
+        assert_eq!(clamped_temperature_for("openai", 1.5), 1.5);
+        assert_eq!(clamped_temperature_for("openai", 2.5), 2.0);
+        assert_eq!(clamped_temperature_for("anthropic", 1.5), 1.0);
+        assert_eq!(clamped_temperature_for("xai", 1.5), 1.0);
+        assert_eq!(clamped_temperature_for("google", -0.1), 0.0);
+        assert!(clamped_temperature_for("openai", f32::NAN).is_nan());
+        assert_eq!(temperature_range_label("openai"), "0.0–2.0 for openai");
+        assert_eq!(
+            temperature_range_label("anthropic"),
+            "0.0–1.0 for anthropic"
+        );
     }
 
     #[test]
@@ -232,6 +301,26 @@ mod tests {
             lite: false,
             bash_cwd: None,
         }
+    }
+
+    /// #1207: each build clamps to its own provider's bound, so a session
+    /// started at 1.5 on openai that falls back to anthropic sends 1.0.
+    #[test]
+    fn builders_clamp_to_their_own_providers_bound() {
+        let gpt = config("openai", "gpt-4.1", Some(1.5));
+        assert_eq!(gpt.build_agent().temperature, Some(1.5));
+        assert_eq!(gpt.build_side_agent().temperature, Some(1.5));
+        let mut fell_back = config("openai", "gpt-4.1", Some(1.5));
+        fell_back.provider = "anthropic".to_string();
+        fell_back.model = "claude-haiku-4-5".to_string();
+        assert_eq!(fell_back.build_agent().temperature, Some(1.0));
+        assert_eq!(fell_back.build_side_agent().temperature, Some(1.0));
+        assert_eq!(
+            fell_back
+                .build_architect_agent("claude-sonnet-4-6")
+                .temperature,
+            Some(1.0)
+        );
     }
 
     /// The decision, through every real builder that sets a temperature.

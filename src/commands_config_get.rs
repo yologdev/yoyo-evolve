@@ -14,9 +14,10 @@ pub(crate) fn config_get_report(
     config: &std::collections::HashMap<String, String>,
     source: &str,
 ) -> (i32, String) {
+    let provider = run_provider(config);
     match config.get(key) {
         // #1172: the run reads this value as if the key were absent; say so.
-        Some(value) if run_reading(key, value) == Some(RunReading::Unset) => {
+        Some(value) if run_reading(key, value, &provider) == Some(RunReading::Unset) => {
             let shown = if is_masked_key(key) && !value.trim().is_empty() {
                 "\"***\"".to_string()
             } else {
@@ -36,7 +37,7 @@ pub(crate) fn config_get_report(
                 value.clone()
             };
             // #1195: the run uses a different value than the text; name it.
-            let note = match run_reading(key, value) {
+            let note = match run_reading(key, value, &provider) {
                 Some(RunReading::As(used)) => format!("  (read as {used})"),
                 _ => String::new(),
             };
@@ -85,7 +86,16 @@ pub(crate) enum RunReading {
 /// that is not settable. Every arm asks the run's own reader (the warning-free
 /// halves of `cli::parse_thinking_level` / `clamp_temperature`, the startup
 /// provider refusals, `config_flag`, ...); none restates its rule.
-pub(crate) fn run_reading(key: &str, value: &str) -> Option<RunReading> {
+/// The provider a run on this file uses (its `provider`, else the run's
+/// default `anthropic`), which sets the temperature bound (#1207).
+pub(crate) fn run_provider(config: &std::collections::HashMap<String, String>) -> String {
+    config
+        .get("provider")
+        .map(|p| p.trim().to_lowercase())
+        .unwrap_or_else(|| "anthropic".to_string())
+}
+
+pub(crate) fn run_reading(key: &str, value: &str, provider: &str) -> Option<RunReading> {
     use crate::config::*;
     use RunReading::*;
     let one: std::collections::HashMap<String, String> =
@@ -118,8 +128,13 @@ pub(crate) fn run_reading(key: &str, value: &str) -> Option<RunReading> {
                     .0;
             match parsed {
                 None => Unset,
-                Some(t) if t.is_nan() || crate::cli::clamped_temperature(t) == t => AsWritten,
-                Some(t) => As(format!("{:?}", crate::cli::clamped_temperature(t))),
+                Some(t) if t.is_nan() || crate::cli::clamped_temperature(provider, t) == t => {
+                    AsWritten
+                }
+                Some(t) => As(format!(
+                    "{:?}",
+                    crate::cli::clamped_temperature(provider, t)
+                )),
             }
         }
         "max_tokens" => unset_if(numeric_none("--max-tokens")),
@@ -183,8 +198,8 @@ fn provider_reading(value: &str) -> RunReading {
 
 /// `config show`'s marker for a value the run does not use as written (#1172,
 /// #1195): "read as unset" or "read as <what it uses>", else empty.
-pub(crate) fn unset_reading_note(key: &str, value: &str) -> String {
-    match run_reading(key, value) {
+pub(crate) fn unset_reading_note(key: &str, value: &str, provider: &str) -> String {
+    match run_reading(key, value, provider) {
         Some(RunReading::Unset) => "  (read as unset; using default)".to_string(),
         Some(RunReading::As(used)) => format!("  (read as {used})"),
         _ => String::new(),

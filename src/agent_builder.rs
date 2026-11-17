@@ -1679,8 +1679,11 @@ impl AgentConfig {
             agent = agent.with_max_tokens(max);
         }
         // #1122: read off the config this agent was built from, never re-derived.
-        agent.temperature =
-            effective_temperature(&self.model, accepts_sampling_params, self.temperature);
+        agent.temperature = effective_temperature(
+            &self.model,
+            accepts_sampling_params,
+            self.provider_temperature(),
+        );
 
         // Checkpoint mode: register on_before_turn to stop when context gets high
         if self.context_strategy == cli::ContextStrategy::Checkpoint {
@@ -1865,7 +1868,8 @@ impl AgentConfig {
             // out of so all three builders carry one policy, not two.
             .with_execution_limits(ExecutionLimits::default().with_max_turns(1));
 
-        agent.temperature = effective_temperature(&self.model, sampling, self.temperature);
+        agent.temperature =
+            effective_temperature(&self.model, sampling, self.provider_temperature());
         agent.max_tokens = self.thinking_off_max_tokens(&self.model);
 
         agent
@@ -1916,10 +1920,19 @@ impl AgentConfig {
             // out of so all three builders carry one policy, not two.
             .with_execution_limits(ExecutionLimits::default().with_max_turns(1));
 
-        agent.temperature = effective_temperature(architect_model, sampling, self.temperature);
+        agent.temperature =
+            effective_temperature(architect_model, sampling, self.provider_temperature());
         agent.max_tokens = self.thinking_off_max_tokens(architect_model);
 
         agent
+    }
+
+    /// The configured temperature within this config's provider's bound
+    /// (#1207): a fallback or `/provider` switch to a 0–1 vendor gets at most
+    /// 1.0 even when the session started at 1.5 on a 0–2 one.
+    fn provider_temperature(&self) -> Option<f32> {
+        self.temperature
+            .map(|t| cli::clamped_temperature(&self.provider, t))
     }
 
     /// Build a full agent configured for the editor (implementation) phase.

@@ -674,19 +674,22 @@ pub fn parse_thinking_level(s: &str) -> ThinkingLevel {
     }
 }
 
-/// `t` clamped to 0.0–1.0, with no warning (#1195: `config get` reads it).
-pub fn clamped_temperature(t: f32) -> f32 {
-    t.clamp(0.0, 1.0) // a NaN stays NaN, as before
+/// `t` clamped to `provider`'s range, with no warning (#1195: `config get`
+/// reads it). The bound is `temperature_support`'s, per provider (#1207).
+pub fn clamped_temperature(provider: &str, t: f32) -> f32 {
+    crate::temperature_support::clamped_temperature_for(provider, t)
 }
 
-/// Clamp temperature to the valid 0.0–1.0 range, warning if out of bounds.
-pub fn clamp_temperature(t: f32) -> f32 {
-    if t < 0.0 {
-        eprintln!("{YELLOW}warning:{RESET} Temperature {t} is below 0.0, clamping to 0.0");
-    } else if t > 1.0 {
-        eprintln!("{YELLOW}warning:{RESET} Temperature {t} is above 1.0, clamping to 1.0");
+/// Clamp temperature to `provider`'s range, warning if out of bounds.
+pub fn clamp_temperature(provider: &str, t: f32) -> f32 {
+    let used = clamped_temperature(provider, t);
+    if used != t && !t.is_nan() {
+        let range = crate::temperature_support::temperature_range_label(provider);
+        eprintln!(
+            "{YELLOW}warning:{RESET} Temperature {t} is outside {range}, clamping to {used:?}"
+        );
     }
-    clamped_temperature(t)
+    used
 }
 
 /// Compute the list of disallowed tools for lite mode.
@@ -2911,7 +2914,7 @@ directory ({e}); this run is trusted, later runs will not be."
     let max_tokens = parse_numeric_flag::<u32>(args, "--max-tokens", &file_config, "max_tokens");
 
     let temperature = parse_numeric_flag::<f32>(args, "--temperature", &file_config, "temperature")
-        .map(clamp_temperature);
+        .map(|t| clamp_temperature(&mc.provider, t));
 
     let max_turns = parse_numeric_flag::<usize>(args, "--max-turns", &file_config, "max_turns");
 
@@ -4132,21 +4135,24 @@ mod tests {
 
     #[test]
     fn test_clamp_temperature_in_range() {
-        assert_eq!(clamp_temperature(0.0), 0.0);
-        assert_eq!(clamp_temperature(0.5), 0.5);
-        assert_eq!(clamp_temperature(1.0), 1.0);
+        assert_eq!(clamp_temperature("anthropic", 0.0), 0.0);
+        assert_eq!(clamp_temperature("anthropic", 0.5), 0.5);
+        assert_eq!(clamp_temperature("anthropic", 1.0), 1.0);
+        assert_eq!(clamp_temperature("openai", 1.5), 1.5); // #1207
+        assert_eq!(clamp_temperature("openai", 2.0), 2.0);
     }
 
     #[test]
     fn test_clamp_temperature_below_zero() {
-        assert_eq!(clamp_temperature(-0.5), 0.0);
-        assert_eq!(clamp_temperature(-100.0), 0.0);
+        assert_eq!(clamp_temperature("anthropic", -0.5), 0.0);
+        assert_eq!(clamp_temperature("openai", -100.0), 0.0);
     }
 
     #[test]
-    fn test_clamp_temperature_above_one() {
-        assert_eq!(clamp_temperature(1.5), 1.0);
-        assert_eq!(clamp_temperature(99.0), 1.0);
+    fn test_clamp_temperature_above_the_provider_max() {
+        assert_eq!(clamp_temperature("anthropic", 1.5), 1.0);
+        assert_eq!(clamp_temperature("anthropic", 99.0), 1.0);
+        assert_eq!(clamp_temperature("openai", 2.5), 2.0); // #1207
     }
 
     #[test]

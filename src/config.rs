@@ -1160,7 +1160,10 @@ pub const SETTABLE_KEYS: &[(&str, &str)] = &[
     ("model", "AI model name"),
     ("provider", "AI provider"),
     ("thinking", "thinking level (none/low/medium/high)"),
-    ("temperature", "sampling temperature (0.0–1.0)"),
+    (
+        "temperature",
+        "sampling temperature (0.0–1.0, or 0.0–2.0 where the provider documents it)",
+    ),
     ("max_tokens", "maximum response tokens"),
     ("max_turns", "maximum agent turns per prompt"),
     ("auto_watch", "auto-enable watch mode on start (true/false)"),
@@ -1210,9 +1213,16 @@ pub const SETTABLE_KEYS: &[(&str, &str)] = &[
     ("no_color", "disable colored output (true/false)"),
 ];
 
-/// Validate a config value for a given key. Returns `Ok(canonical_value)`
-/// on success or `Err(message)` on invalid input.
+/// Tests' shorthand: validate against `anthropic`, the run's default provider.
+#[cfg(test)]
 pub fn validate_config_value(key: &str, value: &str) -> Result<String, String> {
+    validate_config_value_for(key, value, "anthropic")
+}
+
+/// Validate a config value for a given key, for a session on `provider` (the
+/// temperature bound is per provider, #1207). Returns `Ok(canonical_value)`
+/// on success or `Err(message)` on invalid input.
+pub fn validate_config_value_for(key: &str, value: &str, provider: &str) -> Result<String, String> {
     match key {
         "model" | "provider" => {
             if value.is_empty() {
@@ -1233,10 +1243,12 @@ pub fn validate_config_value(key: &str, value: &str) -> Result<String, String> {
             }
         }
         "temperature" => match value.parse::<f32>() {
-            // #1204: accept what the run sends unchanged; cli.rs owns the bound.
-            Ok(t) if crate::cli::clamped_temperature(t) == t => Ok(format!("{t}")),
+            // #1204/#1207: accept what the run sends unchanged, per provider.
+            Ok(t) if crate::cli::clamped_temperature(provider, t) == t => Ok(format!("{t}")),
             Ok(t) => Err(format!(
-                "temperature {t} out of range (0.0–1.0): yoyo sends at most 1.0"
+                "temperature {t} out of range ({}): yoyo sends at most {:.1}",
+                crate::temperature_support::temperature_range_label(provider),
+                crate::temperature_support::temperature_max_for_provider(provider)
             )),
             Err(_) => Err(format!("'{value}' is not a valid number")),
         },
@@ -2529,14 +2541,35 @@ env = { API_KEY = "secret" }
         for v in ["0", "0.0", "0.7", "1", "1.0"] {
             let t: f32 = v.parse().unwrap();
             assert!(validate_config_value("temperature", v).is_ok(), "{v}");
-            assert_eq!(crate::cli::clamped_temperature(t), t, "{v}");
+            assert_eq!(crate::cli::clamped_temperature("anthropic", t), t, "{v}");
         }
         for v in ["1.0001", "1.5", "2.0", "-0.1", "NaN", "inf", "abc"] {
             assert!(validate_config_value("temperature", v).is_err(), "{v}");
         }
         let err = validate_config_value("temperature", "1.5").unwrap_err();
         assert!(
-            err.contains("0.0–1.0") && err.contains("at most 1.0"),
+            err.contains("0.0–1.0 for anthropic") && err.contains("at most 1.0"),
+            "{err}"
+        );
+    }
+
+    /// #1207: on a provider documenting 0–2, `/config set` accepts up to 2.0,
+    /// still exactly what the run sends there.
+    #[test]
+    fn temperature_set_range_follows_the_provider() {
+        for v in ["1.5", "2", "2.0"] {
+            assert!(
+                validate_config_value_for("temperature", v, "openai").is_ok(),
+                "{v}"
+            );
+            assert!(
+                validate_config_value_for("temperature", v, "anthropic").is_err(),
+                "{v}"
+            );
+        }
+        let err = validate_config_value_for("temperature", "2.5", "openai").unwrap_err();
+        assert!(
+            err.contains("0.0–2.0 for openai") && err.contains("at most 2.0"),
             "{err}"
         );
     }

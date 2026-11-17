@@ -232,7 +232,10 @@ number (`--max-tokens abc`) is refused at startup with exit 2, before any reques
 longer warns and runs on the default. The same mistake in `.yoyo.toml` (`max_tokens = "abc"`) still
 only warns (naming the key and saying it came from a config file) and falls back to the default, because a project's
 `.yoyo.toml` may have been written by someone else. Parseable values out of range (such as
-`--temperature 5`) are handled as before (temperature is clamped to 0.0–1.0 with a warning).
+`--temperature 5`) are handled as before: temperature is clamped to the provider's range with a
+warning. The range is 0.0–2.0 on `openai`, `google`, `deepseek`, `groq` and `cerebras`, whose API
+references document 0–2, and 0.0–1.0 on every other provider (#1207). On `xai` the API accepts 0–2
+but samples at most 1. A fallback or `/provider` switch clamps again to the new provider's range.
 
 ## Context window
 

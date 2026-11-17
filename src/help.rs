@@ -89,7 +89,7 @@ pub fn cli_help_text() -> String {
     );
     let _ = writeln!(
         s,
-        "  --temperature <f> Sampling temperature (0.0-1.0, default: model default)"
+        "  --temperature <f> Sampling temperature (0.0-1.0; 0.0-2.0 where the provider documents it)"
     );
     let _ = writeln!(s, "  --skills <dir>    Directory containing skill files");
     let _ = writeln!(

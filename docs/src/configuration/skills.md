@@ -173,7 +173,7 @@ Beyond skills, MCP, and OpenAPI, a few other flags fine-tune agent behavior:
 
 ### `--temperature <float>`
 
-Set the sampling temperature (0.0–1.0). Lower values make output more deterministic; higher values make it more creative. Defaults to the model's own default.
+Set the sampling temperature: 0.0–2.0 on `openai`, `google`, `deepseek`, `groq` and `cerebras` (their documented range), 0.0–1.0 on every other provider; a higher value is clamped with a warning. Lower values make output more deterministic; higher values make it more creative. Defaults to the model's own default.
 
 ```bash
 yoyo --temperature 0.2   # More focused/deterministic

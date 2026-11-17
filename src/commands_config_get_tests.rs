@@ -260,9 +260,12 @@ fn suggested_config_commands_round_trip_to_the_shell_arm() {
 fn every_settable_key_has_an_unset_reading() {
     use crate::commands_config_get::run_reading;
     for (key, _) in crate::config::SETTABLE_KEYS {
-        assert!(run_reading(key, "").is_some(), "{key} unclassified");
+        assert!(
+            run_reading(key, "", "anthropic").is_some(),
+            "{key} unclassified"
+        );
     }
-    assert_eq!(run_reading("not_a_key", ""), None);
+    assert_eq!(run_reading("not_a_key", "", "anthropic"), None);
 }
 
 /// `key = ""` for every settable key: the full printed line and exit code.
@@ -403,7 +406,7 @@ fn run_reading_census_over_every_settable_key() {
         let row = rows.iter().find(|(k, _, _)| k == key);
         let (_, value, expected) = row.unwrap_or_else(|| panic!("census has no row for {key}"));
         assert_eq!(
-            run_reading(key, value).as_ref(),
+            run_reading(key, value, "anthropic").as_ref(),
             Some(expected),
             "{key} = {value:?}"
         );
@@ -426,7 +429,7 @@ fn run_reading_thinking_and_temperature_rows() {
         ("none", as_("off")),
     ] {
         assert_eq!(
-            run_reading("thinking", value),
+            run_reading("thinking", value, "anthropic"),
             expected,
             "thinking {value:?}"
         );
@@ -439,21 +442,38 @@ fn run_reading_thinking_and_temperature_rows() {
         ("hot", Some(Unset)),
     ] {
         assert_eq!(
-            run_reading("temperature", value),
+            run_reading("temperature", value, "anthropic"),
             expected,
             "temperature {value:?}"
         );
     }
+    // #1207: the bound is the provider's; openai documents 0–2.
+    for (value, expected) in [
+        ("1.5", Some(AsWritten)),
+        ("2", Some(AsWritten)),
+        ("2.5", as_("2.0")),
+        ("5", as_("2.0")),
+    ] {
+        assert_eq!(
+            run_reading("temperature", value, "openai"),
+            expected,
+            "openai temperature {value:?}"
+        );
+    }
+    assert_eq!(run_reading("temperature", "1.5", "anthropic"), as_("1.0"));
     // Provider: the startup refusals are the run's reading.
     assert_eq!(
-        run_reading("provider", "github"),
+        run_reading("provider", "github", "anthropic"),
         as_("a retired provider; startup refuses it unless a base URL is given")
     );
     assert_eq!(
-        run_reading("provider", "bogus"),
+        run_reading("provider", "bogus", "anthropic"),
         as_("an unknown provider; startup refuses it unless a base URL is given")
     );
-    assert_eq!(run_reading("provider", "openai"), Some(AsWritten));
+    assert_eq!(
+        run_reading("provider", "openai", "anthropic"),
+        Some(AsWritten)
+    );
 }
 
 /// The printed lines for the ticket's two motivating configs, both doors.
@@ -791,5 +811,28 @@ fn masked_for_being_unknown_iff_the_warning_names_it() {
                 "{key}: masked and warned disagree\n{warnings}"
             );
         }
+    }
+}
+
+/// #1207: `config get temperature` reads the bound of the file's own provider
+/// (absent = the run's default, anthropic).
+#[test]
+fn config_get_temperature_reads_the_files_provider() {
+    use crate::commands_config_get::config_get_report;
+    let file = |pairs: &[(&str, &str)]| -> std::collections::HashMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    };
+    let openai = file(&[("provider", "openai"), ("temperature", "1.5")]);
+    let (_, text) = config_get_report("temperature", &openai, ".yoyo.toml");
+    assert!(!text.contains("read as"), "{text}");
+    for cfg in [
+        file(&[("temperature", "1.5")]),
+        file(&[("provider", "anthropic"), ("temperature", "1.5")]),
+    ] {
+        let (_, text) = config_get_report("temperature", &cfg, ".yoyo.toml");
+        assert!(text.contains("(read as 1.0)"), "{text}");
     }
 }
