@@ -171,6 +171,16 @@ somewhere the pattern never named. To approve it, name it: `allow = ["cargo * 2>
 out the redirect, so this rule leaves it alone (the other rules still apply), and a
 wildcard-free pattern is matched as typed.
 
+A word that bash rewrites before running it is not plain either, because what you read is not
+what runs: an unquoted brace list (`src/{a,b}`, `-{delete,print}`), a backslash escape
+(`e\cho`), a glob (`*.rs`, `/???/ls`, `l[s]`), `$'…'`, or a `~` at the start of a word or after
+`=`/`:`. The quoted forms (`'*.rs'`, `"{a,b}"`, `'HEAD~1'`) and a `~` inside a word (`HEAD~1`)
+are literal and still auto-approve. The cost is real: under `allow = ["ls *"]`, `ls *.rs` now
+asks every time, and no pattern can approve it, because an allow pattern's `*` is always the
+wildcard. The safety analyzer also reads these words as bash expands them, so
+`find . -{delete,print}` gets the same warning as `find . -delete -print`, and a glob in the
+program name (`/???/ls`) is unanalyzable and asks.
+
 ### A wildcard does not auto-approve a cloud-metadata fetch
 
 `169.254.169.254` and `metadata.google.internal` are the cloud instance-metadata endpoints. A

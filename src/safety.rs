@@ -123,12 +123,8 @@ pub fn analyze_bash_command(command: &str) -> Option<String> {
         })
         // #1202 step 1: every simple command in the parse tree, nested ones
         // included. Only adds refusals; a parse issue keeps the text checks.
-        .or_else(|| {
-            crate::bash_parse::extract_check_units(cmd)
-                .ok()?
-                .iter()
-                .find_map(|c| check(c))
-        })
+        // #1205: and each unit re-spelt as the argv bash runs.
+        .or_else(|| crate::bash_parse::tree_refusal(cmd, &check))
 }
 
 /// Check if a character position is at a word boundary (start of a command/token).
