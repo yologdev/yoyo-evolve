@@ -101,3 +101,91 @@ fn the_repos_own_config_passes_the_gate() {
     let own = include_str!("../.yoyo.toml");
     assert_eq!(toml_parse_error(".yoyo.toml", own), None);
 }
+
+/// #1184 slice: `[permissions]` and `[directories]` are read through the
+/// `toml` crate. One row per TOML spelling, both tables, both keys, each
+/// asserted as the whole rule list.
+#[test]
+fn every_spelling_of_a_fence_list_builds_the_same_rules() {
+    use super::{parse_directories_from_config, parse_permissions_from_config};
+    let rows: &[(&str, &str)] = &[
+        ("header, one line", "[T]\nallow = [\"a\"]\ndeny = [\"d *\", \"e\"]\n"),
+        (
+            // The assessment's probe (Day 262): warned and NOT in force before.
+            "header, array over several lines",
+            "[T]\nallow = [\n  \"a\",\n]\ndeny = [\n  \"d *\",\n  \"e\",\n]\n",
+        ),
+        (
+            "comments inside the array and after it",
+            "[T] # fence\nallow = [\"a\"] # c\ndeny = [\n  \"d *\", # why\n  # gone\n  \"e\"\n] # end\n",
+        ),
+        (
+            // #1177's shape: a comment after the value.
+            "comment after a one-line array",
+            "[T]\nallow = [\"a\"] # x\ndeny = [\"d *\", \"e\"] # no\n",
+        ),
+        (
+            "dotted keys at top level",
+            "T.allow = [\"a\"]\nT.deny = [\"d *\", \"e\"]\n",
+        ),
+        (
+            "inline table",
+            "T = { allow = [\"a\"], deny = [\"d *\", \"e\"] }\n",
+        ),
+        (
+            "spaces inside the header",
+            "[ T ]\nallow = [\"a\"]\ndeny = [\"d *\", \"e\"]\n",
+        ),
+        (
+            "literal strings and a trailing comma",
+            "[T]\nallow = ['a',]\ndeny = ['d *', \"e\",]\n",
+        ),
+    ];
+    let (allow, deny) = (
+        vec!["a".to_string()],
+        vec!["d *".to_string(), "e".to_string()],
+    );
+    for (name, doc) in rows {
+        let p = parse_permissions_from_config(&doc.replace('T', "permissions"));
+        assert_eq!((&p.allow, &p.deny), (&allow, &deny), "[permissions] {name}");
+        let d = parse_directories_from_config(&doc.replace('T', "directories"));
+        assert_eq!((&d.allow, &d.deny), (&allow, &deny), "[directories] {name}");
+    }
+}
+
+/// Near-misses: a key under a fence table that is not `allow`/`deny` builds
+/// no rule and is still named as unread; the other table's lists stay its own.
+#[test]
+fn a_non_fence_key_builds_no_rule_and_is_still_named() {
+    use super::{parse_directories_from_config, parse_permissions_from_config};
+    let doc = "[permissions]\nfoo = [\"rm *\"]\n[directories]\ndeny = [\"/etc\"]\n";
+    let p = parse_permissions_from_config(doc);
+    assert_eq!((p.allow.len(), p.deny.len()), (0, 0));
+    assert_eq!(
+        parse_directories_from_config(doc).deny,
+        vec!["/etc".to_string()]
+    );
+    let w = crate::config_unknown_keys::unknown_config_key_warnings(
+        ".yoyo.toml",
+        &crate::config_unknown_keys::unknown_config_keys(doc),
+    );
+    assert_eq!(
+        w,
+        vec![".yoyo.toml line 2: `foo` (in [permissions]) is not a key yoyo reads, so it has no effect".to_string()]
+    );
+}
+
+/// `/cd` reads the target's file without the load gate. Its fences now read
+/// a non-TOML file as no rules, so the reading must say none of it applies,
+/// never "sets nothing" (that would drop the deny list silently).
+#[test]
+fn a_cd_target_file_that_is_not_toml_reads_as_unreadable() {
+    use crate::cd_config_note::{classify_read, CdConfigReading};
+    let broken = "[permissions\ndeny = [\"rm *\"]\n".to_string();
+    assert_eq!(classify_read(Ok(broken)), CdConfigReading::Unreadable);
+    let multi = "[permissions]\ndeny = [\n  \"rm *\",\n]\n".to_string();
+    let CdConfigReading::Sets(_, deny, _, _) = classify_read(Ok(multi)) else {
+        panic!("a valid file is read");
+    };
+    assert_eq!(deny, vec!["rm *".to_string()]);
+}

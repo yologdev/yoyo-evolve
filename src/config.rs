@@ -483,66 +483,26 @@ pub fn parse_toml_array(value: &str) -> Vec<String> {
     crate::config_value::read_array(value).unwrap_or_default()
 }
 
-/// Parse a `[permissions]` section from a TOML config file content.
-/// Looks for `allow = [...]` and `deny = [...]` lines under `[permissions]`.
+/// The `[permissions]` table, read through the `toml` crate (#1184): every
+/// TOML spelling of `allow` / `deny` (an array over several lines, a dotted
+/// `permissions.deny`, an inline table) builds the same fence. A file that is
+/// not TOML reads as no rules; the load gate refuses it before anything runs.
+/// A list that is only partly read is named by `config_value`'s warning.
 pub fn parse_permissions_from_config(content: &str) -> PermissionConfig {
-    let mut config = PermissionConfig::default();
-    // The current header, `None` at top level, where `permissions.deny = [...]`
-    // is the same list to TOML (#1178).
-    let mut section: Option<String> = None;
-
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-        if let Some(header) = crate::config_unknown_keys::toml_section_header(trimmed) {
-            section = Some(header);
-            continue;
-        }
-        if let Some((key, value)) = trimmed.split_once('=') {
-            let key =
-                crate::config_unknown_keys::key_in_table(section.as_deref(), key, "permissions");
-            let value = value.trim();
-            match key.as_deref() {
-                Some("allow") => config.allow = parse_toml_array(value),
-                Some("deny") => config.deny = parse_toml_array(value),
-                _ => {}
-            }
-        }
+    let doc = config_toml_read::parse_table(content);
+    PermissionConfig {
+        allow: config_toml_read::fence_list(&doc, "permissions", "allow").0,
+        deny: config_toml_read::fence_list(&doc, "permissions", "deny").0,
     }
-    config
 }
 
-/// Parse a `[directories]` section from a TOML config file content.
-/// Looks for `allow = [...]` and `deny = [...]` lines under `[directories]`.
+/// The `[directories]` table, read exactly like [`parse_permissions_from_config`].
 pub fn parse_directories_from_config(content: &str) -> DirectoryRestrictions {
-    let mut config = DirectoryRestrictions::default();
-    // The current header, `None` at top level, where `directories.deny = [...]`
-    // is the same list to TOML (#1178).
-    let mut section: Option<String> = None;
-
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-        if let Some(header) = crate::config_unknown_keys::toml_section_header(trimmed) {
-            section = Some(header);
-            continue;
-        }
-        if let Some((key, value)) = trimmed.split_once('=') {
-            let key =
-                crate::config_unknown_keys::key_in_table(section.as_deref(), key, "directories");
-            let value = value.trim();
-            match key.as_deref() {
-                Some("allow") => config.allow = parse_toml_array(value),
-                Some("deny") => config.deny = parse_toml_array(value),
-                _ => {}
-            }
-        }
+    let doc = config_toml_read::parse_table(content);
+    DirectoryRestrictions {
+        allow: config_toml_read::fence_list(&doc, "directories", "allow").0,
+        deny: config_toml_read::fence_list(&doc, "directories", "deny").0,
     }
-    config
 }
 
 /// Glob metacharacters that make a `[directories]` entry unmatchable (#823).
@@ -680,7 +640,7 @@ pub fn parse_mcp_servers_from_config(content: &str) -> Vec<McpServerConfig> {
 }
 
 #[path = "config_toml_read.rs"]
-mod config_toml_read;
+pub(crate) mod config_toml_read;
 
 /// Which end of a config value carries invisible whitespace padding.
 ///
@@ -747,9 +707,10 @@ pub(crate) fn padding_end(raw: &str) -> Option<PaddingEnd> {
 /// and this cannot drift from either. Returns `(key label, raw value)` pairs in config
 /// order; an empty vec means every value is clean.
 ///
-/// Scope is **MCP values only**. `parse_toml_array` is shared with `[permissions]` and
-/// `[directories]`, so detection deliberately does not live inside it — a warning there
-/// would fire on glob patterns this task never measured.
+/// Scope is **MCP values only**. `parse_toml_array` was shared with `[permissions]` and
+/// `[directories]` (until Day 262, #1184: they are read from the parsed table now), so
+/// detection deliberately does not live inside it; a warning there would have fired on
+/// glob patterns this task never measured.
 pub(crate) fn whitespace_padded_config_values(
     config_servers: &[String],
     server_configs: &[McpServerConfig],

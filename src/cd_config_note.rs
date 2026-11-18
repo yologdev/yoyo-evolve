@@ -38,7 +38,7 @@ use std::path::Path;
 pub(crate) enum CdConfigReading {
     /// No `.yoyo.toml` there — the common case; prints nothing.
     Absent,
-    /// The file exists but could not be read (permissions, not UTF-8). This is
+    /// The file exists but could not be read (permissions, not UTF-8, not TOML). This is
     /// deliberately distinct from "sets nothing": we cannot tell what it sets.
     Unreadable,
     /// The file was read: the NOT-applied sections it sets (possibly none), its
@@ -110,6 +110,8 @@ pub(crate) fn unapplied_config_sections(toml_text: &str) -> Vec<&'static str> {
 /// any other error is `Unreadable` (never silently "sets nothing").
 pub(crate) fn classify_read(read: std::io::Result<String>) -> CdConfigReading {
     match read {
+        // Not TOML: its fences read as no rules (#1184), so say none applies.
+        Ok(text) if text.parse::<toml::Table>().is_err() => CdConfigReading::Unreadable,
         Ok(text) => {
             let dirs = crate::config::parse_directories_from_config(&text);
             CdConfigReading::Sets(

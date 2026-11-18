@@ -257,7 +257,8 @@ pub(crate) fn unescape_toml_basic_string(value: &str) -> String {
 /// Every `key = value` line in `content` whose value yoyo cannot read, as
 /// `(1-based line, "[section] key", reason)`. Arrays are checked as arrays,
 /// everything else as one value. Lines in `mcp_servers` / `model_pricing`
-/// are skipped: the toml crate reads those tables (#1182).
+/// (#1182) and `permissions` / `directories` (#1184) are skipped: the toml
+/// crate reads those tables.
 pub(crate) fn unreadable_values(content: &str) -> Vec<(usize, String, &'static str)> {
     let mut out = Vec::new();
     let mut section = String::new();
@@ -283,13 +284,10 @@ pub(crate) fn unreadable_values(content: &str) -> Vec<(usize, String, &'static s
             continue;
         };
         let v = strip_trailing_comment(value);
-        // A top-level `directories.deny` is the fence list too (#1178).
-        let dotted = ["directories", "permissions"].into_iter().find_map(|t| {
-            crate::config_unknown_keys::key_in_table(None, key, t).map(|k| format!("[{t}] {k}"))
-        });
-        // mcp_servers / model_pricing are read through the toml crate (#1182),
-        // which reads every value TOML allows there (inline tables, arrays over
-        // several lines), so this hand check has nothing to say about them.
+        // mcp_servers / model_pricing (#1182) and the two fence tables (#1184)
+        // are read through the toml crate, which reads every value TOML allows
+        // there (inline tables, arrays over several lines), so this hand check
+        // has nothing to say about them; `fence_list_problems` judges fences.
         let first = crate::config_unknown_keys::toml_key_segments(key)
             .and_then(|s| s.into_iter().next())
             .unwrap_or_default();
@@ -298,7 +296,7 @@ pub(crate) fn unreadable_values(content: &str) -> Vec<(usize, String, &'static s
         } else {
             section.split('.').next().unwrap_or("")
         };
-        if head == "mcp_servers" || head == "model_pricing" {
+        if ["mcp_servers", "model_pricing", "permissions", "directories"].contains(&head) {
             continue;
         }
         let key = crate::config_unknown_keys::config_key_name(key);
@@ -309,7 +307,7 @@ pub(crate) fn unreadable_values(content: &str) -> Vec<(usize, String, &'static s
         };
         if let Err(reason) = result {
             let name = if section.is_empty() {
-                dotted.unwrap_or(key)
+                key
             } else {
                 format!("[{section}] {key}")
             };
@@ -327,19 +325,20 @@ pub(crate) fn unreadable_values(content: &str) -> Vec<(usize, String, &'static s
 
 /// One warning line per unreadable value in `content` (read from `shown`).
 pub(crate) fn unreadable_value_warnings(shown: &str, content: &str) -> Vec<String> {
-    unreadable_values(content)
+    let lines = unreadable_values(content).into_iter().map(|(line, key, reason)| {
+        format!(
+            "{shown}:{line}: could not read the value of '{key}' ({reason}); it was ignored. Write it on one line, as a quoted string or [\"a\", \"b\"]."
+        )
+    });
+    // A fence list the toml crate reads but cannot use all of (#1184).
+    let fences = crate::config::config_toml_read::fence_list_problems(content)
         .into_iter()
-        .map(|(line, key, reason)| {
-            let fence = if key.starts_with("[directories]") || key.starts_with("[permissions]") {
-                " This rule is NOT in force."
-            } else {
-                ""
-            };
+        .map(|(key, reason)| {
             format!(
-                "{shown}:{line}: could not read the value of '{key}' ({reason}); it was ignored.{fence} Write it on one line, as a quoted string or [\"a\", \"b\"]."
+                "{shown}: could not read all of '{key}': {reason}. Those rules are NOT in force. Write it as a list of quoted strings, [\"a\", \"b\"]."
             )
-        })
-        .collect()
+        });
+    lines.chain(fences).collect()
 }
 
 static UNREADABLE_WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -566,64 +565,58 @@ print(json.dumps(out))
         assert_eq!(perms.deny, vec!["rm *".to_string()]);
     }
 
+    /// #1184: the fence tables are read through the toml crate, so a list
+    /// over several lines (header or dotted) is in force and never "ignored".
+    /// Superseded: until Day 262 both rows warned "This rule is NOT in force".
     #[test]
-    fn unreadable_fence_list_is_named_not_silent() {
-        let text = "model = \"m\"\n[directories]\ndeny = [\n  \"/tmp\",\n]\nallow = [\"/w\"]\n";
-        let found = unreadable_values(text);
-        assert_eq!(
-            found,
-            vec![(
-                3,
-                "[directories] deny".to_string(),
-                "an array over several lines"
-            )]
-        );
-        let w = unreadable_value_warnings(".yoyo.toml", text);
-        assert_eq!(w.len(), 1);
-        assert!(
-            w[0].starts_with(".yoyo.toml:3: could not read the value of '[directories] deny'"),
-            "{}",
-            w[0]
-        );
-        assert!(
-            w[0].contains("it was ignored. This rule is NOT in force."),
-            "{}",
-            w[0]
-        );
+    fn multi_line_fence_lists_are_read_and_raise_no_warning() {
+        for text in [
+            "model = \"m\"\n[directories]\ndeny = [\n  \"/tmp\",\n]\nallow = [\"/w\"]\n",
+            "directories.deny = [\n  \"/etc\",\n]\n",
+            "[permissions]\ndeny = [\n  \"rm *\", # no\n  \"FOO=1 make\",\n]\n",
+        ] {
+            assert_eq!(
+                unreadable_value_warnings(".yoyo.toml", text),
+                Vec::<String>::new(),
+                "{text:?}"
+            );
+        }
     }
 
-    /// #1178: a top-level dotted fence list is the fence, so an unreadable
-    /// one says the rule is not in force, like the `[directories]` spelling.
+    /// The product guarantee (#1184 step 3): a fence list that is not fully
+    /// read is named, with the file and the key, and says it is not in force.
     #[test]
-    fn unreadable_dotted_fence_list_is_named_as_the_fence() {
-        let text = "directories.deny = [\n  \"/etc\",\n]\n";
-        let found = unreadable_values(text);
+    fn a_fence_list_not_fully_read_is_named_not_silent() {
+        let w = unreadable_value_warnings(".yoyo.toml", "[permissions]\ndeny = \"rm *\"\n");
         assert_eq!(
-            found,
-            vec![(
-                1,
-                "[directories] deny".to_string(),
-                "an array over several lines"
-            )]
+            w,
+            vec![".yoyo.toml: could not read all of '[permissions] deny': it is a string, not a list. \
+                  Those rules are NOT in force. Write it as a list of quoted strings, [\"a\", \"b\"]."
+                .to_string()]
         );
-        let w = unreadable_value_warnings(".yoyo.toml", text);
-        assert!(w[0].contains("This rule is NOT in force."), "{}", w[0]);
+        let w = unreadable_value_warnings(".yoyo.toml", "directories.allow = [\"/w\", 7]\n");
+        assert_eq!(w.len(), 1, "{w:?}");
+        assert!(
+            w[0].starts_with(".yoyo.toml: could not read all of '[directories] allow': 1 of its 2 entries is not a quoted string. Those rules are NOT in force."),
+            "{}",
+            w[0]
+        );
+        // The string entries of a mixed list still build their rules.
+        let dirs =
+            crate::config::parse_directories_from_config("directories.allow = [\"/w\", 7]\n");
+        assert_eq!(dirs.allow, vec!["/w".to_string()]);
     }
 
     #[test]
     fn readable_files_and_mcp_env_tables_raise_no_warning() {
-        let text = "model = \"m1\" # c\nmax_tokens = 4096 # c\n[permissions]\nallow = [\"git *\"] # x\n\
-                    system = \"\"\"\nline = [\n\"\"\"\n\
+        let text = "model = \"m1\" # c\nmax_tokens = 4096 # c\n\
+                    system = \"\"\"\nline = [\n\"\"\"\n[permissions]\nallow = [\"git *\"] # x\n\
                     [mcp_servers.fs]\ncommand = \"npx\"\nargs = [\"-y\", \"pkg\"]\nenv = { A = \"1\" }\n";
         let found = unreadable_values(text);
         // Only the multi-line string is refused; its body is not read as keys.
         assert_eq!(
             found,
-            vec![(
-                5,
-                "[permissions] system".to_string(),
-                "a string over several lines"
-            )]
+            vec![(3, "system".to_string(), "a string over several lines")]
         );
         // #1182: the toml crate reads mcp_servers / model_pricing, so no
         // value there is "ignored", whatever its TOML shape.

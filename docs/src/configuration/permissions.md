@@ -420,7 +420,17 @@ CLI flags override config file values:
 - If you pass any `--allow-dir` or `--deny-dir` flag, the entire `[directories]` section from the config file is ignored.
 - `--yes` / `-y` overrides everything — all tools are auto-approved regardless of permission patterns.
 
-Write these tables with a header (`[permissions]`, `[directories]`, then one key per line) or as dotted keys (`directories.deny = [...]`). An inline table such as `directories = { deny = ["/etc"] }` is valid TOML, but yoyo does not read it: the rule is **not in force**, and yoyo warns at startup with the header form of your own line to paste instead.
+yoyo reads these two tables with a real TOML parser, so every TOML spelling works: a header (`[permissions]`, `[directories]`), dotted keys (`directories.deny = [...]`), an inline table (`directories = { deny = ["/etc"] }`), and a list over several lines, with comments:
+
+```toml
+[permissions]
+deny = [
+  "rm -rf *",   # never
+  "sudo *",
+]
+```
+
+Every entry must be a quoted string. A value that is not a list (`deny = "rm *"`), or entries that are not strings (`deny = [1, "rm *"]`), get a startup warning naming the file and the key and saying those rules are **not in force**; the string entries of a mixed list still apply. A key other than `allow` or `deny` in either table is named as one yoyo does not read.
 
 Config file search order (first found wins):
 1. `.yoyo.toml` in the current directory

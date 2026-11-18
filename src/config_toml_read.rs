@@ -161,6 +161,57 @@ pub(super) fn model_pricing_from_table(doc: &Table) -> ModelPricingOverrides {
     out
 }
 
+/// The two fence tables, `[permissions]` (bash) and `[directories]` (file
+/// tools). Each reads exactly `allow` and `deny`.
+pub(crate) const FENCE_TABLES: [&str; 2] = ["permissions", "directories"];
+
+/// One fence list, `<table>.<key>`, in every TOML spelling (header, dotted
+/// key, inline table, an array over several lines, comments anywhere), plus
+/// what part of it is NOT in force, if any: a value that is not an array, or
+/// entries that are not strings. The string entries of a mixed array are kept,
+/// so one bad entry never drops a whole deny list.
+pub(crate) fn fence_list(doc: &Table, table: &str, key: &str) -> (Vec<String>, Option<String>) {
+    let Some(v) = doc
+        .get(table)
+        .and_then(Value::as_table)
+        .and_then(|t| t.get(key))
+    else {
+        return (Vec::new(), None);
+    };
+    let Some(items) = v.as_array() else {
+        return (
+            Vec::new(),
+            Some(format!("it is a {}, not a list", v.type_str())),
+        );
+    };
+    let strings: Vec<String> = items
+        .iter()
+        .filter_map(|i| i.as_str().map(str::to_string))
+        .collect();
+    let bad = items.len() - strings.len();
+    let problem = (bad > 0).then(|| {
+        let what = if bad == 1 {
+            "is not a quoted string"
+        } else {
+            "are not quoted strings"
+        };
+        format!("{bad} of its {} entries {what}", items.len())
+    });
+    (strings, problem)
+}
+
+/// `[<table>] <key>` for every fence list in `content` that is not fully in
+/// force, with the reason. Empty for a file that is not TOML (the load gate
+/// refuses it) and for every list that reads completely.
+pub(crate) fn fence_list_problems(content: &str) -> Vec<(String, String)> {
+    let doc = parse_table(content);
+    FENCE_TABLES
+        .iter()
+        .flat_map(|t| ["allow", "deny"].map(|k| (t, k)))
+        .filter_map(|(t, k)| fence_list(&doc, t, k).1.map(|r| (format!("[{t}] {k}"), r)))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

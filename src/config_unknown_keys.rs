@@ -697,6 +697,31 @@ pub(crate) fn unknown_config_keys(contents: &str) -> Vec<UnknownKey> {
         // An inline table at one of yoyo's table names (#1180): valid TOML
         // the readers never see, so name it, and for a fence say it is off.
         let inline = section.is_none() && value.starts_with('{');
+        // #1184: the fence tables are read through the toml crate, so an
+        // inline `permissions = { ... }` IS read; judge only its keys
+        // (config_value names a list that is not fully read).
+        let fence_stem = segs.as_ref().and_then(|p| match p.as_slice() {
+            [t] if crate::config::config_toml_read::FENCE_TABLES.contains(&t.as_str()) => Some(t),
+            _ => None,
+        });
+        if let Some(stem) = fence_stem.filter(|_| inline) {
+            let parsed = format!("v = {value}").parse::<toml::Table>().ok();
+            let inner = parsed
+                .as_ref()
+                .and_then(|d| d.get("v")?.as_table().cloned());
+            for k in inner.iter().flat_map(|t| t.keys()) {
+                if k != "allow" && k != "deny" {
+                    out.push(UnknownKey::Key {
+                        line: idx + 1,
+                        key: k.clone(),
+                        section: Some(stem.clone()),
+                        suggestion: closest_match(k, &["allow", "deny"], max_edits(k))
+                            .map(String::from),
+                    });
+                }
+            }
+            continue;
+        }
         if let Some(path) = segs.as_ref().filter(|_| inline) {
             if let Some((spelling, fence)) = spelling_yoyo_reads(path) {
                 let shown: Vec<String> = path.iter().map(|p| toml_key_part(p)).collect();
@@ -1535,15 +1560,16 @@ print(json.dumps(res))
         // 7 inline fence tables at a table name (#1180). Down from 15 at
         // #1182: mcp_servers / model_pricing are read through the toml crate,
         // so their 3 dotted spellings and 5 inline rows are now read.
-        assert_eq!(refused, 7, "refused rows changed");
+        // Day 262 (#1184): the 7 inline fence tables are read, so none is refused.
+        assert_eq!(refused, 0, "refused rows changed");
     }
 
-    /// #1180: the rewrite an inline-table refusal prints is a command the
-    /// user will paste, so it is run: put it in place of their line, read it
-    /// with yoyo's readers, and it must build exactly what tomllib reads from
-    /// the line they wrote, with no warning left.
+    /// #1180 printed a rewrite for an inline fence table, because no reader
+    /// read it. Superseded Day 262 (#1184): the fence tables are read through
+    /// the toml crate, so every inline row builds what tomllib reads, and
+    /// neither warning (unread spelling, unreadable value) fires on it.
     #[test]
-    fn every_inline_table_rewrite_builds_what_tomllib_reads() {
+    fn every_inline_fence_table_builds_what_tomllib_reads_with_no_warning() {
         let rows: Vec<&str> = SHAPE_CORPUS
             .iter()
             .copied()
@@ -1554,64 +1580,40 @@ print(json.dumps(res))
             })
             .filter(|d| !d.contains("mcp_servers") && !d.contains("model_pricing"))
             .collect();
-        // The fence rows; mcp_servers / model_pricing ones are read (#1182).
         assert_eq!(rows.len(), 7, "the #1180 fence rows");
         let wanted = shape_oracle(&rows);
-        let mut rewritten = 0;
         for (doc, want) in rows.iter().zip(&wanted) {
-            let findings = unknown_config_keys(doc);
-            let [UnknownKey::Unread { line, rewrite, .. }] = findings.as_slice() else {
-                panic!("{doc:?}: expected one Unread finding, got {findings:?}");
-            };
-            let Some(rewrite) = rewrite else {
-                // Only the inline table that spans lines gets no rewrite.
-                assert!(
-                    doc.contains('\n'),
-                    "{doc:?}: one-line inline table, no rewrite"
-                );
-                continue;
-            };
-            let warning = unknown_config_key_warnings(".yoyo.toml", &findings).join("\n");
-            assert!(
-                warning.contains(&format!(
-                    "Write it as:\n    {}",
-                    rewrite.replace('\n', "\n    ")
-                )),
-                "{doc:?}: the warning does not print the rewrite: {warning}"
-            );
-            let mut lines: Vec<&str> = doc.lines().collect();
-            lines[line - 1] = rewrite;
-            let fixed = lines.join("\n");
+            assert_eq!(&yoyo_view(doc, want), want, "{doc:?}");
+            assert_eq!(unknown_config_keys(doc), vec![], "{doc:?}");
             assert_eq!(
-                &yoyo_view(&fixed, want),
-                want,
-                "{doc:?}: its rewrite {fixed:?} does not build what tomllib reads"
+                crate::config_value::unreadable_value_warnings(".yoyo.toml", doc),
+                Vec::<String>::new(),
+                "{doc:?}"
             );
-            assert!(
-                unknown_config_keys(&fixed).is_empty(),
-                "{doc:?}: its rewrite {fixed:?} is warned about itself"
-            );
-            rewritten += 1;
         }
-        assert_eq!(rewritten, 6, "rows with a rewrite");
     }
 
+    /// Near-miss: an inline fence table is read, and a key in it that no
+    /// reader reads is still named, with the did-you-mean.
     #[test]
-    fn an_inline_directories_table_is_a_fence_not_in_force_never_an_unknown_key() {
-        let w = unknown_config_key_warnings(
-            ".yoyo.toml",
-            &unknown_config_keys("directories = { deny = [\"/etc\"] }"),
+    fn an_inline_fence_table_is_read_and_only_its_unread_keys_are_named() {
+        let w = |doc: &str| unknown_config_key_warnings(".yoyo.toml", &unknown_config_keys(doc));
+        assert_eq!(
+            w("directories = { deny = [\"/etc\"] }"),
+            Vec::<String>::new()
         );
         assert_eq!(
-            w,
+            w("directories = { deny = [\"/etc\"], denny = [\"/tmp\"] }"),
             vec![
-                ".yoyo.toml line 1: `directories = { ... }` is valid TOML, but yoyo does not \
-                  read that spelling of `directories`, so it has no effect. This rule is NOT in \
-                  force. yoyo reads `[directories]` then `allow = [...]` / `deny = [...]`. \
-                  Write it as:\n    [directories]\n    deny = [\"/etc\"]"
+                ".yoyo.toml line 1: `denny` (in [directories]) is not a key yoyo reads, so it \
+                  has no effect; did you mean `deny`?"
                     .to_string()
             ]
         );
+        let d = crate::config::parse_directories_from_config(
+            "directories = { deny = [\"/etc\"], denny = [\"/tmp\"] }",
+        );
+        assert_eq!(d.deny, vec!["/etc".to_string()]);
         // #1182: the same shape for a non-fence table is read, so not warned.
         assert_eq!(
             unknown_config_keys(
