@@ -1,0 +1,24 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -2 && grep -n … ✓ (18ms)
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (0ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 15.3s (2 ✓)
+
+Verdict: PASS, written to session_plan/eval_task_2.md.
+
+I judged this from the diff plus one check of the commit and repo. I didn't re-run the tests and didn't try commands through the binary.
+
+• What changed: for bash, sh, zsh, dash and ksh, a literal -c body is now checked the same way as if it were typed on its own. It's found after the existing wrapper stripping, and works with -c alone or in a cluster like -lc. Nesting is capped at 8 levels; past that, the command asks for confirmation instead of being passed.
+• Unchanged as required: a body with an expansion ("$CMD", "kill -9 $PID") keeps the routing it had before.
+• Reuse: it uses the wrapper lists already in safety.rs rather than copying them.
+• Tests: a census over all 33 safety checks in eight -c spellings, the issue's own examples (bash -c "kill -9 1", sh -c "crontab -r"), and harmless lookalikes that must stay allowed (git -c core.pager=less log, a script file followed by -c, a quoted echo).
+• Nothing left dangling: every new function and constant is used, and no NEUTERED marker remains in bash_parse.rs.
+• Docs: safety.md explains the new behaviour, and the old #1196 link now points to #1210. ARCHITECTURE.md records the before/after counts (15 of 33 checks differed before, 0 after), 317 corpus commands that changed from allowed to refused (all -c bodies), and the recall-control result.
+• Product safety: the change only adds refusals and touches no defaults, flags or startup behaviour.
+
+The task's GitHub comments on #1209 and the corpus run are recorded only in the diff's own notes; I didn't check them.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
