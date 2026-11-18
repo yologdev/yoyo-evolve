@@ -107,7 +107,14 @@ bodies inside are still checked (`echo "x $(kill -9 1)"` asks). This
 applies only to a bare `echo`/`printf` statement: piped onward
 (`echo "..." | sh`), redirected, or behind a wrapper such as `sudo`, the
 text is still checked as a command. Quoted mentions in other commands
-(`git commit -m "kill -9 1 at $(date)"`) can still ask (#1196).
+(`git commit -m "kill -9 1 at $(date)"`) can still ask (#1210).
+Since Day 263 the body of `bash -c "..."` / `sh -c '...'` (also `zsh`,
+`dash`, `ksh`, flag clusters such as `-lc`, and behind `sudo`/`env`) is
+checked like the command it runs when it is a literal string, so
+`bash -c "kill -9 1"` asks just as `kill -9 1` does, and a body the
+parser cannot read (`bash -c 'eval ...'`) asks even under an allow rule.
+A body bash builds at run time (`bash -c "$CMD"`) cannot be read ahead
+of time and is not unpacked.
 
 One check worth calling out: **recursive-force `rm` on an unresolved
 shell variable**. A command like `rm -rf "$BUILD_DIR/"` looks harmless,

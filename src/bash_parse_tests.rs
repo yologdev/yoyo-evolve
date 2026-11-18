@@ -443,3 +443,104 @@ fn a_child_refuses_what_its_parent_would_ask_about() {
     }
     assert_eq!(child_confirm_refusal(true, "ls -la"), None);
 }
+
+// ---- #1209: a literal `bash -c` / `sh -c` body is the command it runs -------
+
+/// The body as bash reads it inside double quotes (`\`, `"`, `$`, backtick
+/// escaped), so it stays a literal string the tree pass can read.
+fn dq_body(t: &str) -> String {
+    let mut s = String::new();
+    for c in t.chars() {
+        if matches!(c, '"' | '\\' | '$' | '`') {
+            s.push('\\');
+        }
+        s.push(c);
+    }
+    s
+}
+
+/// The spellings #1209's done-when names: plain, single-quoted, a flag
+/// cluster, and behind each wrapper kind.
+fn dash_c_forms(t: &str) -> Vec<String> {
+    let d = dq_body(t);
+    let s = t.replace('\'', "'\\''");
+    vec![
+        format!("bash -c \"{d}\""),
+        format!("sh -c '{s}'"),
+        format!("bash -lc \"{d}\""),
+        format!("sudo bash -c \"{d}\""),
+        format!("env sh -c \"{d}\""),
+        format!("/bin/zsh -ec '{s}'"),
+        format!("bash -o pipefail -c '{s}'"),
+        format!(
+            "bash -c '{}'",
+            format!("bash -c \"{d}\"").replace('\'', "'\\''")
+        ),
+    ]
+}
+
+/// Census over every SAFETY_CHECKS member with a trigger in safety.rs's own
+/// tests (the same table #1196 used): each `-c` spelling of the trigger gets
+/// the bare trigger's verdict. Before #1209, 15 of 33 differed.
+#[test]
+fn a_literal_dash_c_body_gets_the_bare_commands_verdict() {
+    let triggers = crate::safety::safety_quoted_subst_tests::trigger_per_check();
+    assert!(triggers.len() >= 33, "only {} triggers", triggers.len());
+    let mut wrong = Vec::new();
+    for (i, t) in &triggers {
+        let bare = analyze_bash_command(t).is_some();
+        for form in dash_c_forms(t) {
+            if analyze_bash_command(&form).is_some() != bare {
+                wrong.push(format!("member {i} {form:?} (bare refused: {bare})"));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// The issue's specimens, literally, and the near-misses that must stay
+/// quiet: a harmless body, `-c` as a non-shell's flag, a shell reading a
+/// script file.
+#[test]
+fn issue_1209_specimens_are_refused_and_harmless_bodies_are_not() {
+    for cmd in [
+        "bash -c \"kill -9 1\"",
+        "bash -c 'kill -9 1'",
+        "sh -c \"crontab -r\"",
+        "bash -c \"iptables -F\"",
+        "bash -c \"kill -9 1 now\"",
+    ] {
+        assert!(analyze_bash_command(cmd).is_some(), "{cmd:?}");
+    }
+    for cmd in [
+        "bash -c \"echo hi\"",
+        "sh -c 'cargo test && ls'",
+        "git -c core.pager=less log",
+        "bash script.sh -c 'kill -9 1'",
+        "bash -c \"echo 'kill -9 1'\"",
+    ] {
+        assert_eq!(analyze_bash_command(cmd), None, "{cmd:?}");
+        assert_eq!(unanalyzable_reason(cmd), None, "{cmd:?}");
+    }
+}
+
+/// A literal body yoyo cannot read is Unanalyzable like the bare command
+/// (step 1's fail-closed path); a body with an expansion keeps its routing.
+#[test]
+fn an_unreadable_literal_dash_c_body_is_unanalyzable() {
+    for cmd in [
+        "bash -c 'eval echo hi'",
+        "sh -c 'echo $(('",
+        "bash -c '{echo,hi}'",
+    ] {
+        let got = unanalyzable_reason(cmd);
+        assert!(
+            got.as_deref()
+                .is_some_and(|r| r.starts_with("Unanalyzable command")),
+            "{cmd:?}: {got:?}"
+        );
+    }
+    // Not statically known: routed exactly as before #1209.
+    assert!(unanalyzable_reason("bash -c \"$CMD\"").is_some());
+    assert_eq!(unanalyzable_reason("sh -c \"kill -9 $PID\""), None);
+}

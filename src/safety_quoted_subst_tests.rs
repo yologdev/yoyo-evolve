@@ -118,7 +118,7 @@ fn bash_runs_substitution_in_double_quotes_and_not_in_single() {
 /// `analyze_bash_command("...")` literals in safety.rs's own tests (the first
 /// literal each member refuses), so a new check joins the table by having a
 /// test, not by being typed here.
-fn trigger_per_check() -> Vec<(usize, String)> {
+pub(crate) fn trigger_per_check() -> Vec<(usize, String)> {
     use super::SAFETY_CHECKS;
     let re = regex::Regex::new(r#"analyze_bash_command\(\s*"((?:[^"\\]|\\.)*)"\s*\)"#).unwrap();
     let mut trig: Vec<Option<String>> = vec![None; SAFETY_CHECKS.len()];

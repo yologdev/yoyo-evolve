@@ -67,11 +67,18 @@ pub(crate) fn tree_refusal(cmd: &str, check: &dyn Fn(&str) -> Option<String>) ->
                 true => crate::safety::strip_quoted_regions(text),
                 false => text.to_string(),
             };
-            found = check(&text).or_else(|| match argv_text(node, cmd) {
-                Ok(Some(argv)) if !print => check(&argv),
-                Ok(_) => None,
-                Err(why) => Some(why),
-            });
+            found = check(&text)
+                .or_else(|| match argv_text(node, cmd) {
+                    Ok(Some(argv)) if !print => check(&argv),
+                    Ok(_) => None,
+                    Err(why) => Some(why),
+                })
+                // #1209: a literal `sh -c` body gets the whole analysis, as if
+                // it were typed bare. Past the depth cap, unanalyzable_reason asks.
+                .or_else(|| {
+                    let body = dash_c_body(node, cmd)?;
+                    nested(|| crate::safety::analyze_bash_command(&body)).flatten()
+                });
         }
     });
     found
@@ -225,7 +232,17 @@ pub(crate) fn unanalyzable_reason(cmd: &str) -> Option<String> {
     let mut found = None;
     let walked = walk_nodes(cmd, &["command"], &mut |_, node| {
         if found.is_none() {
-            found = eval_in_command_position(node, cmd).or_else(|| argv_text(node, cmd).err());
+            found = eval_in_command_position(node, cmd)
+                .or_else(|| argv_text(node, cmd).err())
+                .or_else(|| {
+                    let body = dash_c_body(node, cmd)?;
+                    nested(|| unanalyzable_reason(&body)).unwrap_or_else(|| {
+                        Some(format!(
+                            "Unanalyzable command: `sh -c` nested more than {MAX_DASH_C_DEPTH} \
+                             deep, so the safety check cannot see what runs"
+                        ))
+                    })
+                });
         }
     });
     if walked.is_err() {
@@ -263,6 +280,103 @@ fn eval_in_command_position(node: tree_sitter::Node, src: &str) -> Option<String
             || (word.kind() != "command_name" && (lexed.starts_with('-') || lexed.contains('=')));
         if !skip {
             return None;
+        }
+    }
+    None
+}
+
+// ---- #1209: the body of `bash -c "…"` is a command -------------------------
+
+/// Shells whose `-c` operand is a command string they parse and run.
+const DASH_C_SHELLS: &[&str] = &["bash", "sh", "zsh", "dash", "ksh"];
+
+/// How many `sh -c` levels are read; a deeper one is Unanalyzable.
+const MAX_DASH_C_DEPTH: usize = 8;
+
+thread_local! {
+    static DASH_C_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// `f` one `sh -c` level deeper, or `None` past [`MAX_DASH_C_DEPTH`].
+fn nested<T>(f: impl FnOnce() -> T) -> Option<T> {
+    DASH_C_DEPTH.with(|d| {
+        let n = d.get();
+        if n >= MAX_DASH_C_DEPTH {
+            return None;
+        }
+        d.set(n + 1);
+        let out = f();
+        d.set(n);
+        Some(out)
+    })
+}
+
+/// The command string of a `bash -c BODY` simple command (after wrappers,
+/// the same skip as [`eval_in_command_position`], plus `xargs`), quotes
+/// removed, when BODY is literal. `None` for any other command, and for a
+/// body bash expands at run time (`"$CMD"`, `"… $x"`): that is not statically
+/// known, so it keeps the routing it had before #1209.
+fn dash_c_body(node: tree_sitter::Node, src: &str) -> Option<String> {
+    if node.kind() != "command" {
+        return None;
+    }
+    let mut cursor = node.walk();
+    let mut words = node
+        .named_children(&mut cursor)
+        .skip_while(|w| w.kind() != "command_name")
+        .filter(|w| ARGV_WORD_KINDS.contains(&w.kind()));
+    let plain = |w: tree_sitter::Node| -> Option<String> {
+        let text = w.utf8_text(src.as_bytes()).ok()?;
+        let lexed = lex_word(text)?;
+        let w = &lexed.chars;
+        // What bash rewrites before exec. Unlike `word_is_dynamic`, an escaped
+        // char is literal here (the `'\''` inside a single-quoted body).
+        let literal = !lexed.ansi_escape
+            && !w
+                .iter()
+                .any(|ch| ch.q == Q::Bare && matches!(ch.c, '$' | '~'))
+            && !is_glob(w)
+            && matches!(expand_braces(w).as_deref(), Ok([one]) if one == w);
+        literal.then(|| w.iter().map(|ch| ch.c).collect())
+    };
+    // The program: the first word that is not a wrapper or a wrapper's flag.
+    let mut first = true;
+    let shell = loop {
+        let w = words.next()?;
+        let word = plain(w)?;
+        let base = word.rsplit('/').next().unwrap_or("").to_string();
+        let wrapper = crate::safety::RM_COMMAND_WRAPPERS.contains(&base.as_str())
+            || crate::safety::COMMAND_WRAPPERS.contains(&base.as_str())
+            || (!first && (word.starts_with('-') || word.contains('=')));
+        first = false;
+        if !wrapper {
+            break base;
+        }
+    };
+    if !DASH_C_SHELLS.contains(&shell.as_str()) {
+        return None;
+    }
+    // The shell's options: `-c` (alone or in a cluster such as `-lc`) makes
+    // the first operand the body; `-o`/`-O` take a value; `--` ends options.
+    let (mut dash_c, mut takes_value, mut options_done) = (false, false, false);
+    for w in words {
+        let word = plain(w)?;
+        if takes_value {
+            takes_value = false;
+            continue;
+        }
+        let option =
+            !options_done && word.len() > 1 && (word.starts_with('-') || word.starts_with('+'));
+        if !option {
+            // The first operand: the body under -c, else a script file.
+            return dash_c.then_some(word);
+        }
+        if word == "--" {
+            options_done = true;
+        } else if !word.starts_with("--") {
+            let cluster = &word[1..]; // word starts with an ASCII `-` / `+`
+            dash_c |= word.starts_with('-') && cluster.contains('c');
+            takes_value = cluster.contains('o') || cluster.contains('O');
         }
     }
     None

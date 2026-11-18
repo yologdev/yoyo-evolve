@@ -4805,7 +4805,7 @@ mod substitution_prefix_guards {
 
 #[cfg(test)]
 #[path = "safety_quoted_subst_tests.rs"]
-mod safety_quoted_subst_tests;
+pub(crate) mod safety_quoted_subst_tests;
 
 #[cfg(test)]
 #[path = "read_guard_delete_tests.rs"]
