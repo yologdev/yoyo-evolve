@@ -1195,11 +1195,14 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              \x20 /open Cargo.toml 10",
         ),
         "export" => Some(
-            "/export [path] — Export conversation as readable markdown\n\n\
+            "/export [path] [--force] — Export conversation as readable markdown\n\n\
              Usage:\n\
              \x20 /export              Export to conversation.md\n\
-             \x20 /export <path>       Export to specified path\n\n\
+             \x20 /export <path>       Export to specified path\n\
+             \x20 /export <path> --force  Replace the file if it already exists\n\n\
              Saves the current conversation as a formatted markdown file.\n\
+             An existing file is never replaced without --force: /export\n\
+             refuses, writes nothing, and prints the command to overwrite.\n\
              User messages, assistant responses, thinking blocks, and tool\n\
              results are all included in a readable format.\n\n\
              Examples:\n\

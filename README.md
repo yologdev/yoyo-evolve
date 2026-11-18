@@ -348,7 +348,7 @@ Create a `YOYO.md` (or `CLAUDE.md`) in your project root with build commands, ar
 | `/evolution [N]` | Show evolution history, session stats, and CI run status |
 | `/exit`, `/quit` | Exit yoyo |
 | `/explain <file>` | Ask the agent to explain code from a file |
-| `/export` | Export the conversation as markdown |
+| `/export` | Export the conversation as markdown (won't overwrite an existing file without `--force`) |
 | `/extended <task>` | Run the agent autonomously on a long task |
 | `/extract` | Extract a function or block to a new file |
 | `/find <pattern>` | Fuzzy-search project files by name |

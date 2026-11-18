@@ -550,7 +550,7 @@ pub fn cli_help_text() -> String {
         s,
         "    /evolution [N]     Show evolution history and session stats"
     );
-    let _ = writeln!(s, "    /export [path]     Export conversation as markdown");
+    let _ = writeln!(s, "    /export [path] [--force]  Export conversation as markdown (no overwrite without --force)");
     let _ = writeln!(
         s,
         "    /stash [desc]      Stash conversation and start fresh"
@@ -890,7 +890,7 @@ pub fn help_text() -> String {
     out.push_str("  /changelog [N]     Show recent git commit history (default: 15, max: 100)\n");
     out.push_str("  /evolution [N]     Show evolution history, session stats, and CI runs\n");
     out.push_str(
-        "  /export [path]     Export conversation as readable markdown (default: conversation.md)\n",
+        "  /export [path] [--force]  Export conversation as markdown (default: conversation.md; refuses to overwrite an existing file without --force)\n",
     );
     out.push_str(
         "  /copy [last|code]  Copy text to the system clipboard (last message, code block, etc.)\n",

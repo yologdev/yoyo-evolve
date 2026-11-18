@@ -886,19 +886,133 @@ pub fn format_conversation_as_markdown(messages: &[AgentMessage]) -> String {
     out
 }
 
-/// Parse the export path from `/export [path]` input.
-pub fn parse_export_path(input: &str) -> &str {
-    let path = input.strip_prefix("/export").unwrap_or("").trim();
+/// What `/export [path] [--force]` asked for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExportArgs {
+    pub path: String,
+    pub force: bool,
+}
+
+/// Parse `/export [path] [--force]`. A `--force` word anywhere sets `force` and
+/// is not part of the path; the rest of the text (internal spacing kept) is the
+/// path, or `conversation.md` when nothing is left. Any other `--word` is a typo
+/// (`--forse`) and is refused, so it never becomes part of a file name.
+pub fn parse_export_args(input: &str) -> Result<ExportArgs, String> {
+    let rest = input.strip_prefix("/export").unwrap_or("").trim();
+    let mut force = false;
+    // Byte spans of the words that belong to the path, in order.
+    let mut spans: Vec<(usize, usize, bool)> = Vec::new(); // (start, end, force_before)
+    let mut pending_force_gap = false;
+    for word in rest.split_whitespace() {
+        let start = word.as_ptr() as usize - rest.as_ptr() as usize;
+        if word == "--force" {
+            force = true;
+            pending_force_gap = true;
+            continue;
+        }
+        if word.starts_with("--") {
+            return Err(format!(
+                "unknown flag '{word}' for /export (the only flag is --force). Nothing was written."
+            ));
+        }
+        spans.push((start, start + word.len(), pending_force_gap));
+        pending_force_gap = false;
+    }
+    let mut path = String::new();
+    for (i, &(start, end, force_before)) in spans.iter().enumerate() {
+        if i > 0 {
+            if force_before {
+                path.push(' ');
+            } else {
+                // Keep the user's own spacing between two path words.
+                path.push_str(&rest[spans[i - 1].1..start]);
+            }
+        }
+        path.push_str(&rest[start..end]);
+    }
     if path.is_empty() {
-        DEFAULT_EXPORT_PATH
+        path = DEFAULT_EXPORT_PATH.to_string();
+    }
+    Ok(ExportArgs { path, force })
+}
+
+/// Whether `/export` may write to its target, decided from what is on disk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExportVerdict {
+    /// Nothing there, or something there and `--force` was given.
+    Write,
+    /// A file (or other non-directory) is there and `--force` was not given.
+    RefuseExists,
+    /// A directory is there; `--force` cannot help.
+    RefuseDirectory,
+}
+
+/// Pure decision for `/export`: never overwrite without `--force`, never write
+/// over a directory.
+pub fn export_target_verdict(path_exists: bool, is_dir: bool, force: bool) -> ExportVerdict {
+    if is_dir {
+        ExportVerdict::RefuseDirectory
+    } else if path_exists && !force {
+        ExportVerdict::RefuseExists
     } else {
-        path
+        ExportVerdict::Write
     }
 }
 
-/// Handle `/export [path]`: save the current conversation as a readable markdown file.
+/// The refusal text for a verdict other than `Write`. The `--force` remedy is a
+/// command that parses back to the same path with force set.
+pub fn export_refusal_message(path: &str, verdict: ExportVerdict) -> String {
+    match verdict {
+        ExportVerdict::RefuseDirectory => format!(
+            "{path} is a directory. Nothing was written. Give a file name, e.g. /export {}/conversation.md",
+            path.trim_end_matches('/')
+        ),
+        _ => format!(
+            "{path} already exists. Nothing was written. To replace it: /export {path} --force (or choose another file name)"
+        ),
+    }
+}
+
+/// Write the export. Without `force` the file is created with `create_new`, so a
+/// file that appears between the check and the write is still not overwritten.
+pub fn write_export(path: &str, markdown: &str, force: bool) -> Result<(), String> {
+    let p = std::path::Path::new(path);
+    // symlink_metadata: a dangling symlink still counts as "something is there".
+    let meta = std::fs::symlink_metadata(p).ok();
+    let is_dir = p.is_dir();
+    let verdict = export_target_verdict(meta.is_some(), is_dir, force);
+    if verdict != ExportVerdict::Write {
+        return Err(export_refusal_message(path, verdict));
+    }
+    let result = if force {
+        std::fs::write(p, markdown)
+    } else {
+        use std::io::Write;
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(p)
+            .and_then(|mut f| f.write_all(markdown.as_bytes()))
+    };
+    result.map_err(|e| {
+        if e.kind() == std::io::ErrorKind::AlreadyExists {
+            export_refusal_message(path, ExportVerdict::RefuseExists)
+        } else {
+            format!("error writing to {path}: {e}")
+        }
+    })
+}
+
+/// Handle `/export [path] [--force]`: save the current conversation as a readable
+/// markdown file, refusing to replace an existing file unless `--force` is given.
 pub fn handle_export(agent: &Agent, input: &str) {
-    let path = parse_export_path(input);
+    let args = match parse_export_args(input) {
+        Ok(a) => a,
+        Err(msg) => {
+            eprintln!("{RED}  {msg}{RESET}\n");
+            return;
+        }
+    };
     let messages = agent.messages();
 
     if messages.is_empty() {
@@ -907,12 +1021,13 @@ pub fn handle_export(agent: &Agent, input: &str) {
     }
 
     let markdown = format_conversation_as_markdown(messages);
-    match std::fs::write(path, &markdown) {
-        Ok(_) => println!(
+    let path = &args.path;
+    match write_export(path, &markdown, args.force) {
+        Ok(()) => println!(
             "{GREEN}  ✓ conversation exported to {path} ({} messages){RESET}\n",
             messages.len()
         ),
-        Err(e) => eprintln!("{RED}  error writing to {path}: {e}{RESET}\n"),
+        Err(msg) => eprintln!("{RED}  {msg}{RESET}\n"),
     }
 }
 
@@ -988,6 +1103,10 @@ pub fn session_resume_summary(messages: &[AgentMessage]) -> String {
 
     out
 }
+
+#[cfg(test)]
+#[path = "commands_session_export_tests.rs"]
+mod commands_session_export_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1385,27 +1504,28 @@ mod tests {
         );
     }
 
+    fn export_path(input: &str) -> String {
+        parse_export_args(input).unwrap().path
+    }
+
     #[test]
     fn test_parse_export_path_default() {
-        assert_eq!(parse_export_path("/export"), "conversation.md");
+        assert_eq!(export_path("/export"), "conversation.md");
     }
 
     #[test]
     fn test_parse_export_path_custom() {
-        assert_eq!(parse_export_path("/export myfile.md"), "myfile.md");
+        assert_eq!(export_path("/export myfile.md"), "myfile.md");
     }
 
     #[test]
     fn test_parse_export_path_with_directory() {
-        assert_eq!(
-            parse_export_path("/export output/chat.md"),
-            "output/chat.md"
-        );
+        assert_eq!(export_path("/export output/chat.md"), "output/chat.md");
     }
 
     #[test]
     fn test_parse_export_path_whitespace() {
-        assert_eq!(parse_export_path("/export   notes.md  "), "notes.md");
+        assert_eq!(export_path("/export   notes.md  "), "notes.md");
     }
 
     // ── proactive compact tests ──────────────────────────────────────────
