@@ -111,3 +111,102 @@ fn bash_runs_substitution_in_double_quotes_and_not_in_single() {
     assert_eq!(run("printf '%s' \"\\$(echo CANARY)\""), "$(echo CANARY)");
     assert_eq!(run("printf '%s' \"`echo CANARY`\""), "CANARY");
 }
+
+// ---- #1196: a quoted mention in a lone echo/printf ------------------------
+
+/// One trigger per SAFETY_CHECKS member, taken from the
+/// `analyze_bash_command("...")` literals in safety.rs's own tests (the first
+/// literal each member refuses), so a new check joins the table by having a
+/// test, not by being typed here.
+fn trigger_per_check() -> Vec<(usize, String)> {
+    use super::SAFETY_CHECKS;
+    let re = regex::Regex::new(r#"analyze_bash_command\(\s*"((?:[^"\\]|\\.)*)"\s*\)"#).unwrap();
+    let mut trig: Vec<Option<String>> = vec![None; SAFETY_CHECKS.len()];
+    for c in re.captures_iter(include_str!("safety.rs")) {
+        let t = c[1].replace("\\\"", "\"").replace("\\\\", "\\");
+        let lower = t.to_lowercase();
+        if let Some(i) = SAFETY_CHECKS.iter().position(|f| f(&t, &lower).is_some()) {
+            trig[i].get_or_insert(t);
+        }
+    }
+    trig.into_iter()
+        .enumerate()
+        .filter_map(|(i, t)| t.map(|t| (i, t)))
+        .collect()
+}
+
+/// #1196: `echo "kill -9 1 at $(date)"` was refused while `echo "kill -9 1"`
+/// passed. Census (Day 262): 5 of 33 members flipped, and the same 5 flipped
+/// with plain trailing text, so the `$(` was never the cause; the plain form
+/// passed only because a closing `"` is not an end anchor for those 5. Now a
+/// lone echo/printf's quoted text is a mention for every member, so every
+/// form gets the same verdict (None) and only `$(…)` bodies are checked.
+#[test]
+fn a_lone_echo_mention_is_judged_the_same_with_or_without_a_substitution() {
+    use super::analyze_bash_command;
+    let triggers = trigger_per_check();
+    // 35 members today; check_oversized_command and the indirect-command
+    // check have no literal trigger in safety.rs's tests.
+    assert!(
+        triggers.len() >= 33,
+        "only {} members had a trigger",
+        triggers.len()
+    );
+    let mut wrong = Vec::new();
+    for (i, t) in &triggers {
+        let tq = t.replace('"', "\\\"");
+        let plain = analyze_bash_command(&format!("echo \"{tq}\""));
+        for form in [
+            format!("echo \"{tq} at $(date)\""),
+            format!("echo \"$(date) {tq}\""),
+            format!("echo \"{tq} at now\""),
+            format!("printf \"{tq} at %s\\n\" \"$(date)\""),
+        ] {
+            let got = analyze_bash_command(&form);
+            if got != plain || got.is_some() {
+                wrong.push(format!("member {i} {form:?}: {got:?} (plain: {plain:?})"));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// What bash runs inside the quotes, or after them, is still a command.
+#[test]
+fn a_substitution_or_a_runner_of_the_echoed_text_is_still_refused() {
+    let root = "/";
+    for cmd in [
+        format!("echo \"$(rm -rf {root})\""),
+        "echo \"x $(kill -9 1) y\"".to_string(),
+        "echo \"`kill -9 1`\"".to_string(),
+        "echo \"$(date) $(crontab -r)\"".to_string(),
+        "printf \"%s\" \"$(iptables -F)\"".to_string(),
+        format!("sh -c \"rm -rf {root} $(date)\""),
+        "eval \"kill -9 1 $(date)\"".to_string(),
+        format!("echo \"rm -rf {root} at $(date)\" | sh"),
+        "echo \"kill -9 1 now\" && kill -9 1".to_string(),
+        "sudo echo \"kill -9 1 now\"".to_string(),
+        "/bin/echo \"kill -9 1 now\"".to_string(),
+        "echo \"x\" > /etc/passwd".to_string(),
+    ] {
+        assert!(super::analyze_bash_command(&cmd).is_some(), "{cmd:?}");
+    }
+}
+
+#[test]
+fn only_a_bare_echo_or_printf_statement_is_a_print_command() {
+    use crate::bash_parse::lone_print_command;
+    for (cmd, want) in [
+        ("echo \"kill -9 1 at $(date)\"", true),
+        ("printf '%s\\n' x", true),
+        ("echo a | sh", false),
+        ("echo a > f", false),
+        ("echo a; ls", false),
+        ("sudo echo a", false),
+        ("/bin/echo a", false),
+        ("echoo a", false),
+        ("echo \"unclosed", false),
+    ] {
+        assert_eq!(lone_print_command(cmd), want, "{cmd:?}");
+    }
+}

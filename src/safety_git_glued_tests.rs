@@ -361,8 +361,10 @@ fn a_census_trigger_inside_control_flow_is_refused() {
 /// Near-misses for the tree pass: quoted mentions and innocent commands
 /// inside the same wrappers must still pass. Not listed: a commit message
 /// heredoc mentioning `kill -9 1` is still refused, by the raw-text pass
-/// that ran before this one (the #1102/#1196 false-positive class; the tree
-/// itself extracts no command from the body, see bash_parse's tests).
+/// that ran before this one (the #1102/#1196 false-positive class, still open
+/// for any command but a lone echo/printf; the tree itself extracts no command
+/// from the body, see bash_parse's tests). The lone echo/printf rows are
+/// pinned in safety_quoted_subst_tests.rs.
 #[test]
 fn the_tree_pass_does_not_refuse_quoted_mentions_or_innocent_nesting() {
     for cmd in [

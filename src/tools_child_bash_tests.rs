@@ -94,8 +94,9 @@ async fn child_bash_refuses_flagged_command_when_parent_confirms() {
 
 #[tokio::test]
 async fn child_bash_allows_flagged_command_when_parent_would_not_ask() {
-    // A harmless flagged command, so the allow path can actually run.
-    let cmd = "echo 'TRUNCATE TABLE logs_ZZ'";
+    // A harmless flagged command, so the allow path can actually run. Piped:
+    // a bare echo's quoted text is a mention since #1196, and is not flagged.
+    let cmd = "echo 'TRUNCATE TABLE logs_ZZ' | cat";
     assert!(
         analyze_bash_command(cmd).is_some(),
         "fixture must be flagged"

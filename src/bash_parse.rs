@@ -59,14 +59,58 @@ pub(crate) fn tree_refusal(cmd: &str, check: &dyn Fn(&str) -> Option<String>) ->
     let mut found = None;
     let _ = walk_nodes(cmd, CHECK_UNIT_KINDS, &mut |text, node| {
         if found.is_none() {
-            found = check(text).or_else(|| match argv_text(node, cmd) {
-                Ok(Some(argv)) => check(&argv),
-                Ok(None) => None,
+            // #1196: a print command's quoted words are a mention, so its text
+            // is read quote-stripped and its argv re-spelling is not checked;
+            // the commands inside its `$(…)`/backticks are nodes walked next.
+            let print = is_print_command(node, cmd);
+            let text = match print {
+                true => crate::safety::strip_quoted_regions(text),
+                false => text.to_string(),
+            };
+            found = check(&text).or_else(|| match argv_text(node, cmd) {
+                Ok(Some(argv)) if !print => check(&argv),
+                Ok(_) => None,
                 Err(why) => Some(why),
             });
         }
     });
     found
+}
+
+/// Commands whose words are printed and never run (#1196). Exact names only:
+/// a path, a wrapper (`sudo echo`) or any other command is not one of these,
+/// so its quoted text stays command text (fail closed).
+const PRINT_ONLY_COMMANDS: &[&str] = &["echo", "printf"];
+
+/// `node` is a simple `echo`/`printf` command, not inside a pipeline (whose
+/// next stage may run the text, `echo "…" | sh`) or a redirect.
+fn is_print_command(node: tree_sitter::Node, src: &str) -> bool {
+    node.kind() == "command"
+        && node.parent().is_none_or(|p| p.kind() == "program")
+        && node
+            .child_by_field_name("name")
+            .and_then(|n| n.utf8_text(src.as_bytes()).ok())
+            .is_some_and(|name| PRINT_ONLY_COMMANDS.contains(&name))
+}
+
+/// The whole of `cmd` is one `echo`/`printf` command (#1196): its quoted
+/// literal text is a mention, so the raw-text pass reads it quote-stripped.
+pub(crate) fn lone_print_command(cmd: &str) -> bool {
+    let mut parser = tree_sitter::Parser::new();
+    let language: tree_sitter::Language = tree_sitter_bash::LANGUAGE.into();
+    let Some(tree) = parser
+        .set_language(&language)
+        .ok()
+        .and_then(|_| parser.parse(cmd, None))
+    else {
+        return false;
+    };
+    let root = tree.root_node();
+    !root.has_error()
+        && root.named_child_count() == 1
+        && root
+            .named_child(0)
+            .is_some_and(|n| is_print_command(n, cmd))
 }
 
 /// The prove-safe contract: true only when `cmd` is ONE plain command, read

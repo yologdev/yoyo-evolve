@@ -115,7 +115,9 @@ pub fn analyze_bash_command(command: &str) -> Option<String> {
     // #1193: a trigger glued to `$(`, `(`, `)` or a backtick slips the token
     // anchors, so each subshell piece (quotes stripped) is checked on its own.
     let stripped = strip_quoted_regions(cmd);
-    check(cmd)
+    // #1196: a lone echo/printf's quoted text is a mention; `$(…)` bodies stay.
+    let lone_print = crate::bash_parse::lone_print_command(cmd);
+    check(if lone_print { &stripped } else { cmd })
         .or_else(|| {
             let mut pieces = stripped.split(SUBSHELL_BREAKS).map(str::trim);
             let split = stripped.contains(SUBSHELL_BREAKS);
