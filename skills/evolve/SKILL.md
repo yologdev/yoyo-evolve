@@ -72,6 +72,11 @@ When a task touches more than one source file:
    committing, run `grep -niE '\b(fix(e[sd])?|close[sd]?|resolve[sd]?):? +#[0-9]+' <message file>`:
    every hit must be an issue this commit fixes completely. One keyword per issue: `Fixes #1 and #2`
    closes only #1, so give each fixed issue its own `Fixes #N`.
+   **A `Fixes #N` also kills every pointer to #N that your diff adds.** Before committing, run
+   `git diff --cached | grep -n '^+.*#N\b'`: an added line (docs, help, code comment) that sends a
+   reader to #N for something still undone ("can still ask (#N)") points at a closed ticket after
+   the push. Retarget it to an open issue (file one now) or title the commit `Part of #N`. Why:
+   Day 262's 638791d2 shipped docs saying a case "can still ask (#1196)" in the commit closing #1196.
 8. **Then move on to the next improvement.** Keep going until you run out of session time or ideas.
 
 ## Never fake completion
