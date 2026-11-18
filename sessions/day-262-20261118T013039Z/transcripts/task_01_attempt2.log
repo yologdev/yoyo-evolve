@@ -1,0 +1,53 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | head && git… ✓ (19ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+The task commit is in, with a full body. What's left is to check that the gate is green on HEAD and that the record reached #1184.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 1184 --json commen…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && (cargo fmt -- --check && cargo c… ✓ (370ms)
+ ✓ (4m 22s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (8m 46s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 13m 23s (3 ✓)
+
+The task was already finished before the interruption. Commit 46cc56c3 holds the whole change, and nothing uncommitted was lost.
+
+What a user gets: a multi-line list under [permissions] or [directories] now builds its fence. Before, this standard TOML shape:
+
+```toml
+[permissions]
+deny = [
+  "rm *",
+]
+```
+
+printed "could not read … This rule is NOT in force" and no deny rule existed. The interrupted agent's own check on the built binary in a temp repo (I didn't re-run it) found that yoyo permissions now lists ✗ rm *, and doctor is silent. Dotted keys, inline tables, comments inside or after the array, and [ permissions ] with spaces all read the same.
+
+Behaviour changes, named in the commit:
+• Bad values now warn. A value that isn't a list (deny = "rm *") or entries that aren't strings print a warning that names the key and says those rules are not in force. The string entries of a mixed list still apply, so one bad entry doesn't drop the whole deny list. Before, a string value was ignored without a word, and a bare 1 became the rule "1".
+• `/cd` into a non-TOML `.yoyo.toml` now reports the file as unreadable, with none of it applied. Before, it showed up as an empty deny list, which quietly let everything through. This put a fifth file in the change (cd_config_note.rs), outside the four the task listed.
+
+#1184's done-when metric: the line-walker hit count went from 21 to 14 (the grep command is in the commit body). config.rs shrank from 4739 to 4700 lines, and its size entry was ratcheted down.
+
+What I checked just now:
+• I re-read the commit body. It has the reader census, the behaviour changes, the recall control and the deletion debt.
+• The #1184 comment opens with the metric and the result in its first 200 characters.
+• cargo fmt --check and clippy pass. cargo test shows 45 result lines with no failures.
+• No NEUTERED marker is left in the src/config*.rs files.
+
+The recall control: the commit body records that it went red by name and was green again after the restore. That comes from the interrupted agent; I didn't re-run it.
+
+Still open on #1184:
+• `toml_edit` writes are not done. Reading the code (not run) suggests set_permissions_allow still replaces only the first line of a multi-line allow = [ list.
+• `parse_toml_array` still has two callers, at cli.rs:2300 and cd_config_note.rs:100. Both read the top-level mcp = [...] list.
+• Two line walkers remain, in unreadable_values and unknown_config_keys.
+
+The working tree is clean, so there was nothing new to commit.
+  watch: no files changed this turn — skipping
