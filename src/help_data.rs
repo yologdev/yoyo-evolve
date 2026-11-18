@@ -426,12 +426,15 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              when to /compact.",
         ),
         "save" => Some(
-            "/save [path] — Save session to file\n\n\
+            "/save [path] [--force] — Save session to file\n\n\
              Usage:\n\
              \x20 /save              Save to yoyo-session.json\n\
-             \x20 /save <path>       Save to specified path\n\n\
+             \x20 /save <path>       Save to specified path\n\
+             \x20 /save <path> --force  Replace an existing file\n\n\
              Saves the full conversation history to a JSON file so it can\n\
-             be resumed later with /load.\n\n\
+             be resumed later with /load. An existing file is only replaced\n\
+             if this yoyo process saved or loaded it (so /save again just\n\
+             works); any other existing file needs --force.\n\n\
              Examples:\n\
              \x20 /save\n\
              \x20 /save my-debug-session.json",

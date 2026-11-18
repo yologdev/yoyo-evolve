@@ -393,7 +393,7 @@ Create a `YOYO.md` (or `CLAUDE.md`) in your project root with build commands, ar
 | `/rewind` | Restore the conversation auto-stashed by `/clear` |
 | `/risk [subcmd]` | Per-file risk scoring from git history (`/risk accuracy`) |
 | `/run <cmd>` | Run a shell command directly (no AI, no tokens) |
-| `/save [path]` | Save session to file |
+| `/save [path] [--force]` | Save session to file (`--force` replaces a file this session did not write) |
 | `/search <query>` | Search conversation history |
 | `/security` | Run a dependency vulnerability scan |
 | `/side <question>` | Ask a quick question without affecting the conversation |

@@ -1269,6 +1269,8 @@ async fn restore_session(agent: &mut Agent, strict: bool) {
     let session_path = commands_session::continue_session_path();
     match restore_session_result(agent, std::path::Path::new(session_path)) {
         Ok(n) => {
+            // #1211: the restored file is this process's own; /save may replace it.
+            commands_session::record_own_session_file(session_path);
             // #1005: restore the /todo list saved with this session.
             if let Some(w) =
                 commands_todo::restore_session_todos(std::path::Path::new(session_path))

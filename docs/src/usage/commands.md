@@ -150,7 +150,7 @@ The `/teach` command toggles teach mode on or off. When teach mode is active, yo
 
 | Command | Description |
 |---------|-------------|
-| `/save [path]` | Save conversation to a file (default: `yoyo-session.json`) |
+| `/save [path] [--force]` | Save conversation to a file (default: `yoyo-session.json`). Replaces an existing file only if this yoyo process saved or loaded it; any other existing file needs `--force` |
 | `/load [path]` | Load conversation from a file (default: `yoyo-session.json`) |
 | `/export [path] [--force]` | Export the conversation as readable markdown (default: `conversation.md`). Refuses to overwrite an existing file and writes nothing unless `--force` is given; a directory is always refused |
 

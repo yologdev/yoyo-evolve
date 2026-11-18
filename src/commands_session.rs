@@ -479,16 +479,79 @@ fn continue_session_path_in(root: &std::path::Path) -> &'static str {
 
 // ── /save ────────────────────────────────────────────────────────────────
 
+/// What `/save [path] [--force]` asked for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SaveArgs {
+    pub path: String,
+    pub force: bool,
+}
+
+/// Parse `/save [path] [--force]` the same way as `/export`.
+pub fn parse_save_args(input: &str) -> Result<SaveArgs, String> {
+    let (path, force) = parse_path_and_force(input, "/save", DEFAULT_SESSION_PATH)?;
+    Ok(SaveArgs { path, force })
+}
+
+/// The session file this yoyo process last wrote with `/save` or read with
+/// `/load` / `--continue` (canonical path). Saving over it again is the
+/// ordinary save-as-you-go workflow, so it needs no `--force` (#1211).
+static OWN_SESSION_FILE: std::sync::Mutex<Option<std::path::PathBuf>> = std::sync::Mutex::new(None);
+
+/// Remember `path` as this process's own session file.
+pub fn record_own_session_file(path: &str) {
+    if let Ok(c) = std::path::Path::new(path).canonicalize() {
+        *crate::sync_util::lock_or_recover(&OWN_SESSION_FILE) = Some(c);
+    }
+}
+
+/// Is `target` the same file as `own` (compared after canonicalizing)?
+pub fn is_own_session_file(target: &std::path::Path, own: Option<&std::path::Path>) -> bool {
+    match (own, target.canonicalize()) {
+        (Some(own), Ok(t)) => t == own,
+        _ => false,
+    }
+}
+
+/// Pure decision for `/save` (#1211): like `/export`, except that the file
+/// this process saved or loaded may be replaced without `--force`.
+pub fn save_target_verdict(exists: bool, is_dir: bool, force: bool, own: bool) -> ExportVerdict {
+    export_target_verdict(exists, is_dir, force || own)
+}
+
+/// The refusal text for `/save`; its `--force` remedy parses back to the same path.
+pub fn save_refusal_message(path: &str, verdict: ExportVerdict) -> String {
+    refusal_message("/save", DEFAULT_SESSION_PATH, path, verdict)
+}
+
+/// Write a session file, refusing to replace an existing file that is not
+/// `own` unless `force`. `own` is passed in, so this has no global read.
+pub fn write_save(
+    path: &str,
+    json: &str,
+    force: bool,
+    own: Option<&std::path::Path>,
+) -> Result<(), String> {
+    let p = std::path::Path::new(path);
+    let exists = std::fs::symlink_metadata(p).is_ok();
+    let own = is_own_session_file(p, own);
+    let verdict = save_target_verdict(exists, p.is_dir(), force, own);
+    if verdict != ExportVerdict::Write {
+        return Err(save_refusal_message(path, verdict));
+    }
+    write_checked(path, json, force || own, |v| save_refusal_message(path, v))
+}
+
 pub fn handle_save(agent: &Agent, input: &str) {
-    let path = input.strip_prefix("/save").unwrap_or("").trim();
-    let path = if path.is_empty() {
-        DEFAULT_SESSION_PATH
-    } else {
-        path
+    let args = match parse_save_args(input) {
+        Ok(a) => a,
+        Err(msg) => return eprintln!("{RED}  {msg}{RESET}\n"),
     };
+    let path = args.path.as_str();
+    let own = crate::sync_util::lock_or_recover(&OWN_SESSION_FILE).clone();
     match agent.save_messages() {
-        Ok(json) => match std::fs::write(path, &json) {
+        Ok(json) => match write_save(path, &json, args.force, own.as_deref()) {
             Ok(_) => {
+                record_own_session_file(path);
                 println!(
                     "{DIM}  (session saved to {path}, {} messages){RESET}\n",
                     agent.messages().len()
@@ -500,13 +563,11 @@ pub fn handle_save(agent: &Agent, input: &str) {
                     eprintln!("{w}");
                 }
             }
-            Err(e) => eprintln!("{RED}  error saving: {e}{RESET}\n"),
+            Err(e) => eprintln!("{RED}  {e}{RESET}\n"),
         },
         Err(e) => eprintln!("{RED}  error serializing: {e}{RESET}\n"),
     }
 }
-
-// ── /load ────────────────────────────────────────────────────────────────
 
 pub fn handle_load(agent: &mut Agent, input: &str) {
     let path = input.strip_prefix("/load").unwrap_or("").trim();
@@ -518,6 +579,7 @@ pub fn handle_load(agent: &mut Agent, input: &str) {
     match std::fs::read_to_string(path) {
         Ok(json) => match agent.restore_messages(&json) {
             Ok(_) => {
+                record_own_session_file(path);
                 println!(
                     "{DIM}  (session loaded from {path}, {} messages){RESET}\n",
                     agent.messages().len()
@@ -898,7 +960,14 @@ pub struct ExportArgs {
 /// path, or `conversation.md` when nothing is left. Any other `--word` is a typo
 /// (`--forse`) and is refused, so it never becomes part of a file name.
 pub fn parse_export_args(input: &str) -> Result<ExportArgs, String> {
-    let rest = input.strip_prefix("/export").unwrap_or("").trim();
+    let (path, force) = parse_path_and_force(input, "/export", DEFAULT_EXPORT_PATH)?;
+    Ok(ExportArgs { path, force })
+}
+
+/// Shared by `/export` and `/save`: `<cmd> [path] [--force]`, path words joined
+/// with the user's own spacing, any other `--word` refused.
+fn parse_path_and_force(input: &str, cmd: &str, default: &str) -> Result<(String, bool), String> {
+    let rest = input.strip_prefix(cmd).unwrap_or("").trim();
     let mut force = false;
     // Byte spans of the words that belong to the path, in order.
     let mut spans: Vec<(usize, usize, bool)> = Vec::new(); // (start, end, force_before)
@@ -912,7 +981,7 @@ pub fn parse_export_args(input: &str) -> Result<ExportArgs, String> {
         }
         if word.starts_with("--") {
             return Err(format!(
-                "unknown flag '{word}' for /export (the only flag is --force). Nothing was written."
+                "unknown flag '{word}' for {cmd} (the only flag is --force). Nothing was written."
             ));
         }
         spans.push((start, start + word.len(), pending_force_gap));
@@ -931,9 +1000,9 @@ pub fn parse_export_args(input: &str) -> Result<ExportArgs, String> {
         path.push_str(&rest[start..end]);
     }
     if path.is_empty() {
-        path = DEFAULT_EXPORT_PATH.to_string();
+        path = default.to_string();
     }
-    Ok(ExportArgs { path, force })
+    Ok((path, force))
 }
 
 /// Whether `/export` may write to its target, decided from what is on disk.
@@ -962,13 +1031,17 @@ pub fn export_target_verdict(path_exists: bool, is_dir: bool, force: bool) -> Ex
 /// The refusal text for a verdict other than `Write`. The `--force` remedy is a
 /// command that parses back to the same path with force set.
 pub fn export_refusal_message(path: &str, verdict: ExportVerdict) -> String {
+    refusal_message("/export", DEFAULT_EXPORT_PATH, path, verdict)
+}
+
+fn refusal_message(cmd: &str, default: &str, path: &str, verdict: ExportVerdict) -> String {
     match verdict {
         ExportVerdict::RefuseDirectory => format!(
-            "{path} is a directory. Nothing was written. Give a file name, e.g. /export {}/conversation.md",
+            "{path} is a directory. Nothing was written. Give a file name, e.g. {cmd} {}/{default}",
             path.trim_end_matches('/')
         ),
         _ => format!(
-            "{path} already exists. Nothing was written. To replace it: /export {path} --force (or choose another file name)"
+            "{path} already exists. Nothing was written. To replace it: {cmd} {path} --force (or choose another file name)"
         ),
     }
 }
@@ -984,19 +1057,31 @@ pub fn write_export(path: &str, markdown: &str, force: bool) -> Result<(), Strin
     if verdict != ExportVerdict::Write {
         return Err(export_refusal_message(path, verdict));
     }
-    let result = if force {
-        std::fs::write(p, markdown)
+    write_checked(path, markdown, force, |v| export_refusal_message(path, v))
+}
+
+/// The write half shared by `/export` and `/save`, after the verdict said
+/// Write. Without `replace` the file is opened `create_new`.
+fn write_checked(
+    path: &str,
+    text: &str,
+    replace: bool,
+    refusal: impl Fn(ExportVerdict) -> String,
+) -> Result<(), String> {
+    let p = std::path::Path::new(path);
+    let result = if replace {
+        std::fs::write(p, text)
     } else {
         use std::io::Write;
         std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(p)
-            .and_then(|mut f| f.write_all(markdown.as_bytes()))
+            .and_then(|mut f| f.write_all(text.as_bytes()))
     };
     result.map_err(|e| {
         if e.kind() == std::io::ErrorKind::AlreadyExists {
-            export_refusal_message(path, ExportVerdict::RefuseExists)
+            refusal(ExportVerdict::RefuseExists)
         } else {
             format!("error writing to {path}: {e}")
         }
@@ -1107,6 +1192,10 @@ pub fn session_resume_summary(messages: &[AgentMessage]) -> String {
 #[cfg(test)]
 #[path = "commands_session_export_tests.rs"]
 mod commands_session_export_tests;
+
+#[cfg(test)]
+#[path = "commands_session_save_tests.rs"]
+mod commands_session_save_tests;
 
 #[cfg(test)]
 mod tests {

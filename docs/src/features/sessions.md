@@ -51,6 +51,11 @@ This writes to `yoyo-session.json` in the current directory.
 /save my-session.json
 ```
 
+**Replacing an existing file:** `/save` replaces a file silently only if this yoyo process wrote it with `/save` or read it with `/load` or `--continue`, so saving again as you go just works. Any other existing file (a `README.md`, another session's `yoyo-session.json`) is left untouched, and yoyo prints `<path> already exists. Nothing was written. To replace it: /save <path> --force (or choose another file name)`. A directory is always refused.
+```
+/save notes.json --force
+```
+
 **Load a conversation:**
 ```
 /load

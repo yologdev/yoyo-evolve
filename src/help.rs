@@ -507,7 +507,10 @@ pub fn cli_help_text() -> String {
         s,
         "    /compact [N|all]   Compact conversation to save context"
     );
-    let _ = writeln!(s, "    /save [path]       Save session to file");
+    let _ = writeln!(
+        s,
+        "    /save [path]       Save session to file (--force to replace)"
+    );
     let _ = writeln!(s, "    /load [path]       Load session from file");
     let _ = writeln!(s, "    /retry             Re-send the last user input");
     let _ = writeln!(s, "    /status            Show session info");
