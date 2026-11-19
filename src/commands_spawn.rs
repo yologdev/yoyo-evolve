@@ -156,12 +156,12 @@ impl SpawnTracker {
         }
     }
 
-    /// Mark a task as failed.
+    /// Mark a task as failed. A result already recorded is kept, so a
+    /// sub-agent whose `-o` save failed can still be collected (#1211).
     pub fn fail(&self, id: usize, error: String) {
         let mut tasks = lock_or_recover(&self.inner);
         if let Some(task) = tasks.iter_mut().find(|t| t.id == id) {
             task.status = SpawnStatus::Failed(error);
-            task.result = None;
         }
     }
 
@@ -220,9 +220,10 @@ impl SpawnTracker {
                 .result
                 .clone()
                 .map(|r| (t.task.clone(), r, t.handoff.clone()))),
-            Some(t) if matches!(t.status, SpawnStatus::Failed(_)) => {
-                Err(format!("spawn #{id} {}", t.status))
-            }
+            Some(t) if matches!(t.status, SpawnStatus::Failed(_)) => match &t.result {
+                Some(r) => Ok(Some((t.task.clone(), r.clone(), t.handoff.clone()))),
+                None => Err(format!("spawn #{id} {}", t.status)),
+            },
             _ => Ok(None), // Still running
         }
     }
@@ -316,6 +317,46 @@ pub struct SpawnArgs {
     /// Whether to push the handoff branch and open a draft PR on completion
     /// (`--pr` flag). Strictly opt-in — defaults to false.
     pub pr: bool,
+    /// `--force`: let `-o <path>` replace an existing file (#1211).
+    pub force: bool,
+}
+
+/// Refuse a `/spawn` before anything is registered or run, so a refused run
+/// costs no tokens (#1211): an existing `-o` file without `--force`, a
+/// directory as `-o`, or `--force` without `-o`. The `--force` remedy is the
+/// user's own words with `--force` added right after `/spawn`.
+pub fn spawn_output_start_refusal(input: &str, args: &SpawnArgs) -> Option<String> {
+    use crate::commands_session::{export_target_verdict, ExportVerdict};
+    let Some(path) = args.output_path.as_deref() else {
+        return args
+            .force
+            .then(|| "--force only applies to -o <file>. Nothing was run.".to_string());
+    };
+    let p = std::path::Path::new(path);
+    // symlink_metadata: a dangling symlink still counts as "something is there".
+    let exists = std::fs::symlink_metadata(p).is_ok();
+    match export_target_verdict(exists, p.is_dir(), args.force) {
+        ExportVerdict::Write => None,
+        ExportVerdict::RefuseDirectory => Some(format!(
+            "{path} is a directory. Nothing was run. Give -o a file name, e.g. -o {}/out.md",
+            path.trim_end_matches('/')
+        )),
+        ExportVerdict::RefuseExists => {
+            let rest = input.strip_prefix("/spawn").unwrap_or(input).trim();
+            Some(format!(
+                "{path} already exists. Nothing was run. To replace it: /spawn --force {rest} (or choose another file name)"
+            ))
+        }
+    }
+}
+
+/// Write a sub-agent's output to its `-o` file. Without `force` the file is
+/// opened `create_new`, so a file that appeared while the sub-agent ran is not
+/// replaced. The caller keeps the response either way.
+pub fn write_spawn_output(path: &str, text: &str, force: bool) -> Result<(), String> {
+    crate::commands_session::write_checked(path, text, force, |_| {
+        format!("{path} appeared while the sub-agent ran, so it was not replaced")
+    })
 }
 
 /// Parse the `/spawn` command input, extracting flags and task.
@@ -350,6 +391,7 @@ pub fn parse_spawn_args(input: &str) -> Option<SpawnArgs> {
                 system_prompt: None,
                 parallel_tasks: None,
                 pr: false,
+                force: false,
             });
         }
         // "collect" without valid id — fall through to show usage
@@ -360,6 +402,7 @@ pub fn parse_spawn_args(input: &str) -> Option<SpawnArgs> {
     let mut background = false;
     let mut parallel = false;
     let mut pr = false;
+    let mut force = false;
     let mut output_path = None;
     let mut model = None;
     let mut system_prompt = None;
@@ -378,6 +421,9 @@ pub fn parse_spawn_args(input: &str) -> Option<SpawnArgs> {
             words.remove(0);
         } else if words[0] == "--pr" {
             pr = true;
+            words.remove(0);
+        } else if words[0] == "--force" {
+            force = true;
             words.remove(0);
         } else if words[0] == "-o" && words.len() > 1 {
             output_path = Some(words[1].to_string());
@@ -449,6 +495,7 @@ pub fn parse_spawn_args(input: &str) -> Option<SpawnArgs> {
             system_prompt,
             parallel_tasks: Some(tasks),
             pr,
+            force,
         });
     }
 
@@ -461,6 +508,7 @@ pub fn parse_spawn_args(input: &str) -> Option<SpawnArgs> {
         system_prompt,
         parallel_tasks: None,
         pr,
+        force,
     })
 }
 
@@ -767,6 +815,7 @@ pub async fn handle_spawn(
                     // that field existed parse to `false`, which is what they
                     // genuinely recorded.
                     pr: manifest.pr,
+                    force: false,
                 };
                 return handle_spawn_parallel(
                     &tasks,
@@ -790,7 +839,7 @@ pub async fn handle_spawn(
             println!("{DIM}  usage: /spawn <task>");
             println!("         /spawn --bg <task>              (run in background)");
             println!("         /spawn --parallel <t1> --- <t2> (run multiple tasks concurrently)");
-            println!("         /spawn -o <file> <task>         (capture output to file)");
+            println!("         /spawn -o <file> [--force] <task> (capture output to file; --force replaces it)");
             println!("         /spawn --model <name> <task>    (use a specific model)");
             println!("         /spawn --system <prompt> <task> (custom system prompt)");
             println!("         /spawn collect <id>             (collect background result)");
@@ -809,6 +858,12 @@ pub async fn handle_spawn(
     // Handle /spawn collect <id>
     if let Some(id) = args.collect_id {
         return handle_spawn_collect(tracker, id);
+    }
+
+    // Before anything is registered or run, so a refusal costs no tokens (#1211).
+    if let Some(msg) = spawn_output_start_refusal(input, &args) {
+        eprintln!("{RED}  {msg}{RESET}\n");
+        return None;
     }
 
     // Handle --parallel: launch multiple tasks concurrently
@@ -916,22 +971,21 @@ pub async fn handle_spawn(
     }
 
     // Write output to file if -o was specified
-    if let Some(ref output_path) = args.output_path {
-        match std::fs::write(output_path, &response) {
-            Ok(_) => {
+    // A failed write keeps the result: it is still injected below (#1211).
+    let save_error = args.output_path.as_deref().and_then(|output_path| {
+        match write_spawn_output(output_path, &response, args.force) {
+            Ok(()) => {
                 println!("{GREEN}  ✓ output written to {output_path}{RESET}");
+                None
             }
             Err(e) => {
-                eprintln!("{RED}  error writing to {output_path}: {e}{RESET}");
-                tracker.fail(spawn_id, format!("write error: {e}"));
-                // Clean up worktree even on failure
-                if let Some(ref wt) = worktree {
-                    let _ = cleanup_spawn_worktree(&cwd, wt);
-                }
-                return None;
+                eprintln!(
+                    "{RED}  ✗ output NOT saved: {e}. The result is still added to the conversation below.{RESET}"
+                );
+                Some(format!("output NOT saved: {e}"))
             }
         }
-    }
+    });
 
     // Mark completed in tracker — commit worktree changes first so the
     // handoff (if any) is recorded alongside the result.
@@ -939,6 +993,9 @@ pub async fn handle_spawn(
         .as_ref()
         .and_then(|wt| try_worktree_handoff(wt, &args.task, spawn_id, args.pr));
     tracker.complete_with_handoff(spawn_id, response.clone(), handoff.clone());
+    if let Some(e) = save_error {
+        tracker.fail(spawn_id, e);
+    }
 
     // Clean up the worktree
     if let Some(ref wt) = worktree {
@@ -1068,6 +1125,7 @@ fn handle_spawn_bg(
     let task_text = args.task.clone();
     let open_pr = args.pr;
     let output_path = args.output_path.clone();
+    let force = args.force;
     let model = effective_model.to_string();
     let tracker_clone = tracker.clone();
 
@@ -1081,17 +1139,14 @@ fn handle_spawn_bg(
             .text;
 
         // Write output to file if -o was specified
-        if let Some(ref out_path) = output_path {
-            if let Err(e) = std::fs::write(out_path, &response) {
-                eprintln!("{RED}  ✗ bg spawn #{spawn_id}: error writing to {out_path}: {e}{RESET}");
-                tracker_clone.fail(spawn_id, format!("write error: {e}"));
-                // Clean up worktree on failure
-                if let Some(ref wt) = worktree {
-                    let _ = cleanup_spawn_worktree(&cwd, wt);
-                }
-                return;
-            }
-        }
+        // A failed write keeps the result for /spawn collect (#1211).
+        let save_error = output_path.as_deref().and_then(|out_path| {
+            let e = write_spawn_output(out_path, &response, force).err()?;
+            eprintln!(
+                "{RED}  ✗ bg spawn #{spawn_id}: output NOT saved: {e}. The result is kept: /spawn collect {spawn_id}{RESET}"
+            );
+            Some(format!("output NOT saved: {e}"))
+        });
 
         // Mark completed in tracker — commit worktree changes first so the
         // handoff (if any) travels with the result.
@@ -1099,6 +1154,9 @@ fn handle_spawn_bg(
             .as_ref()
             .and_then(|wt| try_worktree_handoff(wt, &task_text, spawn_id, open_pr));
         tracker_clone.complete_with_handoff(spawn_id, response, handoff);
+        if let Some(e) = save_error {
+            tracker_clone.fail(spawn_id, e);
+        }
 
         // Clean up worktree after completion
         if let Some(ref wt) = worktree {
@@ -1156,6 +1214,7 @@ fn handle_spawn_parallel(
             system_prompt: args.system_prompt.clone(),
             parallel_tasks: None,
             pr: args.pr,
+            force: false,
         };
         // Reuse the existing --bg infrastructure — it prints per-task info
         // and registers + launches the background task, returning None.
@@ -4564,3 +4623,7 @@ mod tests {
         assert_eq!(sub_config.bash_cwd, None);
     }
 }
+
+#[cfg(test)]
+#[path = "commands_spawn_output_tests.rs"]
+mod commands_spawn_output_tests;

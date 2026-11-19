@@ -912,7 +912,8 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              \x20 /spawn --bg <task>              Run in background (returns immediately)\n\
              \x20 /spawn --parallel <task1> --- <task2> [--- <task3>...]\n\
              \x20                                 Run multiple tasks concurrently\n\
-             \x20 /spawn -o <file> <task>         Capture output to a file\n\
+             \x20 /spawn -o <file> <task>         Capture output to a file (refuses an existing one)\n\
+             \x20 /spawn -o <file> --force <task> Replace an existing output file\n\
              \x20 /spawn --model <name> <task>    Use a specific model for the subagent\n\
              \x20 /spawn --system <prompt> <task> Custom system prompt for the subagent\n\
              \x20 /spawn --bg -o <f> <task>       Background with output capture\n\

@@ -1061,8 +1061,8 @@ pub fn write_export(path: &str, markdown: &str, force: bool) -> Result<(), Strin
 }
 
 /// The write half shared by `/export` and `/save`, after the verdict said
-/// Write. Without `replace` the file is opened `create_new`.
-fn write_checked(
+/// Write. Without `replace` the file is opened `create_new`. Also `/spawn -o`'s.
+pub(crate) fn write_checked(
     path: &str,
     text: &str,
     replace: bool,
