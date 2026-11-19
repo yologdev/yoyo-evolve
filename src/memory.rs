@@ -53,15 +53,16 @@ pub fn memory_file_path() -> PathBuf {
     Path::new(YOYO_DIR).join(MEMORY_FILE)
 }
 
-/// Load project memories from `.yoyo/memory.json`.
-/// Returns an empty `ProjectMemory` if the file doesn't exist or can't be parsed.
+/// Load project memories from `.yoyo/memory.json`, for display and the prompt.
+/// Absent is an empty store; unreadable/unparseable warns, then is empty.
 pub fn load_memories() -> ProjectMemory {
     load_memories_from(&memory_file_path())
 }
 
 /// Load project memories from a specific path (for testing). A FIFO, device
 /// or socket there is refused with a stderr warning instead of blocking
-/// startup forever (#1047); a missing file stays silent, as before.
+/// startup forever (#1047); a missing file stays silent. Writers must use
+/// [`load_memories_for_write`] instead (#1216).
 pub fn load_memories_from(path: &Path) -> ProjectMemory {
     read_memories(path).unwrap_or_else(|reason| {
         let reason = crate::cli::sanitize_for_display(&reason);
@@ -70,20 +71,27 @@ pub fn load_memories_from(path: &Path) -> ProjectMemory {
     })
 }
 
-/// `Err(reason)` only for a non-regular file; absent/unreadable/unparseable
-/// files are an empty store, exactly as before. Symlinks are judged by target.
+/// Only an absent file is an empty store. A non-regular, unreadable or
+/// unparseable one is `Err` naming the path (and serde's line/column), so a
+/// writer can refuse instead of saving over it (#1216). Symlinks: by target.
 fn read_memories(path: &Path) -> Result<ProjectMemory, String> {
     match crate::non_regular_read::read_regular_to_string(path) {
-        Ok(content) => Ok(serde_json::from_str(&content).unwrap_or_default()),
+        Ok(content) => serde_json::from_str(&content)
+            .map_err(|e| format!("{} is not valid JSON: {e}", path.display())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(ProjectMemory::default()),
         Err(e) if e.kind() == std::io::ErrorKind::InvalidInput => Err(e.to_string()),
-        Err(_) => Ok(ProjectMemory::default()),
+        Err(e) => Err(format!("cannot read {}: {e}", path.display())),
     }
 }
 
-/// Save project memories to `.yoyo/memory.json`.
-/// Creates the `.yoyo/` directory if it doesn't exist.
-pub fn save_memories(memory: &ProjectMemory) -> Result<(), String> {
-    save_memories_to(memory, &memory_file_path())
+/// The loader for every load -> modify -> save writer (#1216): `Err` carries a
+/// user-facing refusal, and the caller must not write. Display readers use
+/// the lenient [`load_memories_from`], which warns and shows an empty store.
+pub fn load_memories_for_write(path: &Path) -> Result<ProjectMemory, String> {
+    read_memories(path).map_err(|reason| {
+        let reason = crate::cli::sanitize_for_display(&reason);
+        format!("not saved, nothing was written: {reason}. Fix the JSON or move the file aside, then retry.")
+    })
 }
 
 /// Save project memories to a specific path (for testing).
@@ -317,7 +325,16 @@ pub const MAX_AUTO_MEMORIES: usize = 20;
 
 /// Testable variant of [`auto_remember`] that writes to a specific path.
 pub fn auto_remember_to(note: &str, path: &Path) -> bool {
-    let mut memory = load_memories_from(path);
+    static WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    let mut memory = match load_memories_for_write(path) {
+        Ok(m) => m,
+        Err(e) => {
+            if !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                eprintln!("  ⚠ auto-remember {e}");
+            }
+            return false;
+        }
+    };
 
     // Dedup on the WHOLE note, not a fixed-width head. The old 50-char prefix compare (#672)
     // was consumed entirely by the note template plus the watch command, so distinct
@@ -789,6 +806,9 @@ fn current_timestamp() -> String {
 #[cfg(test)]
 #[path = "memory_evict_tests.rs"]
 mod memory_evict_tests;
+#[cfg(test)]
+#[path = "memory_parse_guard_tests.rs"]
+mod memory_parse_guard_tests;
 
 #[cfg(test)]
 mod tests {
@@ -956,21 +976,6 @@ mod tests {
         let path = Path::new("/tmp/yoyo_test_nonexistent_12345/memory.json");
         let memory = load_memories_from(path);
         assert!(memory.entries.is_empty());
-    }
-
-    #[test]
-    fn test_load_memories_invalid_json() {
-        let path = temp_memory_path("invalid_json");
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(&path, "not valid json at all {{{").unwrap();
-
-        let memory = load_memories_from(&path);
-        assert!(
-            memory.entries.is_empty(),
-            "Invalid JSON should return empty memory"
-        );
-
-        cleanup(&path);
     }
 
     #[test]

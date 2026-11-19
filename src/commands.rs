@@ -712,7 +712,7 @@ pub use crate::commands_spawn::{handle_spawn, SpawnTracker};
 
 // Memory-related handlers live in commands_memory.rs (#260 slice).
 // The memory-module helpers they use (add_memory, load_memories,
-// remove_memory, save_memories) are imported directly from crate::memory
+// remove_memory, save_memories_to) are imported directly from crate::memory
 // in that file and in the test module below — no module-level re-export
 // is needed here since nothing in commands.rs itself calls them anymore.
 
