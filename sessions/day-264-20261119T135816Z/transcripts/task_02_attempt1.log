@@ -1,0 +1,165 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git fetch --tags --force -… ✓ (331ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 150,260p skills/release/SKILL.md; head… ✓ (11ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; git grep -n '0\.4\.0' -- ':!CHANGELOG.md' ':!… ✓ (13ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -i '3s/version = "0.4… (2 lines)  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; git log v0.4.0..HEAD --format='%h %s' | grep … ✓ (8ms)
+ ✓ (6ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; git log v0.4.0..HEAD --format='%h %ad %s' --d… ✓ (51ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; git fetch --quiet --shallow-since=2026-11-02 … ✓ (2.4s)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; git log v0.4.0..HEAD --format='%h %s' | grep … ✓ (14ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; git log v0.4.0..HEAD --format='%h %s' | grep … ✓ (47ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n '/^## \[Unreleased\]/,/^## \[0.4.0\]/p… ✓ (19.0s)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; for c in 56264d44 b8da66f3 4eaa03b4 2c807dae … ✓ (92ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; for c in af6eb4a8 62df6b10 c1d927ff 656a56fb … ✓ (36ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; gh issue list --state open --search "save-ses… ✓ (764ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; gh issue view 1216 --json comments -q '.comme… ✓ (406ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -n '^## \|^### ' CHANGELOG.md | head -12… ✓ (9ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  15 tools completed in 1m 32s (15 ✓)
+
+Now the edits. First the heading, intro and the "Changed" section, plus extra Security items.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CHANGELOG.md (4 → 25 lines)
+    ## [Unreleased]
+  + 
+  + ## [0.5.0] - 2026-11-19
+  + 
+  + Days 249–264. **Several things yoyo used to do quietly it now refuses or asks about, and one key stopped travelling.** `ANTHROPIC_API_KEY` is sent only to `--provider anthropic`; `/save`, `/export` and `/spawn -o` refuse to replace an existing file without `--force`; a bash command the new parse tree can't read asks for confirmation even under "always" or an allow rule; a `.yoyo.toml` that isn't valid TOML stops the run with the file and line; and `--provider custom` (or an unknown provider wi… [yoyo: 493 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + ### Changed (behaviour you will notice)
+  + 
+  + - **`/save`, `/export` and `/spawn -o` refuse to overwrite an existing file.** Each says `<path> already exists. Nothing was written.` and names the `--force` form; `/spawn -o` refuses before the sub-agent runs, so nothing is spent. `/save` still replaces a file it wrote itself this session. `--save-session <path>` and the CLI `--output`/`-o` flag still replace silently (#1211; the remainder is #1214).
+  + - **Bash commands are checked on a parse tree, and what the tree can't read asks.** yoyo now parses each command with tree-sitter-bash and runs its safety checks on every simple command in it, including the bodies of a literal `bash -c "…"` / `sh -c '…'` (#1209). A parse error, `eval`, or a command name chosen by an expansion goes to confirmation, even after "always" or under an exact allow rule. A wildcard allow rule (`git *`, `cargo *`, `*`) auto-approves only a single plain command, so `g… [yoyo: 248 more bytes elided — diff lines are capped at 500 bytes]
+  + - **A `.yoyo.toml` that isn't valid TOML stops the run.** Every loaded config file is parsed with the `toml` crate at startup; a syntax error prints the file, line and column, and nothing is sent (#1184, still open for the remaining line readers).
+  + - **`--provider custom` (or an unknown OpenAI-compatible provider) with no model named refuses** instead of sending `claude-opus-5-5` to your own server; the REPL's `/provider` does the same (#1175, #1183).
+  + - **`--provider github` is refused**: GitHub Models was retired on 2026-07-30, and its endpoint answers every path with a plain-text `OK`. The setup wizard and README no longer offer it (#1166).
+  + - **`-p` exits non-zero when the reply was cut by a limit you didn't set, or refused**, and `--output-format json` gains an `incomplete` key (`null`, `{reason: output_limit, limit_set_by}`, or `{reason: refusal}`) with `is_error` agreeing with the exit code; stream-json prints the same note on stderr (#1026).
+  + - **`yoyo -p hi extra` refuses the stray word** (exit 2, nothing sent) instead of silently dropping it, and the refusal names a flag that swallowed another flag as its value (#1150, #1151).
+  + - **`--temperature` is not sent to Claude 4.7 and later** (Anthropic removed it for those models); yoyo says so on stderr. Elsewhere the accepted range follows the vendor: up to 2.0 where the provider documents 0–2, 1.0 otherwise, and `/config set temperature` accepts only what the run would send (#1145, #1204, #1207).
+  + - **GIF is no longer accepted by `/add`, `@path` or `--image`** (yoagent 0.27 refuses it), and every "supported formats" message comes from one list (#1143).
+    
+    ### Security
+  + 
+  ... (5 more lines)
+ ✓ (2ms)
+    ## [Unreleased]
+  + 
+  + ## [0.5.0] - 2026-11-19
+  + 
+  + Days 249–264. **Several things yoyo used to do quietly it now refuses or asks about, and one key stopped travelling.** `ANTHROPIC_API_KEY` is sent only to `--provider anthropic`; `/save`, `/export` and `/spawn -o` refuse to replace an existing file without `--force`; a bash command the new parse tree can't read asks for confirmation even under "always" or an allow rule; a `.yoyo.toml` that isn't valid TOML stops the run with the file and line; and `--provider custom` (or an unknown provider wi… [yoyo: 493 more bytes elided — diff lines are capped at 500 bytes]
+  + 
+  + ### Changed (behaviour you will notice)
+  + 
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n '/^### Fixed/,/^## \[0.4.0\]/p' CHANGE… ✓ (6ms)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CHANGELOG.md (1 → 1 lines)
+  - - **`--temperature` is not sent to Claude 4.7 and later** (Anthropic removed it for those models); yoyo says so on stderr. Elsewhere the accepted range follows the vendor: up to 2.0 where the provider documents 0–2, 1.0 otherwise, and `/config set temperature` accepts only what the run would send (#1145, #1204, #1207).
+  + - **The temperature range follows the provider:** up to 2.0 where the vendor documents 0–2, 1.0 otherwise, read by the run, `/config set` and `config get` from one rule, so `/config set temperature` accepts only what the run would send (#1204, #1207). (For Claude 4.7 and later, see Fixed.)
+ ✓ (2ms)
+  - - **`--temperature` is not sent to Claude 4.7 and later** (Anthropic removed it for those models); yoyo says so on stderr. Elsewhere the accepted range follows the vendor: up to 2.0 where the provider documents 0–2, 1.0 otherwise, and `/config set temperature` accepts only what the run would send (#1145, #1204, #1207).
+  + - **The temperature range follows the provider:** up to 2.0 where the vendor documents 0–2, 1.0 otherwise, read by the run, `/config set` and `config get` from one rule, so `/config set temperature` accepts only what the run would send (#1204, #1207). (For Claude 4.7 and later, see Fixed.)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; for n in 1195 1185 1176 1161 1167 1163 1165 1… ✓ (11.0s)
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/CHANGELOG.md (3 → 31 lines)
+    yoyo now keeps git's output exactly as git prints it, except for the trailing newline (#1169).
+  + - **An unparseable `.yoyo/memory.json` is no longer erased.** One trailing comma used to make the file read as empty, and the next `/remember` saved over every earlier memory. Now `/remember`, `/forget` and auto-remember refuse with the file, line and column (`not saved, nothing was written: … is not valid JSON: trailing comma at line 1 column 67`), and startup warns that project memories were not loaded. An absent file is still an empty store (#1216, still open).
+  + - **More valid TOML is read the way TOML says.** A multi-line `deny = [ … ]` list in `[permissions]` or `[directories]` builds its fence; an inline table (`directories = { deny = [...] }`, or `fs = { command = "npx" }` under `[mcp_servers]`) is read; `[ directories ]` and dotted keys are headers and keys to every reader; a `#` inside a quoted value is not a comment; and a key under some `[section]` no longer overrides the top-level `model` / `provider` / `base_url` (#1177, #1178, #1180, #1182,… [yoyo: 8 more bytes elided — diff lines are capped at 500 bytes]
+  + - `config get` / `config show` report the value the run actually uses (`model = ""` is unset, `thinking = "max"` runs as high, temperature after clamping), name a second home config file that is being ignored, and no longer list `~/.yoyo.toml` as its own shadow when you run from `$HOME`. `config get` with no key exits 2 (#1172, #1185, #1195, #1154).
+  + - After a model refusal, the next request no longer fails with a 400 about `cache_control` on a thinking block (#1206, still open for the remaining cases).
+  + - A checkpoint stop in the REPL (or piped with `--continue-on-silence`) is not undone by auto-continue (#1161).
+  + - A peak-load rate limit is no longer mistaken for context overflow (yoyo now uses yoagent's classifier) (#1167). Google's and xAI's bad-key replies get the auth hint (#1163, #1165). The DNS hint matches reqwest's real error text (#1126).
+  + - `-p` / piped API-error hints name `--provider` / `--model` instead of REPL slash commands, and the REPL billing hint names a command that really switches to a local model (#1128, #1139).
+  + - A CA environment that loads no certificates (`SSL_CERT_FILE` missing, empty or not PEM) is refused with a message instead of a provider panic, and a panicked worker is no longer reported as "reply cut off" (#1138, #1142).
+  + - **Bedrock:** runs with thinking on send an explicit `maxTokens` above the thinking budget, `/side` and `/architect` use the same `max_tokens` rule as the main agent, the picker stops offering `anthropic.claude-opus-4-7` (which ran on guessed limits), and the guessed-limits note stops claiming a cap that isn't sent (#1121, #1160, #1173, #1198, #1203).
+  + - **Model lists:** dead or nonexistent Claude ids (`claude-sonnet-4-7`, `claude-sonnet-4-20250514`, the retiring `claude-sonnet-4-5`) are no longer offered, Claude context and output limits come from yoagent's table, the Gemini list matches Google's models page with limits from Google's own pages, OpenRouter Anthropic ids yoagent knows run on real limits in both spellings, other OpenRouter models get yoagent's vendor limits instead of a 128K / 4096 guess, and every provider default resolves thro… [yoyo: 116 more bytes elided — diff lines are capped at 500 bytes]
+  + - **Shell verbs:** `/grep` reads every word after the pattern as a path, never a git revision (#1201); `yoyo map` names the backend that actually produced the symbols and no longer says "no supported source files" when every symbol is private (#1135); shell verbs print `yoyo <verb>` usage instead of `/verb` (#1127, #1155); `skill show|install|init` with no argument exit 2 (#1153); `goal set`, `init`, `skill init|install|search` and `risk snapshot` exit 1 when their write or fetch fails (#1137); … [yoyo: 229 more bytes elided — diff lines are capped at 500 bytes]
+  + - The "treating unknown provider X as OpenAI-compatible" warning prints once per run, not five times (#1176). `--help` stops claiming `--max-tokens` defaults to 8192 (#1190).
+  + 
+  + ### Added
+  + 
+  + - **Subdirectory instruction files.** The first time the model reads a file under a directory that has its own `YOYO.md` / `CLAUDE.md` / `AGENTS.md`, that file is loaded too (deny-listed directories excepted).
+  + - **Long bash output keeps its end.** The bash tool keeps the head and the tail of long output, with the number of omitted bytes in the marker, so a build's final error is no longer cut away (#1159).
+  + - **The partial-read guard reaches sub-agents.** yoagent's per-agent ReadLog is wired into `read_file` / `write_file` for the main agent and for every sub-agent and explore-agent (#1094, open for the never-read overwrite question).
+  + - `/cost` prices through yoagent's price table first, and the yoyo rows it shadowed are gone (#1012).
+  ... (11 more lines)
+ ✓ (2ms)
+    yoyo now keeps git's output exactly as git prints it, except for the trailing newline (#1169).
+  + - **An unparseable `.yoyo/memory.json` is no longer erased.** One trailing comma used to make the file read as empty, and the next `/remember` saved over every earlier memory. Now `/remember`, `/forget` and auto-remember refuse with the file, line and column (`not saved, nothing was written: … is not valid JSON: trailing comma at line 1 column 67`), and startup warns that project memories were not loaded. An absent file is still an empty store (#1216, still open).
+  + - **More valid TOML is read the way TOML says.** A multi-line `deny = [ … ]` list in `[permissions]` or `[directories]` builds its fence; an inline table (`directories = { deny = [...] }`, or `fs = { command = "npx" }` under `[mcp_servers]`) is read; `[ directories ]` and dotted keys are headers and keys to every reader; a `#` inside a quoted value is not a comment; and a key under some `[section]` no longer overrides the top-level `model` / `provider` / `base_url` (#1177, #1178, #1180, #1182,… [yoyo: 8 more bytes elided — diff lines are capped at 500 bytes]
+  + - `config get` / `config show` report the value the run actually uses (`model = ""` is unset, `thinking = "max"` runs as high, temperature after clamping), name a second home config file that is being ignored, and no longer list `~/.yoyo.toml` as its own shadow when you run from `$HOME`. `config get` with no key exits 2 (#1172, #1185, #1195, #1154).
+  + - After a model refusal, the next request no longer fails with a 400 about `cache_control` on a thinking block (#1206, still open for the remaining cases).
+  + - A checkpoint stop in the REPL (or piped with `--continue-on-silence`) is not undone by auto-continue (#1161).
+  + - A peak-load rate limit is no longer mistaken for context overflow (yoyo now uses yoagent's classifier) (#1167). Google's and xAI's bad-key replies get the auth hint (#1163, #1165). The DNS hint matches reqwest's real error text (#1126).
+  + - `-p` / piped API-error hints name `--provider` / `--model` instead of REPL slash commands, and the REPL billing hint names a command that really switches to a local model (#1128, #1139).
+  ... (13 more lines)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; git diff v0.4.0 HEAD -- Cargo.toml | grep '^[… ✓ (11ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; python3 - <<'EOF' (7 lines) ✓ (26ms)
+  ▶ $ for i in $(seq 1 55); do [ -f /tmp/g_done ] && break; sleep 10; done; grep -E '^… ✓ (3m 20s)
+  ▶ $ for i in $(seq 1 55); do [ -f /tmp/g_done ] && break; sleep 10; done; ls /tmp/g_… ✓ (15ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; cargo test price_drift_audit -- --ignored --n… ✓ (854ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; cargo test price_drift_audit -- --ignored --n… ✓ (824ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; cargo test --lib price_drift_audit -- --ignor… ✓ (99ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; cargo test price_drift_audit -- --ignored --n… ✓ (783ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; cargo test audit_table_against_models_dev -- … ✓ (750ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 1,9p /tmp/gen.txt | cut -c1-300; grep … ✓ (16ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 126,140p /tmp/gen.… (11 lines) ✓ (22ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -nE '^//!|^/// ' src/format/cost/price_a… ✓ (6ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -nE 'fn audit_table_against_models_dev|l… ✓ (6ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sed -n 524,560p src/format/cost/price_audit_t… ✓ (5ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -n 'fn price_of\|fn ours_from_catalogue'… ✓ (6ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; { echo "v0.5.0 release (Day 264, 2026-11-19):… ✓ (11ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; python3 - <<'EOF' (14 lines) ✓ (23ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; python3 - <<'EOF' (8 lines) ✓ (1.3s)
+
+────────────────────────────────────────────────────────────────────────────────
+  23 tools completed in 5m 17s (23 ✓)
+
+Now the CHANGELOG price-audit note.
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; python3 - <<'EOF' (8 lines) ✓ (20ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; git diff --stat; grep -rln 'CHANGELOG' src te… ✓ (17ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; cargo test --test print_stdout_contract 2>&1 … ✓ (1m 29s)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; cargo publish --dry-run --no-verify --allow-d… ✓ (1.5s)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; cargo publish --dry-run --no-verify --allow-d… ✓ (900ms)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; cargo fmt -- --check && e… (26 lines) ✓ (3.8s)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; sleep 20; gh run list --workflow release.yml … ✓ (21.7s)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve; grep -niE "(ping|tag|tell|let) (you|them|@[a-… ✓ (1m 1s)
+  ▶ $ for i in $(seq 1 30); do s=$(gh run list --workflow release.yml -L 1 --json stat… ✓ (7m 48s)
+
+────────────────────────────────────────────────────────────────────────────────
+  9 tools completed in 11m 25s (9 ✓)
+
+I cut v0.5.0 and pushed the tag. The release workflow has started but not finished: run 44534327944 was still queued after about 9 minutes, waiting for a runner. Nothing has reached crates.io yet. I didn't retry anything and didn't run cargo publish myself.
+
+What I did
+• Version: bumped 0.4.0 → 0.5.0 in Cargo.toml and Cargo.lock. yoyo --version now prints yoyo v0.5.0. The only other "0.4.0" in the tree is a docs sentence about the past ("Up to yoyo 0.4.0…"), which is still correct, so I left it.
+• CHANGELOG: there's an empty [Unreleased] heading on top, then ## [0.5.0] - 2026-11-19. It opens with a summary of the behaviour changes users will notice:
+  • ANTHROPIC_API_KEY is only sent to Anthropic.
+  • /save, /export and /spawn -o refuse to overwrite a file without --force.
+  • Bash commands the parser can't read now ask for confirmation.
+  • A .yoyo.toml that isn't valid TOML stops the run.
+  • --provider custom with no model, and --provider github, are refused.
+
+  After that come Security, Fixed, Added, Dependencies (yoagent 0.26.8 → 0.27.9, plus tree-sitter, toml and rustls-native-certs) and a price audit note. I checked every issue number with gh issue view, and the open ones are labelled as still open (#1012, #1094, #1147, #1184, #1202, #1206, #1210, #1214, #1216).
+• Commit and tag: commit 55b4b0c0. git ls-remote shows refs/tags/v0.5.0 on origin.
+
+Gates (run on the 0.5.0 tree): build, clippy with -D warnings and fmt --check all passed, and cargo test exited 0 with nothing failing. I edited the CHANGELOG after that run, so I re-ran the two test files that read it; both passed. cargo publish --dry-run --no-verify packages fine, with warnings that two dependencies in the lockfile (chacha20 0.10.0, clipboard-win 5.4.1) have been yanked.
+
+Prices: shipped with known drift
+• DeepSeek audit: passed, but it compared 0 rows. All four DeepSeek ids it can see are registered exceptions, and models.dev doesn't list deepseek-r1 or deepseek-v3, so nothing checks those.
+• General audit: SUMMARY compared 115, matched 54, drifted 48, cache_read_only 13, unpriced 69 of 184 catalogue rows (rel_tol 1%). That's 48 rows where our prices disagree with models.dev, up from 23 at v0.4.0. 12 of them differ only in the cache-write rate.
+• I didn't fix any of them, because I didn't read the vendors' pricing pages this session. I posted all 48 rows on the open price-audit issue #1012, and the CHANGELOG names #1012 as their owner. /cost figures for those models may be wrong in either direction. I didn't change any assertion or tolerance.
+
+Two other things
+• The repo checkout was shallow, so the first v0.4.0..HEAD log stopped partway; that's where the plan's "50 commits" came from. After fetching more history the real span is 483 commits, about 90 of them task commits.
+• I found no open issues or journal entries where someone was promised a heads-up when the next release came out, so I didn't ping anyone.
+
+To see if the publish went through: gh run list --workflow release.yml -L 1. If it fails, look into it tomorrow rather than retrying today.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
