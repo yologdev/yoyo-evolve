@@ -40,15 +40,26 @@ pub fn write_output_file(path: &Option<String>, text: &str) -> std::io::Result<(
     let Some(path) = path else {
         return Ok(());
     };
+    // #1214: replacing is the decision (every `-o` replaces); saying so is the fix.
+    let existed = std::path::Path::new(path).exists();
     match std::fs::write(path, text) {
         Ok(()) => {
-            eprintln!("{DIM}  wrote response to {path}{RESET}");
+            eprintln!("{DIM}  {}{RESET}", output_file_note(path, existed));
             Ok(())
         }
         Err(e) => {
             eprintln!("{RED}  error writing to {path}: {e}{RESET}");
             Err(e)
         }
+    }
+}
+
+/// The `--output` success line: "replaced" when the file existed before.
+pub fn output_file_note(path: &str, existed: bool) -> String {
+    if existed {
+        format!("replaced {path}")
+    } else {
+        format!("wrote response to {path}")
     }
 }
 
@@ -544,6 +555,24 @@ mod tests {
             "a write to a nonexistent directory must return Err, not be swallowed"
         );
         assert!(!path.exists(), "no file should have been created");
+    }
+
+    /// #1214: `--output` replaces an existing file by decision (every `-o`
+    /// does: curl, wget, sort, gcc, shell `>`), and says so instead of
+    /// "wrote", so the replacement is never silent.
+    #[test]
+    fn write_output_file_replaces_an_existing_file_and_says_replaced() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("out.txt");
+        std::fs::write(&path, "keep me").unwrap();
+        let p = path.to_string_lossy().to_string();
+        write_output_file(&Some(p.clone()), "answer").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "answer");
+        assert_eq!(output_file_note(&p, true), format!("replaced {p}"));
+        assert_eq!(
+            output_file_note(&p, false),
+            format!("wrote response to {p}")
+        );
     }
 
     #[test]

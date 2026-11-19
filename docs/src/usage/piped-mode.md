@@ -166,3 +166,7 @@ yoyo                              # interactive REPL
 ## Saving the session
 
 Add `--save-session <path>` to write the run's session to `<path>` when it ends (even after a failed turn), in the format `/save` writes: `echo "fix the test" | yoyo --save-session run.json`. A missing parent directory or unwritable path exits non-zero with `error: --save-session: could not write <path>: <reason>`.
+
+If `<path>` already exists, it is replaced only when it is a saved yoyo session (re-running the same command, or resuming one, should still work). Any other file, including an empty one, is refused before any request is sent: exit 2, the file left as it was, and `error: --save-session: <path>: it exists and is not a yoyo session file (...), so it was not replaced`. The same check runs again when the session is written.
+
+`--output <file>` (`-o`) writes the final response text to `<file>` and replaces an existing file. This is deliberate: every comparable `-o` (`curl -o`, `sort -o`, `gcc -o`, shell `>`) replaces, and the file is the run's own output, rewritten on each re-run. stderr says `replaced <file>` when the file existed and `wrote response to <file>` when it didn't, so a replacement is never silent. (`/spawn -o` inside the REPL refuses instead, because there nobody is re-running a script.)

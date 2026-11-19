@@ -1172,8 +1172,42 @@ fn apply_bedrock_credentials(agent_config: &mut AgentConfig) {
 /// #978: write exactly what `/save <path>` writes (`agent.save_messages()`).
 /// Never creates a missing parent directory: a bad path must fail loudly.
 fn save_session_to(agent: &Agent, path: &std::path::Path) -> Result<(), String> {
+    // #1214: re-checked at write time, since the file may have appeared mid-run.
+    if let Some(why) = save_session_target_problem(path) {
+        return Err(why);
+    }
     let json = agent.save_messages().map_err(|e| e.to_string())?;
     std::fs::write(path, json).map_err(|e| e.to_string())
+}
+
+/// #1214: why `--save-session` must not replace `path`, or None. A missing
+/// path is written; an existing one is replaced only if it parses the way
+/// `restore_messages` (/load, --continue) parses a session, so re-runs and
+/// resumes still work while a user's other file is never clobbered.
+fn save_session_target_problem(path: &std::path::Path) -> Option<String> {
+    if !path.exists() {
+        return None;
+    }
+    let detail = match non_regular_read::read_regular_to_string(path) {
+        Ok(text) => match serde_json::from_str::<Vec<yoagent::AgentMessage>>(&text) {
+            Ok(_) => return None,
+            Err(e) => e.to_string(),
+        },
+        Err(e) => format!("could not read it: {e}"),
+    };
+    Some(format!(
+        "it exists and is not a yoyo session file ({detail}), so it was not replaced"
+    ))
+}
+
+/// #1214: the startup refusal, checked before any request is sent.
+fn save_session_target_refusal(path: &std::path::Path) -> Option<String> {
+    let why = save_session_target_problem(path)?;
+    Some(format!(
+        "error: --save-session: {}: {}. Choose another path, or move that file away first.",
+        cli::sanitize_for_display(&path.display().to_string()),
+        cli::sanitize_for_display(&why)
+    ))
 }
 
 /// The `--save-session` failure line; both strings are sanitized.
@@ -1388,6 +1422,16 @@ async fn main() {
         );
     }
 
+    // #1214: refuse a --save-session target that is someone else's file
+    // before any server is spawned or request sent.
+    if let Some(msg) = config
+        .save_session
+        .as_deref()
+        .and_then(save_session_target_refusal)
+    {
+        eprintln!("{msg}");
+        dispatch_sub::exit_process(2);
+    }
     let continue_session = config.continue_session;
     let output_path = config.output_path;
     // In safe mode, skip MCP servers, skills, custom commands, and config
