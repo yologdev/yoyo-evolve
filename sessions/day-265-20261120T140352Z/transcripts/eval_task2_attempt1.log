@@ -1,0 +1,20 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "parse_toml_array" src/*.r… ✓ (187ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; mkdir -p sessi… (9 lines) ✓ (15ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 15.4s (2 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_2.md.
+
+• The task is done as asked. The two places that load the mcp = [...] list for real use, in cli.rs and cd_config_note.rs, now both call the new parse_mcp_list_from_config. It reads the list straight from the parsed TOML. The old hand reader, parse_toml_array, is now test-only (#[cfg(test)]) with a note saying it's waiting to be deleted under #1184. Its tests are all still there.
+• Same config file as before. file_config and raw_config_content both come from a single load_config_file() call (cli.rs:2370), so mcp is still read from the same file. The parameter that's no longer used was removed.
+• Nothing added without a user. The new function has both callers in this diff, and the helper behind it is used by it. The old reader's pub use export in cli.rs was removed and its tests updated to match. parse_toml_array is now only called from tests. I ran cargo clippy --all-targets -- -D warnings and it's clean.
+• What users see doesn't change. A test feeds the old and new readers the same 11 config inputs and they agree on all of them, including the odd cases: mcp = "x", [1, true], a nested list, comments, and a command containing , . I didn't run the binary against a real MCP config, because the inputs and outputs are unchanged and that test covers them.
+• Docs: ARCHITECTURE.md and the affected doc comments were updated. User-facing docs didn't need changes.
+
+Two parts of the task can't be confirmed from the diff, so I didn't count them against it: the before and after measurements posted on #1184, and the deliberate break-then-restore test check (the NEUTERED one).
+  watch: no files changed this turn — skipping

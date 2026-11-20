@@ -1,0 +1,46 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | head && git… ✓ (19ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+The commit is complete and has its full body. I'll check that the after-table reached #1218, then re-run the gate on the committed state.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 1218 --json state,… ✓ (450ms)
+
+The before- and after-tables are both on the ticket, and no NEUTERED marker was left behind. Now the gate:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (10.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (5m 1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5m 22s (2 ✓)
+
+Task 1 is done: a failed -p run no longer replaces or creates the --output file. It was committed as 163a063e before the interruption. I re-ran the checks on that commit and nothing else needed doing.
+
+What changed: A failed -p run (exit 1) now leaves the --output path as it was, the same way curl -o does. Stderr says so in one of two ways:
+• <file> was not written: the run failed, so the existing file was left as it was
+• <file> was not written: the run failed, so no file was created
+
+Exit codes are the same as before, and a successful run still replaces the file (the #1214 decision).
+
+Which failures count: I gated the write on one function, run_failed_overall, which treats a run as failed if it hit an error or stopped short of a complete answer (including a refusal, or a cut at an output limit the user never set). The JSON output's is_error field now uses the same function, so the file and that field can't disagree. I didn't reuse emit_output's own is_error parameter because, at the two final call sites, it doesn't cover refusals or those cut-offs.
+
+Checked again just now:
+• cargo fmt --check and cargo clippy --all-targets -- -D warnings both pass.
+• The 4 tests in tests/output_failed_run.rs pass. They run the real binary and cover: an existing file kept on failure, no file created on failure, the file kept on a refusal, and a successful run that still replaces it.
+• The full cargo test run passes: 7636 tests, 0 failures.
+• No NEUTERED marker is left in any file the commit touched.
+• The commit body has the before- and after-tables, the predicate and the reason for it, and the recall control. Before the fix, 3 of the 4 new tests failed. With the check deliberately disabled, the same 3 failed again; with it restored, all 4 passed.
+• Both tables are posted on #1218: the before-table at 12:48Z, before any edit, and the after-table at 13:00Z, before the commit.
+
+Problems found but not fixed here:
+• #1219: with --output-format stream-json, --output is ignored entirely. The run exits 0, writes no file and prints no message. I measured this.
+• #1220: an interrupted run (exit 130 or 143) doesn't count as a failure, so it probably still writes its partial answer over the existing file. I worked that out from the code and haven't run it.
+
+Both issues were filed in an earlier attempt of this session. #1218 is still open and will close when the commit with Fixes #1218 is pushed.
+  watch: no files changed this turn — skipping

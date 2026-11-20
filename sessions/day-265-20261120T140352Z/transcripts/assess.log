@@ -1,0 +1,92 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git log --oneline -15; ls … ✓ (15ms)
+  ▶ $ pwd; head -c 6000 journals/JOURNAL.md; echo; gh run list --repo yologdev/yoyo-ev… ✓ (509ms)
+  ▶ $ gh issue list --repo yologdev/yoyo-evolve --state open --limit 40 --json number,… ✓ (467ms)
+  ▶ $ gh issue view 1184 --repo yologdev/yoyo-evolve --json body,comments --jq '.body[…  ▶ $ wc -l src/*.rs src/*/*.rs 2>/dev/null | sort -n | tail -15; ls src | wc -l; wc -… ✓ (35ms)
+ ✓ (493ms)
+  ▶ $ grep -n '"src/context.rs"' tests/module_size.rs; grep -n 'const CAP\|2000\|fn .*… ✓ (10ms)
+  ▶ $ ./target/debug/yoyo --version; ls -la target/debug/yoyo | awk '{print $6,$7,$8}'…  ▶ $ for n in 1202 1218 1206 1215; do echo "=== #$n"; gh issue view $n --repo yologde… ✓ (1.7s)
+ ✓ (2.4s)
+  ▶ $ for n in 1202 1215 1184 1012; do echo "== $n"; gh issue view $n --repo yologdev/… ✓ (2.0s)
+  ▶ $ gh issue view 1202 --repo yologdev/yoyo-evolve --json comments --jq '.comments[]… ✓ (916ms)
+  ▶ $ sed -n 1,60p skills/yopedia/SKILL.md | head -60; env | grep -i yopedia | sed 's/… ✓ (10ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  11 tools completed in 55.4s (11 ✓)
+
+Writing the draft now, before research.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/assessment.md (53 lines) ✓ (0ms)
+  ▶ $ git add session_plan/assessment.md && git commit -qm "Day 265 (12:33): assessmen… ✓ (10.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ web search 'Claude Code changelog November 2026' ✓ (978ms)
+  ▶ $ BASE=https://yopedia.yolog.dev; AGENT_ID="${YOPEDIA_AGENT_TOKEN%%.*}"; curl -sS … ✓ (6.7s)
+  ▶ $ Y=~/.cargo/registry/src/index.crates.io-*/yoagent-0.27.9/src; grep -rn -i 'bom\|… ✓ (25ms)
+  ▶ $ grep -n -A8 'From a URL' skills/yopedia/SKILL.md | head -14 ✓ (5ms)
+  ▶ $ BASE=https://yopedia.yolog.dev; AGENT_ID="${YOPEDIA_AGENT_TOKEN%%.*}"; curl -sS … ✓ (851ms)
+  ▶ edit session_plan/assessment.md (2 → 17 lines)
+    ## Research Findings
+  - (to be filled after research step)
+  + Sources: Claude Code changelog **v2.1.329, 2026-11-19** (code.claude.com/docs/en/changelog), plus the v2.1.321–329 tracker. I checked yopedia first, which already holds earlier delta scans; the Nov 3 scan is the one that led to #1216. I ingested today's changelog URL into yopedia.
+  + 
+  + Defect-class transfers that map onto my open tickets. "Same class" is my reading of their changelog lines, not a probe:
+  + - **"Fixed `~/.claude.json` sometimes being reset to defaults when a network stall or file lock made it unreadable and cleared during a save."** This is the read-fail-then-overwrite class I closed for memory.json (#1216). It also matches **#1218**: a failure empties a file that was good before. That is two independent confirmations that users get hit by this class, so #1218 is worth doing now.
+  + - **"Fixed `/terminal-setup` corrupting VS Code settings ... and reporting success while losing the binding."** This is the same class as yesterday's `/config set` → toml_edit slice (#1184). That slice covered the writers. The readers (`parse_toml_array` callers, line walkers) are still hand-parsed.
+  + - **"Added a trust dialog warning that says where a folder's hooks are declared."** They are investing in trust-prompt content. My **#1188** goes further: trust is keyed on the path, so a later `git pull` that adds base_url/hooks is honoured without a new prompt. That is a stronger gap than wording.
+  + - **"Fixed Claude not being told that a connected MCP server's tools could not be loaded."** yoyo already has `external_tool_failure_note` (Day 240+). This counts as parity. I did not re-probe it this session.
+  + - **"Removed 2.1.326's automatic retry at the limit named in a max_tokens error."** They tried retrying and reverted it. If anyone proposes a max_tokens auto-retry for yoyo, this is evidence against it.
+  + - **"Fixed files accepted through the IDE diff being saved without their last newline, and losing their BOM."** I have not checked yoyo's write/edit path for BOM or trailing-newline preservation. My grep for "bom" only found "fork bomb", so whether yoyo preserves them is unknown. A cheap probe, if the planner wants one: edit_file on a BOM+CRLF file, then a byte compare.
+  + 
+  + Capability gaps (larger, none picked for today):
+  + - **Code Mode** (v2.1.323, experimental): the model writes JavaScript that calls tools in bulk. yoyo has nothing like it.
+  + - **Scheduled tasks / `/loop` wakeups and a `/tasks` view** covering shells, MCP calls and agents. yoyo has `/bg` and `/spawn` status but no unified view and no scheduling.
+  + - **Remote HTTP MCP** (they show a server's JSON-RPC refusal message). yoyo only supports stdio, see #1134.
+  + 
+  + **Biggest gap, in my words:** the gap is not features. It is that two owner-filed structural migrations are half done: #1202 (bash safety on a parse tree, step 1 of 3, with my A/B ask unanswered for about 3 days) and #1184 (config on the toml crate, done-when metric 12). Every recent bug in those areas belongs to a class that finishing the migration closes. The planner should prefer one slice of #1184, or step 2 of #1202 if the owner has answered, plus #1218 as the small, sure data-loss fix.
+ ✓ (2ms)
+    ## Research Findings
+  - (to be filled after research step)
+  + Sources: Claude Code changelog **v2.1.329, 2026-11-19** (code.claude.com/docs/en/changelog), plus the v2.1.321–329 tracker. I checked yopedia first, which already holds earlier delta scans; the Nov 3 scan is the one that led to #1216. I ingested today's changelog URL into yopedia.
+  + 
+  + Defect-class transfers that map onto my open tickets. "Same class" is my reading of their changelog lines, not a probe:
+  + - **"Fixed `~/.claude.json` sometimes being reset to defaults when a network stall or file lock made it unreadable and cleared during a save."** This is the read-fail-then-overwrite class I closed for memory.json (#1216). It also matches **#1218**: a failure empties a file that was good before. That is two independent confirmations that users get hit by this class, so #1218 is worth doing now.
+  + - **"Fixed `/terminal-setup` corrupting VS Code settings ... and reporting success while losing the binding."** This is the same class as yesterday's `/config set` → toml_edit slice (#1184). That slice covered the writers. The readers (`parse_toml_array` callers, line walkers) are still hand-parsed.
+  + - **"Added a trust dialog warning that says where a folder's hooks are declared."** They are investing in trust-prompt content. My **#1188** goes further: trust is keyed on the path, so a later `git pull` that adds base_url/hooks is honoured without a new prompt. That is a stronger gap than wording.
+  ... (10 more lines)
+  ▶ $ git add session_plan/assessment.md 2>&1 | head -1; git commit -m "Day 265 (12:33… ✓ (13ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  9 tools completed in 1m 3s (9 ✓)
+
+I wrote the Day 265 assessment to session_plan/assessment.md. The commit step didn't take: session_plan/ is in .gitignore, so git refused to add the file and there was nothing to commit. The planner will need to read it from disk.
+
+State
+• Build: the harness verified it as green at session start. I didn't re-run the full suite. The built binary (v0.5.0) answered a -p prompt with "pong" and exited 0.
+• Recent runs: the last 4 evolve runs succeeded and the current one is in progress. There were no task reverts in the last ~10 sessions.
+
+Main findings for the planner
+1. Two owner-filed migrations are half done, and most recent bugs belong to the classes they would close.
+   • #1184 (config on the `toml` crate): the config writers now use toml_edit. What remains is hand-parsed reading: the parse_toml_array callers and the line walkers in config_value.rs and config_unknown_keys.rs. The ticket's progress count is at 12.
+   • #1202 (bash safety on a parse tree): partway through step 1 of 3. My A/B question to @yuanhao has gone unanswered for about 3 days. Until it's settled, --yes, -p and non-tty runs still execute commands the parser can't read without asking.
+2. #1218 is the best small, sure fix. A failed -p run with --output empties a file the user already had. Claude Code shipped a fix for the same kind of bug in its Nov 19 release (its ~/.claude.json reset to defaults after a failed read), which suggests users do hit it.
+3. Two files are near the size limit that fails `cargo test`:
+   • src/context.rs is 2035 lines, not on the exempt list; 15 more lines makes it fatal.
+   • src/format/mod.rs is 2874 lines against its recorded 2788; 14 more makes it fatal.
+
+   Any task touching either file has to split it or register it in the same diff.
+4. Other candidates:
+   • #1213: /spawn -o splits a quoted path with a space in it.
+   • #1188: trust is tied to a project's path, not its content, so a git pull that adds a base_url is used without a new prompt.
+
+Research
+• Claude Code's Nov 19 changelog (v2.1.329) has three more items that line up with my open work:
+  • a fix for a settings writer that corrupted files and still reported success (the same class as yesterday's /config set fix);
+  • trust-prompt changes (related to #1188);
+  • a reverted automatic retry after max_tokens errors, which argues against adding one to yoyo.
+• One item I haven't checked: whether my file edits keep a byte order mark (BOM) and the trailing newline. Claude Code just fixed losing both.
+• I saved the changelog to yopedia.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

@@ -1,0 +1,32 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "emit_output\|run_failed…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn exit_code_for_outcom… ✓ (12ms)
+ ✓ (19ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 725,745p src/main.rs; sed… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 6.5s (3 ✓)
+
+Predicate matches the exit-1 ladder at all call sites. One quick check on the real binary:
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la target/debug/yoyo && d=$(… ✓ (13.8s)
+
+Both failure rows behave correctly on the real binary. Writing verdict.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p ses… (9 lines) ✓ (15ms)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_1.md. A failed -p run no longer replaces or creates the --output file, and stderr says so.
+
+• The fix: emit_output now skips writing the file when the run failed. It uses the same failure test the exit code already uses (is_error || incomplete_forces_failure), and the JSON is_error field shares it, so they can't disagree. No second way of deciding "failed" was added.
+• On the real binary: I ran it against a dead port (127.0.0.1:9).
+  • With an existing file holding keep me: exit 1, the file still held keep me, and stderr said out.txt was not written: the run failed, so the existing file was left as it was.
+  • With no file present: exit 1, no file was created, and stderr said ... so no file was created.
+  • I didn't re-run the success case myself. The new test covering it (a successful run still replaces the file) is in the passing suite.
+• Tests: tests/output_failed_run.rs covers four cases: existing file kept, no file created, a refusal kept, and a successful run still replacing.
+• Every new function is used in this diff, and nothing else (types, renames) needed follow-up.
+• Docs: docs/src/usage/piped-mode.md now describes the failed-run behaviour and compares it to curl -o.
+
+The diff can't show whether the before/after tables were posted on #1218 or whether the commit body has the recall control, so I didn't check those.
+  watch: no files changed this turn — skipping
