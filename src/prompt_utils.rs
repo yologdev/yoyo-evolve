@@ -54,6 +54,28 @@ pub fn write_output_file(path: &Option<String>, text: &str) -> std::io::Result<(
     }
 }
 
+/// #1218: a failed run leaves the `--output` path exactly as it was (no
+/// replace, no create, like `curl -o`) and says so on stderr.
+pub fn skip_output_file_for_failed_run(path: &Option<String>) {
+    let Some(path) = path else {
+        return;
+    };
+    let existed = std::path::Path::new(path).exists();
+    eprintln!(
+        "{YELLOW}  {}{RESET}",
+        output_file_skipped_note(path, existed)
+    );
+}
+
+/// The `--output` line for a failed run (#1218).
+pub fn output_file_skipped_note(path: &str, existed: bool) -> String {
+    if existed {
+        format!("{path} was not written: the run failed, so the existing file was left as it was")
+    } else {
+        format!("{path} was not written: the run failed, so no file was created")
+    }
+}
+
 /// The `--output` success line: "replaced" when the file existed before.
 pub fn output_file_note(path: &str, existed: bool) -> String {
     if existed {
@@ -572,6 +594,20 @@ mod tests {
         assert_eq!(
             output_file_note(&p, false),
             format!("wrote response to {p}")
+        );
+    }
+
+    /// #1218: the failed-run line names the path and says which of the two
+    /// untouched states it is in.
+    #[test]
+    fn output_file_skipped_note_names_the_path_and_the_untouched_state() {
+        assert_eq!(
+            output_file_skipped_note("a.md", true),
+            "a.md was not written: the run failed, so the existing file was left as it was"
+        );
+        assert_eq!(
+            output_file_skipped_note("a.md", false),
+            "a.md was not written: the run failed, so no file was created"
         );
     }
 

@@ -231,7 +231,7 @@ use prompt::{
     run_prompt_with_content_and_changes, PromptOutcome,
 };
 use prompt_budget::enable_audit_log;
-use prompt_utils::write_output_file;
+use prompt_utils::{skip_output_file_for_failed_run, write_output_file};
 use session::SessionChanges;
 use watch::{get_watch_command, run_watch_after_prompt};
 
@@ -309,7 +309,7 @@ fn build_json_output_with(
         // and `is_error` agrees with the exit code `exit_code_for_outcome`
         // gives the same outcome (before, it read only `run_failed`, so a
         // default-limit cut or a refusal exited 1 with `is_error: false`).
-        "is_error": is_error || prompt::incomplete_forces_failure(response.incomplete),
+        "is_error": run_failed_overall(response, is_error),
         "incomplete": prompt::incomplete_json(response.incomplete),
         "session": session_changes.to_json_summary(),
         // #895: a script must be able to tell a DEGRADED run from a healthy one.
@@ -438,7 +438,25 @@ fn emit_output(
     // for them together is the natural thing to do — and until #766 the file
     // write was simply skipped under the other two branches, with no file, no
     // error, and nothing on stderr to notice.
+    //
+    // #1218: but only a run that HAS a product writes it. #1214's reason for
+    // replacing ("the file is the run's own output") does not cover a failed
+    // run, which used to wipe the last good answer with its empty text. Like
+    // `curl -o`, a failed run neither replaces nor creates the file, and says
+    // so; the exit code stays what the failure already made it.
+    if run_failed_overall(response, is_error) {
+        skip_output_file_for_failed_run(output_path);
+        return false;
+    }
     write_output_file(output_path, &response.text).is_err()
+}
+
+/// #1218: the "no complete answer" half of the exit-1 rule, the same value
+/// the json envelope reports as `is_error`: the caller's failure (API error,
+/// dead turn) or a final reply that `incomplete_forces_failure` (a refusal,
+/// a cut at a limit nobody set). One function so `-o` and `is_error` agree.
+fn run_failed_overall(response: &PromptOutcome, is_error: bool) -> bool {
+    is_error || prompt::incomplete_forces_failure(response.incomplete)
 }
 
 /// #966: `--print` and the JSON envelope both make `emit_output` the single
