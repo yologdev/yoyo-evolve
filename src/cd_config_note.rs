@@ -95,11 +95,8 @@ pub(crate) fn unapplied_config_sections(toml_text: &str) -> Vec<&'static str> {
         out.push(HOOKS);
     }
 
-    let flat_mcp = flat
-        .get("mcp")
-        .map(|raw| crate::config::parse_toml_array(raw))
-        .unwrap_or_default();
-    if !flat_mcp.is_empty() || !crate::config::parse_mcp_servers_from_config(toml_text).is_empty() {
+    let mcp_list = crate::config::parse_mcp_list_from_config(toml_text);
+    if !mcp_list.is_empty() || !crate::config::parse_mcp_servers_from_config(toml_text).is_empty() {
         out.push(MCP);
     }
 

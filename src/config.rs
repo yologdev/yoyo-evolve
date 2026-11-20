@@ -477,8 +477,10 @@ pub fn glob_match(pattern: &str, text: &str) -> bool {
 }
 
 /// Parse a TOML-style array value like `["pattern1", "pattern2"]` into a Vec<String>.
-/// Quote-aware and comment-tolerant (#1177). An unreadable list is empty here and
-/// named by `config_value::warn_unreadable_values_once` when the file is loaded.
+/// Test-only since Day 265: deletion debt for #1184. No production code reads
+/// it (`mcp` goes through [`parse_mcp_list_from_config`]); its tests still need
+/// moving to the parsed reader before it can be deleted.
+#[cfg(test)]
 pub fn parse_toml_array(value: &str) -> Vec<String> {
     crate::config_value::read_array(value).unwrap_or_default()
 }
@@ -639,6 +641,11 @@ pub fn parse_mcp_servers_from_config(content: &str) -> Vec<McpServerConfig> {
     config_toml_read::mcp_servers_from_table(&config_toml_read::parse_table(content))
 }
 
+/// The top-level `mcp = [...]` commands, read from the parsed TOML (#1184).
+pub fn parse_mcp_list_from_config(content: &str) -> Vec<String> {
+    config_toml_read::mcp_list_from_table(&config_toml_read::parse_table(content))
+}
+
 #[path = "config_toml_read.rs"]
 pub(crate) mod config_toml_read;
 
@@ -702,13 +709,13 @@ pub(crate) fn padding_end(raw: &str) -> Option<PaddingEnd> {
 /// key: accepted vocabulary, no validation.
 ///
 /// **No third parser.** This is pure over the values the two existing MCP parsers
-/// already produced (`parse_toml_array` for `mcp = [...]`, `parse_mcp_servers_from_config`
+/// already produced (`parse_mcp_list_from_config` for `mcp = [...]`, `parse_mcp_servers_from_config`
 /// for `[mcp_servers.*]`), so "what is an MCP value" has exactly one statement per door
 /// and this cannot drift from either. Returns `(key label, raw value)` pairs in config
 /// order; an empty vec means every value is clean.
 ///
-/// Scope is **MCP values only**. `parse_toml_array` was shared with `[permissions]` and
-/// `[directories]` (until Day 262, #1184: they are read from the parsed table now), so
+/// Scope is **MCP values only**. `parse_toml_array` (the `mcp` reader until Day 265) was
+/// shared with `[permissions]` and `[directories]` (until Day 262, #1184), so
 /// detection deliberately does not live inside it; a warning there would have fired on
 /// glob patterns this task never measured.
 pub(crate) fn whitespace_padded_config_values(

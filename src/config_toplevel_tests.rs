@@ -183,3 +183,57 @@ fn the_trust_prompt_names_a_hook_in_every_spelling_the_map_reads() {
         );
     }
 }
+
+/// Day 265, #1184: `mcp = [...]` is read from the parsed table by
+/// `parse_mcp_list_from_config`, no longer flattened to text and re-read by
+/// the hand array reader. Each row: the file, then the commands yoyo starts.
+const MCP_LIST_ROWS: &[(&str, &[&str])] = &[
+    (
+        "mcp = [\"npx a\", \"npx b /tmp\"]\n",
+        &["npx a", "npx b /tmp"],
+    ),
+    ("mcp = [\"echo a, b\", 'c']\n", &["echo a, b", "c"]),
+    (
+        "mcp = [\n  \"npx a\", # first\n  # a whole-line comment\n  \"npx b\",\n]\n",
+        &["npx a", "npx b"],
+    ),
+    ("mcp = []\n", &[]),
+    ("model = \"m\"\n", &[]),
+    ("", &[]),
+    // Shapes kept exactly as the hand reader left them:
+    ("mcp = \"npx a\"\n", &[]),            // not a list: nothing starts
+    ("mcp = [1, true]\n", &["1", "true"]), // bare values as their text
+    ("mcp = [[\"a\"]]\n", &[]),            // a nested list is unreadable: nothing starts
+    ("[mcp]\nx = 1\n", &[]),               // a table is not the list
+    ("not toml = = =\n", &[]),             // invalid TOML configures nothing
+];
+
+#[test]
+fn the_mcp_list_is_read_from_the_parsed_table() {
+    for (doc, want) in MCP_LIST_ROWS {
+        let want: Vec<String> = want.iter().map(|s| s.to_string()).collect();
+        assert_eq!(
+            crate::config::parse_mcp_list_from_config(doc),
+            want,
+            "parse_mcp_list_from_config on {doc:?}"
+        );
+    }
+}
+
+/// The old path (flat text re-read by `parse_toml_array`) is the baseline:
+/// on every row the new reader gives what users got before, except the
+/// multi-line array, which the flattening already rendered on one line.
+#[test]
+fn the_mcp_list_reader_matches_the_old_flat_text_path() {
+    for (doc, _) in MCP_LIST_ROWS {
+        let old = parse_config_file(doc)
+            .get("mcp")
+            .map(|raw| crate::config::parse_toml_array(raw))
+            .unwrap_or_default();
+        assert_eq!(
+            crate::config::parse_mcp_list_from_config(doc),
+            old,
+            "old vs new on {doc:?}"
+        );
+    }
+}

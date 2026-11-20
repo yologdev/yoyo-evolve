@@ -20,7 +20,7 @@ pub use crate::providers::{
 pub use crate::config::{
     history_file_path, home_config_path, load_config_file, parse_config_file,
     parse_directories_from_config, parse_mcp_servers_from_config, parse_permissions_from_config,
-    parse_toml_array, user_config_path, DirectoryRestrictions, McpServerConfig, PermissionConfig,
+    user_config_path, DirectoryRestrictions, McpServerConfig, PermissionConfig,
 };
 
 /// Whether verbose output is enabled. Set once at startup.
@@ -2286,7 +2286,6 @@ fn project_mcp_refusal_message(refused: &[String], plain: bool) -> String {
 /// in so the gating decision itself stays pure (`gate_mcp_sources`).
 fn parse_mcp_and_openapi_config(
     args: &[String],
-    file_config: &HashMap<String, String>,
     raw_config_content: &str,
     project_local: bool,
     trusted: bool,
@@ -2295,10 +2294,7 @@ fn parse_mcp_and_openapi_config(
     let cli_servers = collect_repeatable_flag(args, "--mcp");
 
     // MCP servers declared by the config file (`mcp = [...]`)
-    let config_servers = file_config
-        .get("mcp")
-        .map(|raw| parse_toml_array(raw))
-        .unwrap_or_default();
+    let config_servers = crate::config::parse_mcp_list_from_config(raw_config_content);
 
     // Parse structured [mcp_servers.*] sections from config file
     let config_server_configs = parse_mcp_servers_from_config(raw_config_content);
@@ -2306,8 +2302,8 @@ fn parse_mcp_and_openapi_config(
     // ONE emission point for the whitespace warning, covering BOTH MCP doors: both
     // `config_servers` (`mcp = [...]`) and `config_server_configs` (`[mcp_servers.*]`)
     // are in hand here, and this is the only production site where that is true. The
-    // detection deliberately does NOT live inside `parse_toml_array`, which is shared
-    // with [permissions] and [directories] — a warning there would fire on glob
+    // detection deliberately does NOT live inside the `mcp` list reader; the old shared
+    // array reader also served [permissions] and [directories], where it would fire on glob
     // patterns this task never measured. Emitting at one of the two doors and not the
     // other is the "two doors, one policy, one deaf" shape this repo has shipped nine
     // times.
@@ -2981,7 +2977,6 @@ directory ({e}); this run is trusted, later runs will not be."
     // the MCP servers it declares are not started unless --trust-project says so.
     let mcp = parse_mcp_and_openapi_config(
         args,
-        &file_config,
         &raw_config_content,
         crate::config::loaded_config_is_project_local(),
         is_trust_project(),
@@ -4504,31 +4499,31 @@ mod tests {
 
     #[test]
     fn test_parse_toml_array_basic() {
-        let arr = parse_toml_array(r#"["git *", "cargo *"]"#);
+        let arr = crate::config::parse_toml_array(r#"["git *", "cargo *"]"#);
         assert_eq!(arr, vec!["git *", "cargo *"]);
     }
 
     #[test]
     fn test_parse_toml_array_single() {
-        let arr = parse_toml_array(r#"["rm -rf *"]"#);
+        let arr = crate::config::parse_toml_array(r#"["rm -rf *"]"#);
         assert_eq!(arr, vec!["rm -rf *"]);
     }
 
     #[test]
     fn test_parse_toml_array_empty() {
-        let arr = parse_toml_array("[]");
+        let arr = crate::config::parse_toml_array("[]");
         assert!(arr.is_empty());
     }
 
     #[test]
     fn test_parse_toml_array_single_quotes() {
-        let arr = parse_toml_array("['git *', 'ls']");
+        let arr = crate::config::parse_toml_array("['git *', 'ls']");
         assert_eq!(arr, vec!["git *", "ls"]);
     }
 
     #[test]
     fn test_parse_toml_array_not_array() {
-        let arr = parse_toml_array("not an array");
+        let arr = crate::config::parse_toml_array("not an array");
         assert!(arr.is_empty());
     }
 

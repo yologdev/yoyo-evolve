@@ -43,8 +43,8 @@ fn scalar_text(v: &Value) -> Option<String> {
 /// top-level keys only. A key under any `[section]`, a dotted key or an
 /// inline table is a table to TOML, so it is never read as `model`,
 /// `provider` or `base_url` (the line reader took it, last one winning).
-/// A string is its content, anything else its TOML text, which an array
-/// reader (`parse_toml_array`) reads back. The one table flattened is
+/// A string is its content, anything else its TOML text (`mcp`'s list is
+/// read from the table by `mcp_list_from_table`). The one table flattened is
 /// `hooks`, whose reader takes `hooks.<phase>.<tool>` keys, in every spelling.
 pub(super) fn top_level_scalars_from_table(doc: &Table) -> HashMap<String, String> {
     let mut map = HashMap::new();
@@ -65,6 +65,25 @@ fn flat_text(v: &Value) -> String {
         Value::String(s) => s.clone(),
         v => v.to_string(),
     }
+}
+
+/// The top-level `mcp = [...]` list (#1184): read from the parsed table, not
+/// from its flattened text. Kept as the hand reader left it: a string is its
+/// text, a bare value its TOML text (`1`, `true`); a list holding a list or
+/// table, or an `mcp` that is not a list, starts nothing (and
+/// `config_value`'s warning names the line).
+pub(super) fn mcp_list_from_table(doc: &Table) -> Vec<String> {
+    let Some(Value::Array(items)) = doc.get("mcp") else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .map(|v| match v {
+            Value::Array(_) | Value::Table(_) => None,
+            v => Some(flat_text(v)),
+        })
+        .collect::<Option<Vec<_>>>()
+        .unwrap_or_default()
 }
 
 /// `prefix.<key>` for every leaf under `t`.
