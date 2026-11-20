@@ -1177,7 +1177,7 @@ mod tests {
             ),
             (
                 "[ permissions ]\n\"allow\" = [\"a\"]\n",
-                "[ permissions ]\nallow = [\"a\", \"b\"]\n",
+                "[ permissions ]\n\"allow\" = [\"a\", \"b\"]\n",
             ),
         ] {
             std::fs::write(&path, before).unwrap();
@@ -1193,8 +1193,8 @@ mod tests {
             );
         }
         assert_eq!(
-            set_toml_key("\"model\" = \"a\"\n", "model", "b"),
-            "model = \"b\"\n"
+            set_toml_key("\"model\" = \"a\"\n", "model", "b").unwrap(),
+            "\"model\" = \"b\"\n"
         );
     }
 

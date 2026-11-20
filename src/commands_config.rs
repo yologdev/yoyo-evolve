@@ -1899,7 +1899,7 @@ mod tests {
         // holds, and what the reader gives back.
         let (key, value, _) =
             parse_config_set_args(r#"/config set notify_command "notify-send \"done\"""#).unwrap();
-        let line = format!("{key} = {}", crate::config::format_toml_value(&value));
+        let line = crate::config::set_toml_key("", &key, &value).unwrap();
         let parsed = crate::config::parse_config_file(&line);
         assert_eq!(parsed.get("notify_command"), Some(&value));
     }

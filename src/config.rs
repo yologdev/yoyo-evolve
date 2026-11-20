@@ -1419,7 +1419,8 @@ pub fn write_config_value_to(
     // Read existing content or start fresh
     let existing = crate::non_regular_read::read_for_rewrite(path)?;
 
-    let new_content = set_toml_key(&existing, key, value);
+    let new_content =
+        set_toml_key(&existing, key, value).map_err(|e| format!("{} {e}", path.display()))?;
 
     std::fs::write(path, &new_content)
         .map_err(|e| format!("failed to write {}: {e}", path.display()))?;
@@ -1454,17 +1455,12 @@ pub fn append_allow_pattern_to(
 
     let existing = crate::non_regular_read::read_for_rewrite(path)?;
 
-    // Parse existing permissions to check for duplicates
-    let current = parse_permissions_from_config(&existing);
-    if current.allow.iter().any(|p| p == pattern) {
+    let new_content = set_permissions_allow(&existing, &[pattern.to_string()])
+        .map_err(|e| format!("{} {e}", path.display()))?;
+    if new_content == existing {
         // Already present — nothing to do
         return Ok(path.to_path_buf());
     }
-
-    // Build the new allow array
-    let mut new_allow = current.allow.clone();
-    new_allow.push(pattern.to_string());
-    let new_content = set_permissions_allow(&existing, &new_allow);
 
     std::fs::write(path, &new_content)
         .map_err(|e| format!("failed to write {}: {e}", path.display()))?;
@@ -1472,165 +1468,10 @@ pub fn append_allow_pattern_to(
     Ok(path.to_path_buf())
 }
 
-/// Pure function: set the `[permissions]` `allow` array in TOML content.
-///
-/// If a `[permissions]` section with an `allow = [...]` line exists, it is
-/// replaced. If `[permissions]` exists but has no `allow`, the key is inserted
-/// right after the section header. If no `[permissions]` section exists, one
-/// is appended.
-fn set_permissions_allow(content: &str, patterns: &[String]) -> String {
-    let formatted: Vec<String> = patterns.iter().map(|p| format!("\"{}\"", p)).collect();
-    let allow_line = format!("allow = [{}]", formatted.join(", "));
+pub use config_toml_write::{set_permissions_allow, set_toml_key};
 
-    let mut lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
-    let mut section: Option<String> = None;
-    let mut found_allow = false;
-    let mut permissions_section_exists = false;
-    // The last top-level `permissions.x = ...` line: the table is spelled
-    // with dotted keys, so a new `[permissions]` would declare it twice (#1178).
-    let mut dotted_line: Option<usize> = None;
-
-    for (i, line) in lines.iter_mut().enumerate() {
-        let trimmed = line.trim();
-        if let Some(header) = crate::config_unknown_keys::toml_section_header(trimmed) {
-            permissions_section_exists |= header == "permissions";
-            section = Some(header);
-            continue;
-        }
-        let Some((key, _)) = trimmed.split_once('=') else {
-            continue;
-        };
-        if found_allow || trimmed.starts_with('#') {
-            continue;
-        }
-        let key = crate::config_unknown_keys::key_in_table(section.as_deref(), key, "permissions");
-        match (key.as_deref(), section.is_none()) {
-            (Some("allow"), false) => *line = allow_line.clone(),
-            (Some("allow"), true) => *line = format!("permissions.{allow_line}"),
-            (Some(_), true) => {
-                dotted_line = Some(i);
-                continue;
-            }
-            _ => continue,
-        }
-        found_allow = true;
-    }
-    if let Some(i) = dotted_line.filter(|_| !found_allow) {
-        lines.insert(i + 1, format!("permissions.{allow_line}"));
-        found_allow = true;
-    }
-
-    if permissions_section_exists && !found_allow {
-        // Insert allow line right after [permissions] header
-        let mut result = Vec::new();
-        for line in &lines {
-            result.push(line.clone());
-            if crate::config_unknown_keys::toml_section_header(line).as_deref()
-                == Some("permissions")
-            {
-                result.push(allow_line.clone());
-            }
-        }
-        lines = result;
-    }
-
-    if !permissions_section_exists && !found_allow {
-        // Append a new [permissions] section
-        if !lines.is_empty() && !lines.last().unwrap().is_empty() {
-            lines.push(String::new());
-        }
-        lines.push("[permissions]".to_string());
-        lines.push(allow_line);
-    }
-
-    let mut result = lines.join("\n");
-    if !result.ends_with('\n') {
-        result.push('\n');
-    }
-    result
-}
-
-/// Pure function: insert or replace `key = "value"` in a flat TOML string.
-/// Preserves comments, blank lines, and other keys. If the key already
-/// exists (matched by `^key\s*=`), replaces that line. Otherwise appends.
-///
-/// Values that look like numbers or booleans are written unquoted; everything
-/// else is quoted.
-pub fn set_toml_key(content: &str, key: &str, value: &str) -> String {
-    let formatted_value = format_toml_value(value);
-    let new_line = format!("{key} = {formatted_value}");
-
-    let mut found = false;
-    let mut lines: Vec<String> = content
-        .lines()
-        .map(|line| {
-            let trimmed = line.trim();
-            // Match `key = ...` at the start of a non-comment line
-            if !trimmed.starts_with('#') {
-                if let Some((k, _)) = trimmed.split_once('=') {
-                    if crate::config_unknown_keys::config_key_name(k) == key {
-                        found = true;
-                        return new_line.clone();
-                    }
-                }
-            }
-            line.to_string()
-        })
-        .collect();
-
-    if !found {
-        // Ensure there's a trailing newline before appending
-        if !lines.is_empty() {
-            let last = lines.last().unwrap();
-            if !last.is_empty() {
-                // Only add a blank line if the file doesn't already end with one
-            }
-        }
-        lines.push(new_line);
-    }
-
-    let mut result = lines.join("\n");
-    // Ensure file ends with a newline
-    if !result.ends_with('\n') {
-        result.push('\n');
-    }
-    result
-}
-
-/// Format a value for TOML: numbers and booleans go unquoted,
-/// everything else gets double-quoted.
-pub(crate) fn format_toml_value(value: &str) -> String {
-    // Check if it's a number (integer or float)
-    if value.parse::<i64>().is_ok() || value.parse::<f64>().is_ok() {
-        return value.to_string();
-    }
-    // Check for booleans
-    if value == "true" || value == "false" {
-        return value.to_string();
-    }
-    // Default: quote it as a TOML basic string (#732 — unescaped values
-    // produced a config file the reader below could not parse back).
-    format!("\"{}\"", escape_toml_basic_string(value))
-}
-
-/// Escape a string for embedding in a TOML *basic* string (`"..."`).
-///
-/// Backslash first — escaping the quote first would then double the
-/// backslash the quote's escape just introduced.
-pub(crate) fn escape_toml_basic_string(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    for c in value.chars() {
-        match c {
-            '\\' => out.push_str("\\\\"),
-            '"' => out.push_str("\\\""),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            _ => out.push(c),
-        }
-    }
-    out
-}
+#[path = "config_toml_write.rs"]
+pub(crate) mod config_toml_write;
 
 // ---------------------------------------------------------------------------
 // Config-file path resolution and loading
@@ -2426,7 +2267,7 @@ env = { API_KEY = "secret" }
     #[test]
     fn test_set_toml_key_creates_new_key() {
         let content = "# yoyo config\nprovider = \"anthropic\"\n";
-        let result = set_toml_key(content, "model", "claude-sonnet-4-6");
+        let result = set_toml_key(content, "model", "claude-sonnet-4-6").unwrap();
         assert!(result.contains("model = \"claude-sonnet-4-6\""));
         // Original key should still be there
         assert!(result.contains("provider = \"anthropic\""));
@@ -2437,7 +2278,7 @@ env = { API_KEY = "secret" }
     #[test]
     fn test_set_toml_key_replaces_existing_key() {
         let content = "provider = \"anthropic\"\nmodel = \"old-model\"\n";
-        let result = set_toml_key(content, "model", "new-model");
+        let result = set_toml_key(content, "model", "new-model").unwrap();
         assert!(result.contains("model = \"new-model\""));
         assert!(!result.contains("old-model"));
         assert!(result.contains("provider = \"anthropic\""));
@@ -2446,7 +2287,7 @@ env = { API_KEY = "secret" }
     #[test]
     fn test_set_toml_key_preserves_comments() {
         let content = "# My config\n# model choice\nmodel = \"old\"\n# end\n";
-        let result = set_toml_key(content, "model", "new");
+        let result = set_toml_key(content, "model", "new").unwrap();
         assert!(result.contains("# My config"));
         assert!(result.contains("# model choice"));
         assert!(result.contains("# end"));
@@ -2455,20 +2296,20 @@ env = { API_KEY = "secret" }
 
     #[test]
     fn test_set_toml_key_numeric_value_unquoted() {
-        let result = set_toml_key("", "max_tokens", "8192");
+        let result = set_toml_key("", "max_tokens", "8192").unwrap();
         assert!(result.contains("max_tokens = 8192"));
         assert!(!result.contains("\"8192\""));
     }
 
     #[test]
     fn test_set_toml_key_string_value_quoted() {
-        let result = set_toml_key("", "model", "claude-opus-4-6");
+        let result = set_toml_key("", "model", "claude-opus-4-6").unwrap();
         assert!(result.contains("model = \"claude-opus-4-6\""));
     }
 
     #[test]
     fn test_set_toml_key_empty_content() {
-        let result = set_toml_key("", "provider", "anthropic");
+        let result = set_toml_key("", "provider", "anthropic").unwrap();
         assert!(result.contains("provider = \"anthropic\""));
         assert!(result.ends_with('\n'));
     }
@@ -2605,29 +2446,35 @@ env = { API_KEY = "secret" }
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
+    /// What `/config set k <value>` writes after `k = ` (#1184: toml_edit
+    /// chooses the string form, so these pin its choice and the round trip).
+    fn written(value: &str) -> String {
+        let out = set_toml_key("", "k", value).unwrap();
+        out.strip_prefix("k = ").unwrap().trim_end().to_string()
+    }
+
     #[test]
-    fn test_format_toml_value() {
-        assert_eq!(format_toml_value("hello"), "\"hello\"");
-        assert_eq!(format_toml_value("42"), "42");
-        assert_eq!(format_toml_value("3.14"), "3.14");
-        assert_eq!(format_toml_value("true"), "true");
-        assert_eq!(format_toml_value("false"), "false");
-        assert_eq!(
-            format_toml_value("claude-sonnet-4-6"),
-            "\"claude-sonnet-4-6\""
-        );
+    fn test_written() {
+        assert_eq!(written("hello"), "\"hello\"");
+        assert_eq!(written("42"), "42");
+        assert_eq!(written("3.14"), "3.14");
+        assert_eq!(written("true"), "true");
+        assert_eq!(written("false"), "false");
+        assert_eq!(written("claude-sonnet-4-6"), "\"claude-sonnet-4-6\"");
     }
 
     #[test]
     fn test_format_toml_value_escapes_specials() {
         // #732: unescaped values produced a file parse_config_file could not read.
-        assert_eq!(format_toml_value("say \"hi\""), r#""say \"hi\"""#);
-        assert_eq!(format_toml_value(r"C:\tmp"), r#""C:\\tmp""#);
-        assert_eq!(format_toml_value("a\nb"), r#""a\nb""#);
-        assert_eq!(format_toml_value("a\tb\rc"), r#""a\tb\rc""#);
-        // Backslash must be escaped BEFORE the quote, or the quote's own
-        // backslash gets doubled. This asserts the ordering bug can't return.
-        assert_eq!(format_toml_value(r#"a\"b"#), r#""a\\\"b""#);
+        // Since #1184 toml_edit picks the string form: a literal '...' when
+        // the value has a quote or backslash and no control character, a
+        // multi-line """ for a newline, escapes for other control characters.
+        // The round-trip test below is the promise; these pin the forms.
+        assert_eq!(written("say \"hi\""), r#"'say "hi"'"#);
+        assert_eq!(written(r"C:\tmp"), r"'C:\tmp'");
+        assert_eq!(written("a\nb"), "\"\"\"\na\nb\"\"\"");
+        assert_eq!(written("a\tb\rc"), r#""a\tb\rc""#);
+        assert_eq!(written(r#"a\"b"#), r#"'a\"b'"#);
     }
 
     #[test]
@@ -2646,7 +2493,7 @@ env = { API_KEY = "secret" }
             "→ unicode ✓",
             "",
         ] {
-            let line = format!("k = {}", format_toml_value(original));
+            let line = set_toml_key("", "k", original).unwrap();
             let parsed = parse_config_file(&line);
             assert_eq!(
                 parsed.get("k").map(String::as_str),
@@ -3738,7 +3585,7 @@ mcp = ["npx open-websearch@latest", "npx @mcp/server-filesystem /tmp"]
     #[test]
     fn test_set_permissions_allow_creates_section() {
         let content = "model = \"claude-sonnet-4-6\"\n";
-        let result = set_permissions_allow(content, &["cargo test*".to_string()]);
+        let result = set_permissions_allow(content, &["cargo test*".to_string()]).unwrap();
         assert!(result.contains("[permissions]"));
         assert!(result.contains("allow = [\"cargo test*\"]"));
         // Original content preserved
@@ -3751,7 +3598,8 @@ mcp = ["npx open-websearch@latest", "npx @mcp/server-filesystem /tmp"]
         let result = set_permissions_allow(
             content,
             &["cargo build*".to_string(), "cargo test*".to_string()],
-        );
+        )
+        .unwrap();
         assert!(result.contains("allow = [\"cargo build*\", \"cargo test*\"]"));
         // Deny is preserved
         assert!(result.contains("deny = [\"rm*\"]"));
@@ -3760,7 +3608,7 @@ mcp = ["npx open-websearch@latest", "npx @mcp/server-filesystem /tmp"]
     #[test]
     fn test_set_permissions_allow_inserts_if_section_exists_without_allow() {
         let content = "[permissions]\ndeny = [\"rm*\"]\n";
-        let result = set_permissions_allow(content, &["cargo test*".to_string()]);
+        let result = set_permissions_allow(content, &["cargo test*".to_string()]).unwrap();
         assert!(result.contains("allow = [\"cargo test*\"]"));
         assert!(result.contains("deny = [\"rm*\"]"));
     }
