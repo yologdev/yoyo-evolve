@@ -2145,6 +2145,9 @@ async fn handle_stream_json_events(
             }
             _ = tokio::signal::ctrl_c() => {
                 agent.abort();
+                // #1219: record it, so `-o` keeps the old file (the partial
+                // reply is not a final answer) and the run exits 130 (#993).
+                interrupt::INTERRUPTED.store(true, std::sync::atomic::Ordering::SeqCst);
                 break;
             }
         }

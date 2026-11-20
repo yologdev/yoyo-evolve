@@ -444,11 +444,35 @@ fn emit_output(
     // run, which used to wipe the last good answer with its empty text. Like
     // `curl -o`, a failed run neither replaces nor creates the file, and says
     // so; the exit code stays what the failure already made it.
+    write_output_for_outcome(response, is_error, output_path)
+}
+
+/// The `--output` gate every mode goes through (#1219: stream-json too, which
+/// returns before `emit_output`): a failed or interrupted run keeps the file
+/// as it was and says so; otherwise the answer replaces it. Returns true only
+/// when a write was attempted and failed (#766: that alone fails the run).
+fn write_output_for_outcome(
+    response: &PromptOutcome,
+    is_error: bool,
+    output_path: &Option<String>,
+) -> bool {
     if run_failed_overall(response, is_error) {
         skip_output_file_for_failed_run(output_path, prompt::interrupted_exit_code().is_some());
         return false;
     }
     write_output_file(output_path, &response.text).is_err()
+}
+
+/// #1219: the exit code of a finished stream-json run. stdout carried the
+/// NDJSON stream; `-o` gets the final answer under the same rules as every
+/// other mode, and a Ctrl+C mid-turn exits 130 like `-p` (#993).
+fn stream_json_exit_code(response: &PromptOutcome, output_path: &Option<String>) -> i32 {
+    let is_error = response.last_api_error.is_some();
+    let output_write_failed = write_output_for_outcome(response, is_error, output_path);
+    let code = i32::from(
+        is_error || prompt::incomplete_forces_failure(response.incomplete) || output_write_failed,
+    );
+    prompt::interrupted_exit_code().unwrap_or(code)
 }
 
 /// #1218: the "no complete answer" half of the exit-1 rule, the same value
@@ -560,10 +584,7 @@ async fn run_single_prompt(
             )
             .await
         };
-        let code = i32::from(
-            response.last_api_error.is_some()
-                || prompt::incomplete_forces_failure(response.incomplete),
-        );
+        let code = stream_json_exit_code(&response, output_path);
         let code = save_session_after_turn(agent, save_session, code).await;
         if code != 0 {
             exit_after_shutdown(code).await;
@@ -888,10 +909,7 @@ async fn run_piped_mode(
             &session_changes,
         )
         .await;
-        let code = i32::from(
-            response.last_api_error.is_some()
-                || prompt::incomplete_forces_failure(response.incomplete),
-        );
+        let code = stream_json_exit_code(&response, output_path);
         let code = save_session_after_turn(agent, save_session, code).await;
         if code != 0 {
             exit_after_shutdown(code).await;

@@ -110,18 +110,33 @@ fn closed_port() -> u16 {
 
 struct Run {
     code: Option<i32>,
+    stdout: String,
     stderr: String,
 }
 
 /// Run `yoyo -p "say ok" -o out.txt` in `cwd` against `port`.
 fn run_yoyo(cwd: &Path, port: u16) -> Run {
+    run_yoyo_with(cwd, port, &[])
+}
+
+/// [`run_yoyo`] plus `extra` flags (#1219: `--output-format stream-json`).
+fn run_yoyo_with(cwd: &Path, port: u16, extra: &[&str]) -> Run {
+    run_yoyo_door(cwd, port, extra, false)
+}
+
+/// The run, through the `-p` door or (`piped`) the stdin door, which has
+/// its own stream-json branch in main.rs.
+fn run_yoyo_door(cwd: &Path, port: u16, extra: &[&str], piped: bool) -> Run {
+    let prompt_args: &[&str] = if piped { &[] } else { &["-p", "say ok"] };
     let home = cwd.join("home");
     std::fs::create_dir_all(&home).unwrap();
     let base_url = format!("http://127.0.0.1:{port}/v1");
     let mut child = Command::new(env!("CARGO_BIN_EXE_yoyo"))
         .args(["--provider", "anthropic", "--model", "claude-sonnet-4-5"])
         .args(["--base-url", &base_url, "--no-tools", "--max-turns", "1"])
-        .args(["-p", "say ok", "--output", "out.txt"])
+        .args(prompt_args)
+        .args(["--output", "out.txt"])
+        .args(extra)
         .current_dir(cwd)
         .env("HOME", &home)
         .env("XDG_CONFIG_HOME", home.join(".config"))
@@ -135,11 +150,14 @@ fn run_yoyo(cwd: &Path, port: u16) -> Run {
         .env_remove("YOYO_PROVIDER")
         .env_remove("YOYO_RESTRICTED")
         .env("NO_COLOR", "1")
-        .stdin(Stdio::null())
+        .stdin(if piped { Stdio::piped() } else { Stdio::null() })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn yoyo");
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(b"say ok").unwrap();
+    }
     let deadline = Instant::now() + Duration::from_secs(120);
     while child.try_wait().unwrap().is_none() {
         if Instant::now() > deadline {
@@ -151,6 +169,7 @@ fn run_yoyo(cwd: &Path, port: u16) -> Run {
     let out = child.wait_with_output().unwrap();
     Run {
         code: out.status.code(),
+        stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
         stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
     }
 }
@@ -301,6 +320,11 @@ fn start_stall_stub() -> (u16, std::sync::Arc<std::sync::atomic::AtomicBool>) {
 /// send `signal` (kill's spelling) once the partial text has been sent.
 #[cfg(unix)]
 fn run_yoyo_interrupted(cwd: &Path, signal: &str) -> Run {
+    run_yoyo_interrupted_with(cwd, signal, &[])
+}
+
+/// [`run_yoyo_interrupted`] plus `extra` flags.
+fn run_yoyo_interrupted_with(cwd: &Path, signal: &str, extra: &[&str]) -> Run {
     use std::sync::atomic::Ordering;
     let (port, sent) = start_stall_stub();
     let home = cwd.join("home");
@@ -310,6 +334,7 @@ fn run_yoyo_interrupted(cwd: &Path, signal: &str) -> Run {
         .args(["--provider", "anthropic", "--model", "claude-sonnet-4-5"])
         .args(["--base-url", &base_url, "--no-tools", "--max-turns", "1"])
         .args(["-p", "say ok", "--output", "out.txt"])
+        .args(extra)
         .current_dir(cwd)
         .env("HOME", &home)
         .env("XDG_CONFIG_HOME", home.join(".config"))
@@ -358,6 +383,7 @@ fn run_yoyo_interrupted(cwd: &Path, signal: &str) -> Run {
     let out = child.wait_with_output().unwrap();
     Run {
         code: out.status.code(),
+        stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
         stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
     }
 }
@@ -406,4 +432,139 @@ fn an_interrupted_run_creates_no_output_file() {
         "stderr does not say no file was created:\n{err}"
     );
     assert!(!err.contains("wrote response to out.txt"), "{err}");
+}
+
+// ---------------------------------------------------------------------------
+// #1219: `--output-format stream-json` returned before the only writer of the
+// `--output` file, so `-o` wrote nothing and said nothing, exit 0. The stream
+// still goes to stdout (pure NDJSON); the final answer goes to the file under
+// the same rules as every other mode.
+// ---------------------------------------------------------------------------
+
+const STREAM_JSON: &[&str] = &["--output-format", "stream-json"];
+
+/// Every stdout line parses as one JSON value: the write notes stay on stderr.
+fn assert_stdout_is_ndjson(run: &Run) {
+    let lines: Vec<&str> = run.stdout.lines().filter(|l| !l.is_empty()).collect();
+    assert!(!lines.is_empty(), "no NDJSON on stdout\n{}", run.stderr);
+    for line in lines {
+        assert!(
+            serde_json::from_str::<serde_json::Value>(line).is_ok(),
+            "stdout line is not JSON: {line:?}\nstdout:\n{}",
+            run.stdout
+        );
+    }
+}
+
+/// #1219 row (g): a successful stream-json run creates the file with the answer.
+#[test]
+fn stream_json_success_writes_the_output_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let out = tmp.path().join("out.txt");
+    let run = run_yoyo_with(tmp.path(), start_stub(sse_body("end_turn")), STREAM_JSON);
+    let err = &run.stderr;
+    assert_eq!(run.code, Some(0), "stderr:\n{err}");
+    assert_eq!(
+        std::fs::read_to_string(&out).ok().as_deref(),
+        Some(NEW),
+        "stream-json did not write the --output file\n{err}"
+    );
+    assert!(err.contains("wrote response to out.txt"), "{err}");
+    assert_stdout_is_ndjson(&run);
+}
+
+/// #1219 row (h): an existing file is replaced, and stderr says "replaced".
+#[test]
+fn stream_json_success_replaces_the_output_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let out = tmp.path().join("out.txt");
+    std::fs::write(&out, OLD).unwrap();
+    let run = run_yoyo_with(tmp.path(), start_stub(sse_body("end_turn")), STREAM_JSON);
+    let err = &run.stderr;
+    assert_eq!(run.code, Some(0), "stderr:\n{err}");
+    assert_eq!(std::fs::read_to_string(&out).unwrap(), NEW, "{err}");
+    assert!(err.contains("replaced out.txt"), "{err}");
+    assert_stdout_is_ndjson(&run);
+}
+
+/// #1219 row (i): a refused stream-json run keeps the existing file, exit 1.
+#[test]
+fn stream_json_refusal_leaves_an_existing_output_file_untouched() {
+    let tmp = tempfile::tempdir().unwrap();
+    let out = tmp.path().join("out.txt");
+    std::fs::write(&out, OLD).unwrap();
+    let run = run_yoyo_with(tmp.path(), start_stub(sse_body("refusal")), STREAM_JSON);
+    let err = &run.stderr;
+    assert_eq!(run.code, Some(1), "stderr:\n{err}");
+    assert_eq!(std::fs::read_to_string(&out).unwrap(), OLD, "{err}");
+    assert!(
+        err.contains(
+            "out.txt was not written: the run failed, so the existing file was left as it was"
+        ),
+        "{err}"
+    );
+    assert_stdout_is_ndjson(&run);
+}
+
+/// #1219 row (j): an HTTP 400 stream-json run creates no file, exit 1.
+#[test]
+fn stream_json_failed_run_creates_no_output_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let out = tmp.path().join("out.txt");
+    let body =
+        r#"{"type":"error","error":{"type":"invalid_request_error","message":"stub says no"}}"#;
+    let resp = format!(
+        "HTTP/1.1 400 Bad Request\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+        body.len(),
+        body
+    );
+    let run = run_yoyo_with(tmp.path(), start_stub(resp), STREAM_JSON);
+    let err = &run.stderr;
+    assert_ne!(run.code, Some(0), "stderr:\n{err}");
+    assert!(
+        !out.exists(),
+        "a failed run created the --output file\n{err}"
+    );
+    assert!(
+        err.contains("out.txt was not written: the run failed, so no file was created"),
+        "{err}"
+    );
+}
+
+/// #1219 row (k): Ctrl+C mid-reply on stream-json keeps the existing file
+/// (the partial answer is not a final answer) and exits 130, as `-p` does.
+#[cfg(unix)]
+#[test]
+fn stream_json_interrupted_run_leaves_an_existing_output_file_untouched() {
+    let tmp = tempfile::tempdir().unwrap();
+    let out = tmp.path().join("out.txt");
+    std::fs::write(&out, OLD).unwrap();
+    let run = run_yoyo_interrupted_with(tmp.path(), "-INT", STREAM_JSON);
+    let err = &run.stderr;
+    assert_eq!(run.code, Some(130), "stderr:\n{err}");
+    assert_eq!(std::fs::read_to_string(&out).unwrap(), OLD, "{err}");
+    assert!(
+        err.contains(
+            "out.txt was not written: the run was interrupted, so the existing file was left as it was"
+        ),
+        "{err}"
+    );
+}
+
+/// #1219 row (l): the piped (stdin) door's stream-json branch writes too.
+#[test]
+fn stream_json_piped_success_writes_the_output_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let out = tmp.path().join("out.txt");
+    let port = start_stub(sse_body("end_turn"));
+    let run = run_yoyo_door(tmp.path(), port, STREAM_JSON, true);
+    let err = &run.stderr;
+    assert_eq!(run.code, Some(0), "stderr:\n{err}");
+    assert_eq!(
+        std::fs::read_to_string(&out).ok().as_deref(),
+        Some(NEW),
+        "piped stream-json did not write the --output file\n{err}"
+    );
+    assert!(err.contains("wrote response to out.txt"), "{err}");
+    assert_stdout_is_ndjson(&run);
 }
