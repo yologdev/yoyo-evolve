@@ -445,7 +445,7 @@ fn emit_output(
     // `curl -o`, a failed run neither replaces nor creates the file, and says
     // so; the exit code stays what the failure already made it.
     if run_failed_overall(response, is_error) {
-        skip_output_file_for_failed_run(output_path);
+        skip_output_file_for_failed_run(output_path, prompt::interrupted_exit_code().is_some());
         return false;
     }
     write_output_file(output_path, &response.text).is_err()
@@ -455,8 +455,14 @@ fn emit_output(
 /// the json envelope reports as `is_error`: the caller's failure (API error,
 /// dead turn) or a final reply that `incomplete_forces_failure` (a refusal,
 /// a cut at a limit nobody set). One function so `-o` and `is_error` agree.
+///
+/// #1220: a run a signal cut short (exit 130/143/129/131, the same
+/// `interrupted_exit_code` the exit ladder reads) is not a complete answer
+/// either, so it is in this predicate and `-o` keeps the old file.
 fn run_failed_overall(response: &PromptOutcome, is_error: bool) -> bool {
-    is_error || prompt::incomplete_forces_failure(response.incomplete)
+    is_error
+        || prompt::incomplete_forces_failure(response.incomplete)
+        || prompt::interrupted_exit_code().is_some()
 }
 
 /// #966: `--print` and the JSON envelope both make `emit_output` the single

@@ -236,3 +236,174 @@ fn a_successful_run_still_replaces_the_output_file() {
     assert!(err.contains("replaced out.txt"), "{err}");
     assert!(!err.contains("was not written"), "{err}");
 }
+
+// ---------------------------------------------------------------------------
+// #1220: an interrupted run (Ctrl+C, SIGTERM from `timeout`) is not a
+// complete answer either. Before the fix it replaced `out.txt` with whatever
+// had streamed so far (measured on #1220: a 0-byte file, exit 130).
+// ---------------------------------------------------------------------------
+
+/// A stub that streams `message_start` plus one text delta (`NEW`) and then
+/// stalls with the socket open. The flag turns true once that text has been
+/// written and flushed, so the test signals a run that is really mid-turn.
+#[cfg(unix)]
+fn start_stall_stub() -> (u16, std::sync::Arc<std::sync::atomic::AtomicBool>) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    let full = sse_body("end_turn");
+    // Everything up to and including the one text delta; no stop events.
+    let cut = full
+        .find("event: content_block_stop")
+        .expect("delta prefix");
+    let partial = full[..cut].to_string();
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind stub");
+    let port = listener.local_addr().unwrap().port();
+    let sent = Arc::new(AtomicBool::new(false));
+    let sent_thread = Arc::clone(&sent);
+    thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            let partial = partial.clone();
+            let sent = Arc::clone(&sent_thread);
+            thread::spawn(move || {
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut content_length = 0usize;
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                        return;
+                    }
+                    let trimmed = line.trim_end();
+                    if trimmed.is_empty() {
+                        break;
+                    }
+                    if let Some((k, v)) = trimmed.split_once(':') {
+                        if k.eq_ignore_ascii_case("content-length") {
+                            content_length = v.trim().parse().unwrap_or(0);
+                        }
+                    }
+                }
+                let mut req_body = vec![0u8; content_length];
+                let _ = reader.read_exact(&mut req_body);
+                let head = "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncache-control: no-cache\r\nconnection: close\r\n\r\n";
+                let _ = stream.write_all(head.as_bytes());
+                let _ = stream.write_all(partial.as_bytes());
+                let _ = stream.flush();
+                sent.store(true, Ordering::SeqCst);
+                thread::sleep(Duration::from_secs(120));
+            });
+        }
+    });
+    (port, sent)
+}
+
+/// Run `yoyo -p "say ok" -o out.txt` in `cwd` against the stall stub, and
+/// send `signal` (kill's spelling) once the partial text has been sent.
+#[cfg(unix)]
+fn run_yoyo_interrupted(cwd: &Path, signal: &str) -> Run {
+    use std::sync::atomic::Ordering;
+    let (port, sent) = start_stall_stub();
+    let home = cwd.join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let base_url = format!("http://127.0.0.1:{port}/v1");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_yoyo"))
+        .args(["--provider", "anthropic", "--model", "claude-sonnet-4-5"])
+        .args(["--base-url", &base_url, "--no-tools", "--max-turns", "1"])
+        .args(["-p", "say ok", "--output", "out.txt"])
+        .current_dir(cwd)
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("XDG_DATA_HOME", home.join(".local/share"))
+        .env("XDG_STATE_HOME", home.join(".local/state"))
+        .env("XDG_CACHE_HOME", home.join(".cache"))
+        .env("ANTHROPIC_API_KEY", "dummy-test-key")
+        .env_remove("API_KEY")
+        .env_remove("MODEL")
+        .env_remove("YOYO_MODEL")
+        .env_remove("YOYO_PROVIDER")
+        .env_remove("YOYO_RESTRICTED")
+        .env("NO_COLOR", "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn yoyo");
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while !sent.load(Ordering::SeqCst) {
+        if Instant::now() > deadline || child.try_wait().unwrap().is_some() {
+            let _ = child.kill();
+            let out = child.wait_with_output().unwrap();
+            panic!(
+                "the stub never sent the partial text; stderr={}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    // The bytes are flushed; give yoyo a moment to parse them (localhost).
+    thread::sleep(Duration::from_millis(1500));
+    let status = Command::new("kill")
+        .args([signal, &child.id().to_string()])
+        .status()
+        .expect("run kill");
+    assert!(status.success(), "kill {signal} failed");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while child.try_wait().unwrap().is_none() {
+        if Instant::now() > deadline {
+            let _ = child.kill();
+            break;
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    let out = child.wait_with_output().unwrap();
+    Run {
+        code: out.status.code(),
+        stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+    }
+}
+
+/// #1220 row (e): the file existed and a SIGTERM (what `timeout` sends) cut
+/// the run mid-reply. Exit 143, the file is byte-identical, stderr says so.
+#[cfg(unix)]
+#[test]
+fn an_interrupted_run_leaves_an_existing_output_file_untouched() {
+    let tmp = tempfile::tempdir().unwrap();
+    let out = tmp.path().join("out.txt");
+    std::fs::write(&out, OLD).unwrap();
+    let run = run_yoyo_interrupted(tmp.path(), "-TERM");
+    let err = &run.stderr;
+    assert_eq!(run.code, Some(143), "stderr:\n{err}");
+    assert_eq!(
+        std::fs::read_to_string(&out).unwrap(),
+        OLD,
+        "an interrupted run replaced the existing --output file\n{err}"
+    );
+    assert!(
+        err.contains(
+            "out.txt was not written: the run was interrupted, so the existing file was left as it was"
+        ),
+        "stderr does not say the file was kept:\n{err}"
+    );
+    assert!(!err.contains("replaced out.txt"), "{err}");
+}
+
+/// #1220 row (f): no file existed and a Ctrl+C (SIGINT) cut the run. Exit
+/// 130 and no file is created.
+#[cfg(unix)]
+#[test]
+fn an_interrupted_run_creates_no_output_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let out = tmp.path().join("out.txt");
+    let run = run_yoyo_interrupted(tmp.path(), "-INT");
+    let err = &run.stderr;
+    assert_eq!(run.code, Some(130), "stderr:\n{err}");
+    assert!(
+        !out.exists(),
+        "an interrupted run created the --output file\n{err}"
+    );
+    assert!(
+        err.contains("out.txt was not written: the run was interrupted, so no file was created"),
+        "stderr does not say no file was created:\n{err}"
+    );
+    assert!(!err.contains("wrote response to out.txt"), "{err}");
+}
