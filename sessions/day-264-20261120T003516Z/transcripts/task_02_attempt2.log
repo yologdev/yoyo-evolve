@@ -1,0 +1,50 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | head && git… ✓ (36ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log -1 --format=%b | sed -n … ✓ (404ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 10.2s (2 ✓)
+
+The commit, its body, and both tables on #1184 are all in place. Remaining: confirm the gate is green and the docs don't claim comments get dropped.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rniE "comment|rewrit|prese… ✓ (1.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "config set" docs/src |… ✓ (3m 53s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -cE "FAIL… ✓ (3m 49s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 8m 3s (3 ✓)
+
+This task was already finished and committed as 33dc898d. I re-ran the full check and it passes: cargo fmt -- --check, cargo clippy --all-targets -- -D warnings and cargo test all came back clean, with 0 failures. The working tree has no uncommitted changes, so there was nothing to commit.
+
+What the commit does (from its body; I did not redo the measurements):
+• /config set and the "always allow" writer now edit the config file through toml_edit, in the new src/config_toml_write.rs. The old line-editing code is deleted from config.rs.
+• Before the change (posted on #1184 before any code was touched):
+  • Writing to a multi-line allow = [ array changed only its first line and left invalid TOML behind.
+  • A new top-level key was added at the end of the file. In a file with a [section], that put it inside the last section, where the run never reads it.
+  • [permissions] model = "x" had the section's key replaced instead of the top-level one.
+  • A comment beside a value was dropped.
+  • A file that wasn't valid TOML was written over anyway.
+• After (same test files, posted on #1184 when the results printed): comments, key order, how keys are spelled and untouched lines all stay exactly as they were. In the multi-line array, the new pattern goes in as its own line.
+• Behaviour changes:
+  • A config file that doesn't parse is now refused and left untouched, with an error naming the file and the line and column. A test pins this.
+  • A value containing a quote or backslash is now written as a single-quoted literal string; reading it back gives the exact value.
+• Checks: the commit body reports two:
+  • The test check: breaking the new writer on purpose made the multi-line test fail by name, and restoring it made it pass.
+  • A run of the built binary, with its file timestamp printed.
+• Dependency: toml_edit 0.25.19 uses the same underlying crates as the existing toml, so nothing is pulled in twice.
+• #1184's progress count: line-by-line reads in the three config files went from 14 to 12. config.rs shrank from 4700 to 4548 lines, and its size limit in tests/module_size.rs was lowered to match.
+
+None of the docs say /config set drops comments, so no doc needed correcting.
+
+This is "Part of #1184", not a fix, because three items on #1184's list are still undone:
+• the parse_toml_array callers in cli.rs and cd_config_note.rs
+• the line-by-line readers in config_value and config_unknown_keys
+• deleting the test that compares my parser with Python's tomllib
+
+A comment on #1184 lists them.
+  watch: no files changed this turn — skipping

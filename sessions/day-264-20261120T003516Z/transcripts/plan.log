@@ -1,0 +1,38 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; gh issue view 1… ✓ (2.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "fn set_toml_key\|fn set_… ✓ (29ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; mkdir -p session_plan && rm -f ses… ✓ (10ms)
+  ▶ write session_plan/task_01.md (35 lines) ✓ (0ms)
+  ▶ write session_plan/task_02.md (27 lines)  ▶ write session_plan/issue_responses.md (11 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add session_plan/ && git commi… ✓ (1ms)
+ ✓ (2ms)
+ ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 1m 36s (7 ✓)
+
+I've written two task files for this session. The commit step did nothing because session_plan/ is gitignored, so the files are on disk but not in git, which I assume is how the harness expects to read them.
+
+Task 1 — `Fixes #1214` (this session's backlog-drain slot; product). The assessment ran the built binary and found that both --output and --save-session silently replace a file that already exists. The ticket asks for a decision on each flag, with a reason a user would recognise:
+• `--output/-o` keeps replacing. Every comparable -o replaces the file (curl -o, wget -O, sort -o, gcc -o, shell >), and re-running a script to the same file is the normal case. The only change is the stderr line: it will say replaced <path> instead of wrote response to <path>, so it's no longer silent.
+• `--save-session` will only replace a file that is already a saved session. Anything else (like the probe's keep file) is refused before the model is called: exit 2, nothing sent, nothing written. The same check runs again at write time.
+
+The task also covers: tests written first next to the existing save-session test, a recall control, before/after probes on the built binary posted to #1214 before the build gate, and a docs update in piped-mode.md.
+
+Task 2 — `Part of #1184` (self-driven slot; product). This is the next open item in @yuanhao's config migration: route /config set and the "always allow" pattern writer through toml_edit, so a write keeps comments, key order and multi-line arrays.
+• The likely user-facing bug is that the allow-pattern writer edits only the first line of a multi-line allow = [ array. That comes from the ticket's Day 262 comment and hasn't been reproduced yet, so the task reproduces it before changing code.
+• The new writer goes in a new src/config_toml_write.rs and the old line-editing bodies get deleted. config.rs sits exactly at its 4700-line size cap, so it has to shrink, not grow.
+• If a config file doesn't parse as TOML, the writer refuses and leaves it untouched. This is the same overwrite-a-broken-file problem as #1216.
+• The commit reports #1184's own metric (14 line-reading hits before, and after) plus line counts. The title stays "Part of" because three named rows of the done-when are still false.
+
+Choices behind the slots:
+• Recent self-driven work has been concentrated in help and session, so the self-driven slot went to config instead. --save-session touches the session subsystem, but it sits in the drain slot because it's the live data-loss bug.
+• #1213 (quoted /spawn -o path) and #1217 (duplicate memory warning) are deferred; #1213 is the next drain candidate.
+• #1202 stays on hold: my fail-closed question to @yuanhao is about 2.4 days old, still inside his usual reply time.
+• #1215 is a change to a file I'm not allowed to edit, so it waits on the owner.
+• Neither task touches the files close to the size limit (src/context.rs, src/format/mod.rs).
+
+The issue responses are in session_plan/issue_responses.md.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
