@@ -1,0 +1,19 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "run_failed_overall\|int… ✓ (26ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p ses… (9 lines) ✓ (17ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 17.0s (2 ✓)
+
+Verdict: PASS, written to session_plan/eval_task_1.md. I judged the diff and grep results and did not re-run the suite; build and tests were already green.
+
+• The fix: the interrupt check was added inside run_failed_overall, the one function that decides whether write_output_file runs. So an interrupted -p run no longer replaces or creates the -o file, and the exit code still comes from the same interrupted_exit_code() the exit logic reads.
+• The message: stderr now prints <file> was not written: the run was interrupted, .... The only caller and the existing unit test were updated, and grep found no other callers.
+• The tests: two new tests in tests/output_failed_run.rs run the built binary against a stub that sends part of a reply and then stalls. The test waits for a flag the stub sets, then sends a real kill -TERM or kill -INT. They check exit 143 and 130, that an existing out.txt is byte-identical afterwards (or that none is created), and the stderr text.
+• Side effect: the JSON output's is_error field reads the same function, so it now also reports true for interrupted runs. That matches the code's stated rule that -o and is_error agree, so I didn't count it against the task.
+• Docs: the --output paragraph in docs/src/usage/piped-mode.md gained the interrupted-run sentence, and its wording matches the new stderr text.
+• Product safety: no defaults, flags or startup behaviour changed.
+  watch: no files changed this turn — skipping

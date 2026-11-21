@@ -1,0 +1,30 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn interrupted_exit_cod… ✓ (24ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn interrupted_exit_co… ✓ (22ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,30p src/prompt/interrup… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p ses… (9 lines) ✓ (18ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 24.7s (4 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_2.md. I judged from the diff, a few targeted reads, and the harness's passing build and tests. I didn't run the binary myself; the six new tests do run it against a local stub.
+
+• Implementation: the file-writing check that emit_output used is now its own function, write_output_for_outcome. Both stream-json branches call it through a new stream_json_exit_code: the -p path in run_single_prompt and the piped-stdin path in run_piped_mode. It applies the same failure rule (run_failed_overall) as the other modes, so the logic isn't copied. The "wrote / replaced / was not written" lines go to stderr, so stdout stays a plain NDJSON event stream.
+• Tests: six new tests in tests/output_failed_run.rs cover:
+  • a successful run creating the file;
+  • a successful run replacing an existing file;
+  • a refusal leaving the file byte-identical, exit 1;
+  • an HTTP 400 creating no file, exit non-zero;
+  • Ctrl+C keeping the file, exit 130;
+  • the piped-stdin path writing the file.
+
+  Each success and refusal test also checks that every stdout line parses as JSON.
+• One change outside the listed files: src/prompt.rs gets one line that records the Ctrl+C in stream-json mode. Without it the interrupted run couldn't be told apart from a finished one. The task needed it, but note that Ctrl+C under stream-json now exits 130 instead of 0, the same as -p already does.
+• Docs: the --output paragraph in docs/src/usage/piped-mode.md now covers stream-json. It also says that SIGTERM, SIGHUP and SIGQUIT leave the file untouched under stream-json but print no note.
+• Product surface: no defaults, flags or setup behaviour changed, so the opt-in rule from #448 doesn't apply.
+
+I didn't check the commit message body (before/after rows, recall control) or whether the result was posted on #1219.
+  watch: no files changed this turn — skipping

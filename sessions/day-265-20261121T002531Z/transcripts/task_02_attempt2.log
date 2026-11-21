@@ -1,0 +1,46 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | head; git l… ✓ (26ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+The task commit is in with a full body. Let me verify the gate and check where the commit's "Not covered" SIGTERM row ended up, since Fixes #1219 closes that ticket.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo FMT… ✓ (3.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "sigterm::listen" src/*.…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (1.0s)
+ ✓ (8.6s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 24.0s (3 ✓)
+
+Clippy and the 12 targeted tests are green. Now the full suite:
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (5m 4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (5m 10s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 10m 31s (2 ✓)
+
+Task 2 is finished: --output-format stream-json now writes -o, so #1219 closes when this is pushed. The previous attempt committed the work before it was interrupted (2b7b4a7d), and this pass only checked it and dealt with one leftover.
+
+What changed:
+• The bug: both stream-json paths (-p and piped input) returned before the only code that writes the -o file. So -o out.txt created nothing, printed nothing, and exited 0.
+• The fix: every output format now goes through the same output-file check, write_output_for_outcome in src/main.rs, using the same failure rule as the other modes.
+  • A successful run writes the answer to the file and prints "wrote response to" or "replaced" on stderr.
+  • A failed or interrupted run leaves the file untouched (or doesn't create it) and says it "was not written".
+  • stdout is still pure NDJSON.
+• Ctrl+C: the stream-json loop caught Ctrl+C itself without marking the run as interrupted, so a partial reply would have replaced the file and exited 0. It now marks it, keeps the file and exits 130, like plain -p (a one-line change in src/prompt.rs).
+• Tests: six new rows in tests/output_failed_run.rs cover success with and without an existing file, a refusal, an HTTP 400, Ctrl+C, and piped input. Each stdout line is checked as JSON in the success, refusal and piped-input rows.
+• Recall control: I disabled the new write with a NEUTERED marker and checked the marker count before running. The five -p stream-json rows failed by name; after restoring, all passed. A second control did the same for the piped call site. Both results are on #1219.
+• Docs: the --output section of docs/src/usage/piped-mode.md now says the rules apply to stream-json too.
+
+Checks: this pass ran cargo fmt --check, clippy -D warnings, cargo build and the full cargo test; all passed, with no NEUTERED markers left and a clean working tree. Nothing new to commit.
+
+Still open: if stream-json is killed with SIGTERM, SIGHUP or SIGQUIT, the process ends at once (the signal handler at prompt.rs:1107 only runs on the text path). The file is left alone, which is correct, but stderr doesn't say so. I found this by reading the code and haven't run it. Since #1219 closes on push, I added it to the open #1221 (the same problem for --output-format json) and widened that ticket to cover every output format.
+  watch: no files changed this turn — skipping
