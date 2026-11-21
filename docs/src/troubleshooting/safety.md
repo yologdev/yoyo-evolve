@@ -122,8 +122,10 @@ interpreter body (`python3 -c "print('kill -9 1')"`, `node -e`) can
 still ask, because yoyo can't tell a string literal there from code that
 runs (#1222). The hard block on root deletes, which no confirmation
 or `--yes` overrides ([Permissions](../configuration/permissions.md)),
-is a separate check and still refuses a root-delete mention in a message
-that also contains a `$( )` (#1223).
+is a separate check; since Day 266 it also lets a quoted root-delete
+mention through when the command contains a `$( )` elsewhere
+(`git commit -m "fix rm -rf / at $(date)"`), while a `$( )` or backtick
+body that runs one (`echo "x $(rm -rf /)"`) is still blocked (#1223).
 Since Day 263 the body of `bash -c "..."` / `sh -c '...'` (also `zsh`,
 `dash`, `ksh`, flag clusters such as `-lc`, and behind `sudo`/`env`) is
 checked like the command it runs when it is a literal string, so

@@ -73,11 +73,17 @@
 //!   per physical line, every interior line was tokenized as a command, and
 //!   this bullet said "Parsing quotes across lines is a separate decision,
 //!   not made here."
-//! - Command substitution `$(…)` and backticks are not parsed. A command
-//!   containing them, or a quote that never closes, is ALSO scanned a
-//!   second time (per physical line and per logical line) with quote
-//!   characters removed and `$(`, `)` and backticks turned into separators — so `git commit -m "… $(x) rm -rf /"` is
-//!   refused. That too fails closed.
+//! - Command substitution: each `$(…)` and backtick body that bash would
+//!   run (unquoted or inside `"…"`, not inside `'…'`) is read again as a
+//!   command of its own, so `echo "x $(rm -rf /)"` is refused and
+//!   `git commit -m "fix rm -rf / at $(date)"` passes like its form without
+//!   `$(date)` (#1223). A quote that never closes makes the quote state
+//!   meaningless, so that command is ALSO scanned a second time (per
+//!   physical line and per logical line) with quote characters removed and
+//!   `$(`, `)` and backticks turned into separators. That fails closed.
+//!   Superseded, recorded rather than erased: until Day 266 any `$(` or
+//!   backtick, not only an unclosed quote, sent the command to that
+//!   quote-deleting scan, which hard-blocked a quoted mention beside it.
 //! - Other dangerous deletes (`rm -rf /usr`, `find / -delete`, `> /dev/sda`)
 //!   are not on this list and never were.
 //!
@@ -211,45 +217,152 @@ fn match_at_depth(command: &str, depth: usize) -> Option<HardDenyHit> {
             });
     }
     let joined = command.replace("\\\r\n", " ").replace("\\\n", " ");
-    let mut needs_desugar = joined.contains("$(") || joined.contains('`');
+    let mut unbalanced = false;
     let logical = logical_lines(&joined);
     for line in &logical {
         let (segments, balanced) = split_line(line);
-        needs_desugar |= !balanced;
+        unbalanced |= !balanced;
         for seg in &segments {
             if let Some(hit) = match_segment(seg, line, depth) {
                 return Some(hit);
             }
         }
     }
-    if needs_desugar {
-        let desugar = |text: &str| -> String {
-            text.chars()
-                .filter(|c| *c != '\'' && *c != '"')
-                .map(|c| if c == '`' { ';' } else { c })
-                .collect::<String>()
-                .replace("$(", ";")
-                .replace(')', ";")
-        };
-        // Two scans, refuse if either does: every PHYSICAL line (a `$(`
-        // inside quotes runs its own newline-separated commands, and an
-        // unbalanced quote makes the quote state meaningless), and every
-        // LOGICAL line (a quoted newline is then plain whitespace, so the
-        // verdict is never looser than the one-line form's).
-        let physical = desugar(&joined);
-        let scans = physical
-            .lines()
-            .map(String::from)
-            .chain(logical.iter().map(|l| desugar(l)));
-        for line in scans {
-            for seg in &split_line(&line).0 {
-                if let Some(hit) = match_segment(seg, &line, depth) {
-                    return Some(hit);
-                }
+    if !unbalanced {
+        // Every quote closes, so the quotes mean what bash says they mean:
+        // a quoted mention stays one word (as it does without any `$(`),
+        // and each `$(…)`/backtick body bash would RUN is read as a command
+        // of its own (#1223). Superseded, recorded rather than erased: until
+        // Day 266 any `$(`/backtick sent the whole command to the
+        // quote-deleting scan below, so `echo "rm -rf / at $(date)"` was
+        // hard-blocked while `echo "rm -rf /"` passed.
+        return substitution_bodies(&joined)
+            .iter()
+            .find_map(|body| match_at_depth(body, depth + 1));
+    }
+    // An unbalanced quote makes the quote state meaningless, so fail closed:
+    // delete every quote character and turn `$(`, `)` and backticks into
+    // separators.
+    let desugar = |text: &str| -> String {
+        text.chars()
+            .filter(|c| *c != '\'' && *c != '"')
+            .map(|c| if c == '`' { ';' } else { c })
+            .collect::<String>()
+            .replace("$(", ";")
+            .replace(')', ";")
+    };
+    // Two scans, refuse if either does: every PHYSICAL line and every
+    // LOGICAL line (a quoted newline is then plain whitespace, so the
+    // verdict is never looser than the one-line form's).
+    let physical = desugar(&joined);
+    let scans = physical
+        .lines()
+        .map(String::from)
+        .chain(logical.iter().map(|l| desugar(l)));
+    for line in scans {
+        for seg in &split_line(&line).0 {
+            if let Some(hit) = match_segment(seg, &line, depth) {
+                return Some(hit);
             }
         }
     }
     None
+}
+
+/// Every top-level `$(…)` and backtick body of `text`, read with bash's
+/// quoting: a body inside `"…"` or unquoted runs, one inside `'…'` (or
+/// after a backslash) is text and is not returned. Nested bodies are found
+/// when [`match_at_depth`] re-reads each body. Written for this guard
+/// rather than reusing `safety::strip_quoted_regions`, which blanks every
+/// quoted region in place: that would also blank a quote-split command
+/// word (`r"m"`) and a quoted argument inside a body (`$(rm -rf "/")`),
+/// both of which this guard must still read as command text. A body that
+/// never closes runs to the end of `text` (fail closed).
+fn substitution_bodies(text: &str) -> Vec<String> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut bodies = Vec::new();
+    scan_unquoted(&chars, &mut 0, false, &mut bodies);
+    bodies
+}
+
+/// Unquoted context from `*i`. With `in_subst`, stops after the `)` that
+/// closes the enclosing `$(` and returns true; false when `chars` ran out.
+fn scan_unquoted(chars: &[char], i: &mut usize, in_subst: bool, bodies: &mut Vec<String>) -> bool {
+    let mut parens = 0usize;
+    while let Some(&c) = chars.get(*i) {
+        *i += 1;
+        match c {
+            '\'' => {
+                // `$'…'` (ANSI-C) honours backslash escapes.
+                let ansi = *i >= 2 && chars[*i - 2] == '$';
+                while let Some(&q) = chars.get(*i) {
+                    *i += 1;
+                    if q == '\\' && ansi {
+                        *i += 1;
+                    } else if q == '\'' {
+                        break;
+                    }
+                }
+            }
+            '"' => scan_double_quoted(chars, i, bodies),
+            '\\' => *i += 1,
+            '`' => bodies.push(backtick_body(chars, i)),
+            '$' if chars.get(*i) == Some(&'(') => {
+                *i += 1;
+                bodies.push(paren_body(chars, i));
+            }
+            '(' => parens += 1,
+            ')' if in_subst && parens == 0 => return true,
+            ')' => parens = parens.saturating_sub(1),
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Inside `"…"` (opening quote consumed): only `$(…)` and backtick bodies
+/// are collected; everything else is literal text.
+fn scan_double_quoted(chars: &[char], i: &mut usize, bodies: &mut Vec<String>) {
+    while let Some(&c) = chars.get(*i) {
+        *i += 1;
+        match c {
+            '"' => return,
+            '\\' => *i += 1,
+            '`' => bodies.push(backtick_body(chars, i)),
+            '$' if chars.get(*i) == Some(&'(') => {
+                *i += 1;
+                bodies.push(paren_body(chars, i));
+            }
+            _ => {}
+        }
+    }
+}
+
+/// The text of a `$(…)` body (`$(` consumed), up to its closing `)`.
+fn paren_body(chars: &[char], i: &mut usize) -> String {
+    let start = *i;
+    // Bodies nested in this one are found when it is re-read.
+    let closed = scan_unquoted(chars, i, true, &mut Vec::new());
+    let end = if closed { *i - 1 } else { chars.len() };
+    chars[start.min(end)..end].iter().collect()
+}
+
+/// The text of a backtick body (opening backtick consumed), with bash's
+/// backtick unescaping of `` \` ``, `\\` and `\$`.
+fn backtick_body(chars: &[char], i: &mut usize) -> String {
+    let mut body = String::new();
+    while let Some(&c) = chars.get(*i) {
+        *i += 1;
+        match c {
+            '`' => break,
+            '\\' if matches!(chars.get(*i), Some('`' | '\\' | '$')) => {
+                body.push(chars[*i]);
+                *i += 1;
+            }
+            _ => body.push(c),
+        }
+    }
+    body
 }
 
 /// Splits `text` on UNQUOTED newlines only (#1101): a newline inside `'…'`,
@@ -1021,5 +1134,65 @@ mod tests {
             cmd = format!("eval {cmd:?}");
         }
         assert_eq!(label_of(&cmd), Some(RULE_RM_ROOT), "{cmd}");
+    }
+
+    /// #1223: a quoted mention passes whether or not the command also has a
+    /// `$(…)` or backtick somewhere; before Day 266 any substitution sent
+    /// the whole command to the quote-deleting scan, so each of these was
+    /// hard-blocked (before/after table on #1223). Expected values are
+    /// written from what bash runs, not from another matcher.
+    const MENTION_BESIDE_SUBSTITUTION: &[&str] = &[
+        "git commit -m \"fix rm -rf / at $(date)\"",
+        "echo \"rm -rf / at $(date)\"",
+        "printf '%s' \"rm -rf / at `date`\"",
+        "gh pr create --body \"mkfs.ext4 /dev/sda `date`\"",
+        "echo 'dd if=/dev/zero of=/dev/sda' \"$(date)\"",
+        "echo \"x\n$(date)\nrm -rf ~\"",
+        // Single quotes: bash runs no body here.
+        "echo '$(rm -rf /)'",
+        "echo '`rm -rf /*`'",
+        // `\"` then `)` closes the body early, so the rest is text: bash
+        // prints `echo "$(echo \")\"; echo HI)"` as `""; echo HI)`.
+        "echo \"$(echo \\\")\\\"; rm -rf /)\"",
+    ];
+
+    /// The executing twins: a body, a quote-split word or a second command
+    /// beside the same mention still refuses.
+    const SUBSTITUTION_STILL_REFUSES: &[(&str, &str)] = &[
+        ("\"$(rm -rf /)\"", RULE_RM_ROOT),
+        ("`rm -rf /`", RULE_RM_ROOT),
+        ("echo \"x $(rm -rf /)\"", RULE_RM_ROOT),
+        ("echo \"rm -rf / $(rm -rf /)\"", RULE_RM_ROOT),
+        ("echo \"`rm -rf /*`\"", RULE_RM_ROOT_GLOB),
+        ("echo \"a $(echo \"$(rm -rf ~)\")\"", RULE_RM_ROOT),
+        ("echo \"a $(echo 'b' && mkfs.ext4 /dev/sda)\"", RULE_MKFS),
+        ("echo \"$(r'm' -rf /)\"", RULE_RM_ROOT),
+        ("'r'm -rf / `date`", RULE_RM_ROOT),
+        ("r\"m\" -rf \"/\" $(date)", RULE_RM_ROOT),
+        (
+            "git commit -m \"rm -rf / $(date)\" && rm -rf /",
+            RULE_RM_ROOT,
+        ),
+        ("echo \"x $(date)\"\ndd if=/dev/zero of=/dev/sda", RULE_DD),
+        // A body that never closes runs to the end (fail closed).
+        ("echo \"$(rm -rf /", RULE_RM_ROOT),
+        // An unbalanced quote keeps the quote-deleting scan.
+        ("echo \"rm -rf / $(date)", RULE_RM_ROOT),
+    ];
+
+    #[test]
+    fn quoted_mention_beside_a_substitution_passes() {
+        let wrong: Vec<_> = MENTION_BESIDE_SUBSTITUTION
+            .iter()
+            .filter(|cmd| label_of(cmd).is_some())
+            .collect();
+        assert!(wrong.is_empty(), "hard-blocked a mention: {wrong:?}");
+    }
+
+    #[test]
+    fn substitution_bodies_and_twins_still_refuse() {
+        for (cmd, label) in SUBSTITUTION_STILL_REFUSES {
+            assert_eq!(label_of(cmd), Some(*label), "should refuse: {cmd:?}");
+        }
     }
 }
