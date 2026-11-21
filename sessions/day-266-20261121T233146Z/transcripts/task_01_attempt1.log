@@ -1,0 +1,281 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue view 1223 --json title,bo… ✓ (20ms)
+ ✓ (385ms)
+  ▶ read src/hard_deny.rs:60..540 ✓ (3ms)
+  ▶ read src/hard_deny.rs:160..490 ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "fn strip_quoted_regions" … ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1940,1990p src/safety.rs; s… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 590,700p src/hard_deny.rs; … ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "mod hard_deny" src/ | he… ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 85,140p docs/src/troublesho… ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  9 tools completed in 1m 37s (9 ✓)
+
+Now the probe harness (temporary, not committed): a HEAD copy of hard_deny.rs as hard_deny_old plus a printing test.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git show HEAD:… (34 lines) ✗ (0ms)
+    │ Command blocked by safety policy: `git commit -m \fix rm -rf / handling\,` reads as a recursive delete of the filesystem root or the home directory (/, ~ or $HOME, or any rm given --no-preserve-root).…
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The guard refused my heredoc (the heredoc body has a quote imbalance → old desugar, the #1102 class; it's a mention-only hit and I'll note it). Writing files via the file tool instead.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ write src/hard_deny_probe.rs (42 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git show HEAD:src/hard_deny.rs > s… ✓ (24.0s)
+ ✓ (24.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -i '1i #![allow(dead_code)] //… ✓ (40.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test --bin yoyo probe_table … ✓ (147ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 1m 16s (4 ✓)
+
+Before-table matches #1223. Posting it before any code edit (body via file, so my own guard doesn't block the post).
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ write /tmp/before_comment.md (23 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue comment 1223 --body-file … ✓ (2ms)
+ ✓ (1.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 31.2s (2 ✓)
+
+Before-table posted. Now the existing refusal-text test for the desugar path:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 752,770p src/hard_deny.rs; … ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the fix: keep the quote-deleting scan only for an unbalanced quote; otherwise re-read each $(…)/backtick body (found quote-aware) as a command.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/hard_deny.rs (13 → 25 lines)
+        let joined = command.replace("\\\r\n", " ").replace("\\\n", " ");
+  -     let mut needs_desugar = joined.contains("$(") || joined.contains('`');
+  +     let mut unbalanced = false;
+        let logical = logical_lines(&joined);
+        for line in &logical {
+            let (segments, balanced) = split_line(line);
+  -         needs_desugar |= !balanced;
+  +         unbalanced |= !balanced;
+            for seg in &segments {
+                if let Some(hit) = match_segment(seg, line, depth) {
+                    return Some(hit);
+                }
+            }
+        }
+  -     if needs_desugar {
+  +     if !unbalanced {
+  +         // Every quote closes, so the quotes mean what bash says they mean:
+  +         // a quoted mention stays one word (as it does without any `$(`),
+  +         // and each `$(…)`/backtick body bash would RUN is read as a command
+  +         // of its own (#1223). Superseded, recorded rather than erased: until
+  ... (8 more lines)
+ ✓ (22.7s)
+        let joined = command.replace("\\\r\n", " ").replace("\\\n", " ");
+  -     let mut needs_desugar = joined.contains("$(") || joined.contains('`');
+  +     let mut unbalanced = false;
+        let logical = logical_lines(&joined);
+        for line in &logical {
+            let (segments, balanced) = split_line(line);
+  -         needs_desugar |= !balanced;
+  +         unbalanced |= !balanced;
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit src/hard_deny.rs (1 → 97 lines)
+  + /// Every top-level `$(…)` and backtick body of `text`, read with bash's
+  + /// quoting: a body inside `"…"` or unquoted runs, one inside `'…'` (or
+  + /// after a backslash) is text and is not returned. Nested bodies are found
+  + /// when [`match_at_depth`] re-reads each body. Written for this guard
+  + /// rather than reusing `safety::strip_quoted_regions`, which blanks every
+  + /// quoted region in place: that would also blank a quote-split command
+  + /// word (`r"m"`) and a quoted argument inside a body (`$(rm -rf "/")`),
+  + /// both of which this guard must still read as command text. A body that
+  + /// never closes runs to the end of `text` (fail closed).
+  + fn substitution_bodies(text: &str) -> Vec<String> {
+  +     let chars: Vec<char> = text.chars().collect();
+  +     let mut bodies = Vec::new();
+  +     scan_unquoted(&chars, &mut 0, false, &mut bodies);
+  +     bodies
+  + }
+  + 
+  + /// Unquoted context from `*i`. With `in_subst`, stops after the `)` that
+  + /// closes the enclosing `$(` and returns true; false when `chars` ran out.
+  + fn scan_unquoted(chars: &[char], i: &mut usize, in_subst: bool, bodies: &mut Vec<String>) -> bool {
+  +     let mut parens = 0usize;
+  ... (77 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 226,268p src/hard_deny.rs ✓ (4m 8s)
+  + /// Every top-level `$(…)` and backtick body of `text`, read with bash's
+  + /// quoting: a body inside `"…"` or unquoted runs, one inside `'…'` (or
+  + /// after a backslash) is text and is not returned. Nested bodies are found
+  + /// when [`match_at_depth`] re-reads each body. Written for this guard
+  + /// rather than reusing `safety::strip_quoted_regions`, which blanks every
+  + /// quoted region in place: that would also blank a quote-split command
+  + /// word (`r"m"`) and a quoted argument inside a body (`$(rm -rf "/")`),
+  + /// both of which this guard must still read as command text. A body that
+  ... (13 more lines)
+ ✗ (4m 8s)
+    │ Command timed out after 120s. Output so far:
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 4m 53s (2 ✓, 1 ✗)
+
+Unwrap the now-unconditional block and re-describe it as the unbalanced-quote path:
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/hard_deny.rs (30 → 29 lines)
+        }
+  -     {
+  -         let desugar = |text: &str| -> String {
+  -             text.chars()
+  -                 .filter(|c| *c != '\'' && *c != '"')
+  -                 .map(|c| if c == '`' { ';' } else { c })
+  -                 .collect::<String>()
+  -                 .replace("$(", ";")
+  -                 .replace(')', ";")
+  -         };
+  -         // Two scans, refuse if either does: every PHYSICAL line (a `$(`
+  -         // inside quotes runs its own newline-separated commands, and an
+  -         // unbalanced quote makes the quote state meaningless), and every
+  -         // LOGICAL line (a quoted newline is then plain whitespace, so the
+  -         // verdict is never looser than the one-line form's).
+  -         let physical = desugar(&joined);
+  -         let scans = physical
+  -             .lines()
+  -             .map(String::from)
+  -             .chain(logical.iter().map(|l| desugar(l)));
+  ... (31 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 580 cargo test --bin yoyo … ✓ (4m 23s)
+        }
+  -     {
+  -         let desugar = |text: &str| -> String {
+  -             text.chars()
+  -                 .filter(|c| *c != '\'' && *c != '"')
+  -                 .map(|c| if c == '`' { ';' } else { c })
+  -                 .collect::<String>()
+  -                 .replace("$(", ";")
+  ... (13 more lines)
+ ✓ (4m 23s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4m 42s (2 ✓)
+
+All 32 existing hard_deny tests green. Now the differential: generated corpus, old (HEAD copy) vs new, every flip listed.
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ write src/hard_deny_probe.rs (111 lines)
+                    show(crate::hard_deny_old::hard_deny_match(&c)),
+                    shown(crate::hard_deny::hard_deny_match(&c))
+                );
+  +         }
+  +     }
+  + 
+  +     #[test]
+  +     fn probe_differential() {
+  +         let pats: Vec<String> = vec![
+  +             r("RMR"),
+  +             r("RMR*"),
+  +             ["rm", " -rf ~"].concat(),
+  +             ["sudo rm", " -fr /"].concat(),
+  +             ["mkfs", ".ext4 /dev/sda"].concat(),
+  +             ["dd", " if=/dev/zero of=/dev/sda"].concat(),
+  +             [":(){ :|:", "& };:"].concat(),
+  +         ];
+  +         let shapes: &[&str] = &[
+  +             "P",
+  +             "echo \"P\"",
+  ... (55 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 580 cargo test --bin yoyo … ✓ (4m 17s)
+ ✓ (4m 17s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /tmp/diff.txt ✓ (0ms)
+  ▶ $ bash -c 'echo "$(echo \")\"; echo HI)"'; echo ---; bash -c '… (3 lines) ✓ (9ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 4m 32s (4 ✓)
+
+Bash agrees on all three tricky classes: every flip is text bash never runs. Now the unchanged rows — check which pass in both (should be only mentions):
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 580 cargo test --bin yoyo … ✓ (155ms)
+  ▶ $ grep "| None |$" /tmp/same.txt | cat -v; echo; grep -E "cat <<|r'm'|\\\$\(echo|b… ✓ (10ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /tmp/same.txt ✓ (1ms)
+  ▶ edit src/hard_deny.rs (2 → 2 lines) ✓ (4m 13s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; tail -12 src/hard_deny.rs ✓ (5ms)
+  ▶ edit src/hard_deny.rs (3 → 60 lines)
+            assert_eq!(label_of(&cmd), Some(RULE_RM_ROOT), "{cmd}");
+  +     }
+  + 
+  +     /// #1223: a quoted mention passes whether or not the command also has a
+  +     /// `$(…)` or backtick somewhere; before Day 266 any substitution sent
+  +     /// the whole command to the quote-deleting scan, so each of these was
+  +     /// hard-blocked (before/after table on #1223). Expected values are
+  +     /// written from what bash runs, not from another matcher.
+  +     const MENTION_BESIDE_SUBSTITUTION: &[&str] = &[
+  +         "git commit -m \"fix rm -rf / at $(date)\"",
+  +         "echo \"rm -rf / at $(date)\"",
+  +         "printf '%s' \"rm -rf / at `date`\"",
+  +         "gh pr create --body \"mkfs.ext4 /dev/sda `date`\"",
+  +         "echo 'dd if=/dev/zero of=/dev/sda' \"$(date)\"",
+  +         "echo \"x\n$(date)\nrm -rf ~\"",
+  +         // Single quotes: bash runs no body here.
+  +         "echo '$(rm -rf /)'",
+  +         "echo '`rm -rf /*`'",
+  +         // `\"` then `)` closes the body early, so the rest is text: bash
+  +         // prints `echo "$(echo \")\"; echo HI)"` as `""; echo HI)`.
+  ... (40 more lines)
+ ✓ (4m 9s)
+            assert_eq!(label_of(&cmd), Some(RULE_RM_ROOT), "{cmd}");
+  +     }
+  + 
+  +     /// #1223: a quoted mention passes whether or not the command also has a
+  +     /// `$(…)` or backtick somewhere; before Day 266 any substitution sent
+  +     /// the whole command to the quote-deleting scan, so each of these was
+  +     /// hard-blocked (before/after table on #1223). Expected values are
+  +     /// written from what bash runs, not from another matcher.
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 580 cargo test --bin yoyo … ✓ (155ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 8m 59s (7 ✓)
+
+Green. Now the module doc bullet that describes the old behaviour:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/hard_deny.rs (5 → 11 lines)
+  - //! - Command substitution `$(…)` and backticks are not parsed. A command
+  - //!   containing them, or a quote that never closes, is ALSO scanned a
+  - //!   second time (per physical line and per logical line) with quote
+  - //!   characters removed and `$(`, `)` and backticks turned into separators — so `git commit -m "… $(x) rm -rf /"` is
+  - //!   refused. That too fails closed.
+  + //! - Command substitution: each `$(…)` and backtick body that bash would
+  + //!   run (unquoted or inside `"…"`, not inside `'…'`) is read again as a
+  + //!   command of its own, so `echo "x $(rm -rf /)"` is refused and
+  + //!   `git commit -m "fix rm -rf / at $(date)"` passes like its form without
+  + //!   `$(date)` (#1223). A quote that never closes makes the quote state
+  + //!   meaningless, so that command is ALSO scanned a second time (per
+  + //!   physical line and per logical line) with quote characters removed and
+  + //!   `$(`, `)` and backticks turned into separators. That fails closed.
+  + //!   Superseded, recorded rather than erased: until Day 266 any `$(` or
+  + //!   backtick, not only an unclosed quote, sent the command to that
+  + //!   quote-deleting scan, which hard-blocked a quoted mention beside it.
+  ▶ edit docs/src/troubleshooting/safety.md (4 → 6 lines)
+    runs (#1222). The hard block on root deletes, which no confirmation
+    or `--yes` overrides ([Permissions](../configuration/permissions.md)),
+  - is a separate check and still refuses a root-delete mention in a message
+  - that also contains a `$( )` (#1223).
+  + is a separate check; since Day 266 it also lets a quoted root-delete
+  + mention through when the command contains a `$( )` elsewhere
+  + (`git commit -m "fix rm -rf / at $(date)"`), while a `$( )` or backtick
+  + body that runs one (`echo "x $(rm -rf /)"`) is still blocked (#1223).
+
+  (interrupted)

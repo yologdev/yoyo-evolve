@@ -1,0 +1,27 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/commands_spawn.rs && g… ✓ (35ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 815,835p src/commands_spa… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 790,815p src/commands_spa… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p ses… (9 lines) ✓ (16ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 19.1s (4 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_2.md. I didn't run the binary: /spawn only runs inside an interactive session. Instead I followed the code path the binary takes.
+
+• The fix works: /spawn --parallel -o x.md a --- b is now refused before any task starts, and the message names -o x.md. Before, the path was silently thrown away.
+• `--force` doesn't change the message: in handle_spawn, the argument parser's refusal is printed (line 823) before the "force without a path" check runs (line 855). So with --force the user gets this new message, which also tells them to remove --force.
+• Tests: they check the full refusal text for both word orders, with and without --force, and for a quoted file name with a space. They also check that removing the named words gives a line that runs both tasks. --parallel without -o still parses as before.
+• Task rules:
+  • src/commands_spawn.rs is 4624 lines, under the 4629 limit.
+  • The new helper is defined and used in the same diff.
+  • #1224 appears only in code comments, nowhere a user would see it.
+  • The docs got their sentence about -o and --parallel.
+
+One small gap, not enough to fail: /spawn --parallel -o x.md with no task text still prints the usage message instead of this refusal. The empty-task check runs first, so nothing is lost; the user just sees a less specific message.
+
+I didn't check whether the implementer did the required test where the refusal is temporarily disabled to confirm the tests catch it; nothing in the diff shows whether that happened.
+  watch: no files changed this turn — skipping

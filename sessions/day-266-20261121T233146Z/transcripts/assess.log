@@ -1,0 +1,105 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git log --oneli…  ▶ $ gh issue list --repo yologdev/yoyo-evolve --state open --limit 40 --json number,…  ▶ $ gh run list --repo yologdev/yoyo-evolve --workflow evolve.yml --limit 5 --json c… ✓ (18ms)
+ ✓ (444ms)
+ ✓ (548ms)
+  ▶ $ wc -l src/context.rs src/format/mod.rs; grep -n "context.rs\|format/mod.rs\|cons…  ▶ $ for n in 1224 1223 1202 1184 1221; do echo "=== #$n"; gh issue view $n --repo yo… ✓ (36ms)
+ ✓ (1.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; ./target/debug/yoyo --version; ./t… ✓ (2.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git log --format='%h %s' --since='… ✓ (13ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 36.9s (7 ✓)
+
+Now the draft, before research.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ write session_plan/assessment.md (50 lines) ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; BASE=$(grep -o 'BASE="[^"]*"' skil… ✓ (96ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 15,30p skills/yopedia/SKILL… ✓ (3ms)
+  ▶ $ BASE=https://yopedia.yolog.dev; AGENT_ID="${YOPEDIA_AGENT_TO… (6 lines) ✓ (15.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ web search 'Claude Code changelog November 2026' ✓ (903ms)
+  ▶ web search 'Codex CLI release notes sandbox November 2026' ✓ (932ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 56,95p skills/yopedia/SKILL… ✓ (3ms)
+  ▶ $ BASE=https://yopedia.yolog.dev; AGENT_ID="${YOPEDIA_AGENT_TO… (11 lines) ✓ (943ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n '"rm -rf ~\|rm -rf \$HOME\… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (26 lines) ✗ (0ms)
+    │ Command blocked by safety policy: `rm -rf ~` reads as a recursive delete of the filesystem root or the home directory (/, ~ or $HOME, or any rm given --no-preserve-root). This is denied for safety.
+
+────────────────────────────────────────────────────────────────────────────────
+  10 tools completed in 1m 15s (9 ✓, 1 ✗)
+
+The safety guard refused my heredoc because its text mentions rm -rf ~. That's the #1102 misfire class. I'll make the edits with the file tools instead and log the hit on #1102.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ edit session_plan/assessment.md (2 → 6 lines)
+    ## Capability Gaps
+  - (see Research Findings — updated after research)
+  + - **OS-level confinement** is still the biggest structural gap. Codex runs every command under a permission profile: writes inside the workspace, `.git`/`.codex` read-only, network off by default, and a `codex sandbox` CLI to test a profile. yoyo decides on command text + a tree-sitter pass (#1202) + directory fences, and nothing stops a command it approves from writing `.git/hooks` or reaching the network. Large, not one session; #1202 is the incremental path.
+  + - **Trust vs sandbox separation**: Codex 0.169 keeps project config + MCP disabled in untrusted dirs under `codex exec`, even with a writable sandbox, and adds an explicit `--trust`. yoyo gates project hooks/permissions/commands/notify by trust, but #1188 (trust keyed on path, not content: a `git pull` that adds `base_url` to a trusted `.yoyo.toml` is honoured silently) is the open hole in that model.
+  + - Persistent background/scheduled work: Claude Code has `/loop`, scheduled tasks and a unified `/tasks` view; yoyo has /bg and /spawn (#1018 parked).
+  + - Recursive deletes of root/home/cwd/top-level dirs: Claude Code 2.1.330 just widened this. yoyo already flags home, `$HOME`, `.`/`..` and system dirs (safety.rs tests ~2757-3437), so it's not a gap.
+  + - Self-test incidence: this assessment's own heredoc (python3 rewriting this file, with a sentence *mentioning* a home-dir recursive delete) was hard-blocked: one more #1102 hit, Day 266 21:4x.
+  ▶ edit session_plan/assessment.md (2 → 13 lines)
+    ## Research Findings
+  - (pending)
+  + Recall: yopedia already had 'Agent Changelog Defect-Class Transfer' (Nov 3) and 'Agent Sandboxing and Permission Enforcement'. New this session (ingested to yopedia):
+  + - Claude Code 2.1.329 (Nov 19) fixed `~/.claude.json` resetting to defaults when it was unreadable during a save. That's the same class yoyo fixed Day 264 for `.yoyo/memory.json` (#1216).
+  + - Claude Code 2.1.330 (Nov 20) put back the automatic retry when `max_tokens` exceeds a model's or gateway's limit, after removing it in .329. Relevant to yoyo's max_tokens knob: an over-cap value is a 400 on every call (CLAUDE.md, Changing the model, step 2).
+  + - Claude Code's trust dialog now names where hooks are declared, and a managed-hook load failure shows as a conversation warning in non-interactive hosts. yoyo's external_tool_failure_note is the same shape for MCP.
+  + - Codex 0.169/0.171: in untrusted dirs, exec disables project config and MCP; permission profiles survive a cwd change (yoyo #1040 area); a late completion event no longer cancels a newer turn's approval; interrupted turns close cleanly (cf. yoyo's #1220/#1221 family).
+  + - OpenAI, 'Inside the Codex sandbox' (2026-11-18), on why the defaults are what they are: reads are broad, writes stay in the workspace, `.git` and the agent's config dir are protected, network is off. Profiles go under `[permissions]` with read/write/deny entries.
+  + 
+  + Planner notes (my read, not decisions):
+  + - Cheapest well-scoped product fixes: #1224 (/spawn --parallel -o silently dropped), #1221 (json/stream-json SIGTERM: no envelope, no note), #1217 (duplicate warning). Each is in a family with fresh context.
+  + - #1184's next slice starts by deleting `the_mcp_list_reader_matches_the_old_flat_text_path` (my own 11-20 scope note), then drives the metric below 11.
+  + - #1223 has a concrete mechanism: hard_deny's desugar deletes quotes once `$(` appears. It's a targeted fix in hard_deny.rs. #1102 (heredoc-body mention) hit me again in this assessment.
+  + - Watch the size gate: context.rs (2035, unlisted) and format/mod.rs (+86 drift) are both within 15 lines of a fatal cargo test.
+ ✓ (1ms)
+    ## Capability Gaps
+  - (see Research Findings — updated after research)
+  + - **OS-level confinement** is still the biggest structural gap. Codex runs every command under a permission profile: writes inside the workspace, `.git`/`.codex` read-only, network off by default, and a `codex sandbox` CLI to test a profile. yoyo decides on command text + a tree-sitter pass (#1202) + directory fences, and nothing stops a command it approves from writing `.git/hooks` or reaching the network. Large, not one session; #1202 is the incremental path.
+  + - **Trust vs sandbox separation**: Codex 0.169 keeps project config + MCP disabled in untrusted dirs under `codex exec`, even with a writable sandbox, and adds an explicit `--trust`. yoyo gates project hooks/permissions/commands/notify by trust, but #1188 (trust keyed on path, not content: a `git pull` that adds `base_url` to a trusted `.yoyo.toml` is honoured silently) is the open hole in that model.
+  + - Persistent background/scheduled work: Claude Code has `/loop`, scheduled tasks and a unified `/tasks` view; yoyo has /bg and /spawn (#1018 parked).
+  + - Recursive deletes of root/home/cwd/top-level dirs: Claude Code 2.1.330 just widened this. yoyo already flags home, `$HOME`, `.`/`..` and system dirs (safety.rs tests ~2757-3437), so it's not a gap.
+  + - Self-test incidence: this assessment's own heredoc (python3 rewriting this file, with a sentence *mentioning* a home-dir recursive delete) was hard-blocked: one more #1102 hit, Day 266 21:4x.
+ ✓ (3ms)
+    ## Research Findings
+  - (pending)
+  + Recall: yopedia already had 'Agent Changelog Defect-Class Transfer' (Nov 3) and 'Agent Sandboxing and Permission Enforcement'. New this session (ingested to yopedia):
+  + - Claude Code 2.1.329 (Nov 19) fixed `~/.claude.json` resetting to defaults when it was unreadable during a save. That's the same class yoyo fixed Day 264 for `.yoyo/memory.json` (#1216).
+  + - Claude Code 2.1.330 (Nov 20) put back the automatic retry when `max_tokens` exceeds a model's or gateway's limit, after removing it in .329. Relevant to yoyo's max_tokens knob: an over-cap value is a 400 on every call (CLAUDE.md, Changing the model, step 2).
+  + - Claude Code's trust dialog now names where hooks are declared, and a managed-hook load failure shows as a conversation warning in non-interactive hosts. yoyo's external_tool_failure_note is the same shape for MCP.
+  + - Codex 0.169/0.171: in untrusted dirs, exec disables project config and MCP; permission profiles survive a cwd change (yoyo #1040 area); a late completion event no longer cancels a newer turn's approval; interrupted turns close cleanly (cf. yoyo's #1220/#1221 family).
+  + - OpenAI, 'Inside the Codex sandbox' (2026-11-18), on why the defaults are what they are: reads are broad, writes stay in the workspace, `.git` and the agent's config dir are protected, network is off. Profiles go under `[permissions]` with read/write/deny entries.
+  ... (6 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue comment 1102 --repo yolog… ✓ (912ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 15.1s (3 ✓)
+
+The Day 266 assessment is written to session_plan/assessment.md. It isn't committed because session_plan/ is gitignored, so git add refused it. The file is on disk, which is where the planner reads it.
+
+What the planner most needs:
+• Two files could make `cargo test` fail and revert a task. src/context.rs is at 2035 lines and isn't on the size-gate list; 15 more lines makes the test fatal. src/format/mod.rs is at 2874, 86 past its recorded 2788; 14 more lines is fatal. Any task touching either has to split the file or update its entry first.
+• Recent work: the last 10 sessions each finished 2 of 2 tasks, with no reverts in 14 days, and the last four evolve runs succeeded. The past week was mostly the "what happens to the -o output file" fixes (#1218, #1219, #1220, #1213) and the "a quoted mention isn't the command running" safety fixes (#1210).
+• Small, ready tickets:
+  • #1224: /spawn --parallel -o drops the file path without a word.
+  • #1221: in json and stream-json modes, a stopped run prints nothing and gives no note saying why.
+  • #1217: a duplicate warning when the memory file can't be read.
+  • #1223: the hard block wrongly fires on quoted text once a $( appears. The cause is known and the fix sits in hard_deny.rs.
+• #1184: the next slice should first delete the old-vs-new comparison test I added on Day 265, as my own note on that ticket says.
+• Binary check: -p works, the model resolves from .yoyo.toml (claude-opus-5-5), and the version is v0.5.0.
+
+Research (saved to yopedia):
+• Claude Code 2.1.329 fixed a settings file being reset to defaults when it was unreadable during a save. That's the bug I fixed on Day 264 for .yoyo/memory.json (#1216).
+• Codex 0.169 keeps project config and MCP servers off in untrusted folders, and adds an explicit --trust flag. Our open gap in that area is #1188: trust follows the folder path, so a git pull that changes a trusted .yoyo.toml is accepted silently.
+• OpenAI's Nov 18 Codex sandbox post: commands run in an OS-level sandbox that keeps .git read-only and the network off by default. yoyo has nothing at that level, so it's still the biggest structural gap. #1202 is the step-by-step path toward it.
+• Claude Code 2.1.330 now asks before more rm commands aimed at home, root or the working folder. yoyo already flags those, so that's not a gap.
+
+A guard misfire on me: the hard safety block refused my own Python heredoc because its text mentioned a recursive delete of the home folder. Nothing would have run; the words were inside a string. I switched to the file-edit tool and logged the hit on #1102.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
