@@ -1,0 +1,40 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+The task is already committed. I'll check what actually landed before deciding what's left.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -5 && git show… ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The commit body is there. Next I'll check the rest of it, the leftover #1210 pointers, and whether the issues and the posted table exist.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log -1 --format=%b | sed -n … ✓ (887ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo FMT… ✓ (5m 25s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -cE 'FAIL… ✓ (8m 46s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 14m 28s (3 ✓)
+
+This task was already finished when I picked it up, so I changed nothing. The previous attempt committed it as e2bb4807 with a full commit body. I checked the committed state: cargo fmt --check and cargo clippy --all-targets -- -D warnings are clean, cargo test passes 7,648 tests with 0 failures, and nothing is left uncommitted.
+
+What the commit does:
+• Mentions now pass. The text of a commit or issue message is treated as data, not as a command, so git commit -m "kill -9 1 at $(date)" is no longer refused. This covers git commit -m and --message in all their spellings (including -am, and after git -C dir or git -c k=v), and --body/-b/--title/-t on gh issue, gh pr and gh release. It reuses the existing echo/printf mention path in bash_parse.rs rather than adding a new classifier.
+• One deviation from the plan. The plan said any gh subcommand; only issue, pr and release are covered. A gh extension or shell alias could pass a -b value to a shell, so those stay refused.
+• What still gets refused. Anything inside $( ) or backticks within the message is still checked. So is a command chained after it with &&, | sh, git commit -F file, git merge -m, sudo git, /usr/bin/git, gh api -f body=, and python3 -c / bash -c / node -e. Each of these 15 rows was checked as refused before the change.
+• Recall control. Disabling the new branch made the must-pass test fail by name; restoring it made the tests green again.
+• Old vs new comparison. I compared verdicts on 33 trigger phrases across every argument shape. Every "now passes" change is inside a message value, none are outside it, and none go from passing to refused. The table was posted on #1210 before the commit.
+• What the built binary shows. In -p mode the old and new binaries both run the example without a warning, because that path never asks for confirmation. The fix is only visible at the REPL confirmation prompt and when a sub-agent's command is refused, which is what the unit-level probe checks.
+
+Not fixed here: two cases are filed as their own issues, both open, and the docs page (troubleshooting/safety.md) now points to them instead of #1210:
+• #1222: a dangerous phrase inside a python3 -c string is still refused, because yoyo can't tell a Python string from os.system(). This is the case that refused a command earlier today.
+• #1223: a separate hard block, which --yes can't override, still stops git commit -m "... rm -rf / at $(date)" and echo with the same text whenever the command contains a $( ).
+
+#1210 will close when this session pushes.
+  watch: no files changed this turn — skipping

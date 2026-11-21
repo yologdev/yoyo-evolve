@@ -1,0 +1,185 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh… ✓ (16ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 330,375p src/commands_spawn… ✓ (17ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 355,374p src/commands_spawn… ✓ (16ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 8.4s (3 ✓)
+
+The output is being truncated by "similar lines" folding; let me use read_file.
+  ╭─ Turn 4 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "parse_spawn_args\|spawn_o… ✓ (16ms)
+  ▶ read src/commands_spawn.rs:755..880  ▶ read src/commands_spawn_output_tests.rs ✓ (1ms)
+ ✓ (2ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "shlex\|shell_words\|fn s… ✓ (28ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1,120p src/safety/indirect_… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "^mod tests\|^#\[cfg(test)… ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "commands_spawn" tests/mod… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 362,374p src/commands_spawn… ✓ (9ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 1m 51s (8 ✓)
+
+Tests first. Adding the rows to the existing -o test file:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cat >> src/com… (134 lines) ✓ (21ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the helper module:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ write src/commands_spawn_args.rs (42 lines) ✓ (18.7s)
+
+Now rewrite the flag loop in parse_spawn_args.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read src/commands_spawn.rs:362..378 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit src/commands_spawn.rs (13 → 15 lines)
+    /// - `/spawn -o <path> <task>` — run a task and capture output to a file
+    /// - `/spawn --bg -o <path> <task>` — background with output capture
+    /// - `/spawn --model <name> <task>` — use a specific model
+  - /// - `/spawn --system <prompt> <task>` — custom system prompt (quoted for multi-word)
+  + /// - `/spawn --system <prompt> <task>` — custom system prompt
+    /// - `/spawn --pr <task>` — push handoff branch + open a draft PR on completion
+    /// - `/spawn collect <id>` — collect a finished background spawn
+    ///
+  - /// Returns `None` if no task or if this is a subcommand like `status`.
+  - pub fn parse_spawn_args(input: &str) -> Option<SpawnArgs> {
+  + /// `-o` and `--system` values may be quoted (`"..."` or `'...'`) to hold
+  + /// spaces (#1213). `Ok(None)` if no task or a subcommand like `status`;
+  + /// `Err` with the refusal when a quote is never closed or `-o` names no file.
+  + pub fn read_spawn_args(input: &str) -> Result<Option<SpawnArgs>, String> {
+        let rest = input.strip_prefix("/spawn").unwrap_or("").trim();
+        if rest.is_empty() || rest == "status" {
+  -         return None;
+  +         return Ok(None);
+        }
+  ▶ read src/commands_spawn.rs:383..463 ✓ (20.4s)
+    /// - `/spawn -o <path> <task>` — run a task and capture output to a file
+    /// - `/spawn --bg -o <path> <task>` — background with output capture
+    /// - `/spawn --model <name> <task>` — use a specific model
+  - /// - `/spawn --system <prompt> <task>` — custom system prompt (quoted for multi-word)
+  + /// - `/spawn --system <prompt> <task>` — custom system prompt
+    /// - `/spawn --pr <task>` — push handoff branch + open a draft PR on completion
+    /// - `/spawn collect <id>` — collect a finished background spawn
+    ///
+  ... (11 more lines)
+ ✓ (20.4s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 36.5s (3 ✓)
+
+Replace lines 387–466 (collect returns + the flag loop) with a Python splice to be exact.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (71 lines) ✓ (25ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (10 lines) ✓ (17ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (55 lines) ✓ (12.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test --bin yoyo spawn 2>&1 |… ✓ (34.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 402,460p src/commands_spawn… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (44 lines) ✓ (36.0s)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 1m 54s (6 ✓)
+
+Recall control, one atomic command:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; f=src/commands_spawn_args.rs; cp $… ✓ (621ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The control was void (the // comment swallowed else {, so it didn't compile and printed nothing). Redo with a block comment:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; f=src/commands_spawn_args.rs; cp $… ✓ (1m 14s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; f=src/commands_spawn_args.rs; cp $… ✓ (41.2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 1s (2 ✓)
+
+Recall control is red by name and green again after the restore. Next, the docs:
+  ╭─ Turn 24 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "one word\|quoted path\|-… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (10 lines) ✓ (22ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6.0s (2 ✓)
+
+All #1213 hits describe finished work, nothing "still open". Full gate:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt -- --check && cargo clip… ✓ (3m 23s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test --test orphan_modules 2… ✓ (253ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3m 29s (2 ✓)
+
+The gate matches the mod name to the file stem (like the sibling commands_spawn_output_tests). Renaming the module:
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -i 's/^mod spawn_args;$/mod co… ✓ (5m 22s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue list --state open --searc… ✓ (804ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue list --state open --limit… ✓ (381ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 5m 41s (3 ✓)
+
+No open issue covers it, and fixing #1213 wouldn't fix it either: it's a dropped value, not a quoting problem. Filing it as its own issue, graded as read from code:
+  ╭─ Turn 31 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue creat… (5 lines) ✓ (1.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git status --s… (57 lines) ✓ (32ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 17.8s (2 ✓)
+
+The fix is committed. Posting the record on #1213 in case the push gets cut:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sha=$(git rev-parse --short HEAD);… ✓ (896ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+/spawn -o now takes a quoted path, so -o "out/a b.md" do x saves to out/a b.md and the task is do x. fmt, clippy (-D warnings) and the full cargo test all pass, and the commit is titled Fixes #1213.
+
+What changed
+• -o and --system now read their values through one shared reader in a new file, src/commands_spawn_args.rs. It replaces the old inline rejoin that only --system had. It's included from commands_spawn.rs with #[path], so main.rs wasn't touched.
+• A quote opens only at the start of a value. "..." and '...' both work, spaces inside the quotes are kept as typed, and text right after the closing quote joins the value ("a b".md → a b.md). An unquoted value is still one word, so don't.md still works.
+• Refused before anything runs: a quote that's never closed (the message names the flag and what was typed), and an empty -o "". Before this change, the unclosed case still started a sub-agent on a wrong path ("out/a) and wrong task.
+• Unchanged: a bare -o with nothing after it is still read as task text, and the task text after the flags is split exactly as before.
+• Also changed, and stated in the commit:
+  • --system now accepts single quotes and refuses an unclosed quote. Before, it printed usage, or used half a prompt when task words followed.
+  • When -o names a directory, the suggested file name is now quoted if the path has a space, so the suggestion parses back to that path (tested).
+• src/commands_spawn.rs went from 4629 to 4621 lines, under its size cap.
+• The docs sentence from the previous fix ("The file name is one word…") is replaced. Every #1213 reference in the repo describes finished work.
+
+Tests
+• Four new tests list where every word of each example ends up. One drives handle_spawn itself and checks that an unclosed quote registers no task and creates no file.
+• The "before" column in the commit table comes from reading the old code, not from running it.
+• Recall control: I disabled the quote detection, marked it NEUTERED, and checked the marker count before running. Six tests went red by name, including two existing --system tests; after restoring it, all 191 spawn tests pass. My first attempt was void: the comment I inserted broke compilation, so no tests ran. I noticed only because no test output printed, and redid it.
+
+Separate problem found: /spawn --parallel -o x.md … throws the -o value away with no message. No open issue covered it and this fix doesn't touch it, so I filed it as #1224. It's read from the code only; I didn't run it.
+
+The per-word before/after table and the control result are in the commit body and in a comment on #1213.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 0/2 changed files were in top-10 predictions (0.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/2 (0.0%) — reactive was 0.0%
+     Surprises (not predicted): src/commands_spawn_args.rs, src/commands_spawn.rs

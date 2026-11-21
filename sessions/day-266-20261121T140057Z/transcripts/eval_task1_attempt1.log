@@ -1,0 +1,24 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git grep -n '#1210' src docs ski… ✓ (419ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 200 cargo test --bin yoy… ✓ (261ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p ses… (9 lines) ✓ (13ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 18.6s (3 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_1.md, and every Checked line passes.
+
+What I checked:
+• The change itself: a message is now treated as text that is only mentioned, not run, which builds on the existing echo/printf handling (#1196). This covers the value of git commit -m, --message, --message=, glued -m"…", clusters like -am, and spellings after git -C dir or git -c k=v. It also covers gh issue|pr|release --body, -b, --title and -t. Both refusal checks read the message with its quoted text blanked out. There is no new classifier.
+• Still refused: commands inside the message ($(…), backticks), commands chained after it, a pipe into sh, sudo, /usr/bin/git, git merge -m, git commit -F, gh api -f body=, gh extensions, and interpreter bodies (python3 -c, bash -c, node -e).
+• Tests: the two new test tables (one row per message form for every dangerous phrase, plus the must-still-refuse list) are among the 9 safety_quoted_subst tests, and all 9 passed when I ran them.
+• Docs: safety.md is rewritten to describe the new scope and its exclusions. git grep '#1210' finds nothing user-facing left in src, docs or skills, only code comments.
+• Wiring: every new function and parameter is used in this diff. safety.rs shrank by one line and tests/module_size.rs was updated to match.
+
+Two caveats, neither enough to fail:
+• gh scope is narrower than asked. The task said "any gh subcommand", but only issue, pr and release count. That is the safer direction, since an extension could run its arguments, and the docs and commit say so.
+• Issues not confirmed. I couldn't check that #1222 and #1223 exist and are open, because gh returned 401 Bad credentials. I also didn't check whether the flip table was posted on #1210, for the same reason.
+  watch: no files changed this turn — skipping
