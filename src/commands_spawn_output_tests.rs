@@ -2,7 +2,8 @@
 //! and the check runs before the sub-agent does, so a refusal costs no tokens.
 
 use super::{
-    handle_spawn, parse_spawn_args, spawn_output_start_refusal, write_spawn_output, SpawnTracker,
+    handle_spawn, parse_spawn_args, read_spawn_args, spawn_output_start_refusal,
+    write_spawn_output, SpawnTracker,
 };
 
 /// Where every argv word of a `/spawn` line lands.
@@ -244,4 +245,164 @@ fn a_failed_save_keeps_the_result_collectable() {
         tracker.try_collect(id2).unwrap_err(),
         format!("spawn #{id2} failed: boom")
     );
+}
+
+/// #1213: where every word of a `-o` / `--system` line lands when a value is
+/// quoted. (input, -o path, --system prompt, task)
+#[test]
+fn a_quoted_output_path_is_one_path() {
+    type Row<'a> = (&'a str, Option<&'a str>, Option<&'a str>, &'a str);
+    let rows: &[Row] = &[
+        (
+            r#"/spawn -o "out/a b.md" do x"#,
+            Some("out/a b.md"),
+            None,
+            "do x",
+        ),
+        (
+            "/spawn -o 'out/a b.md' do x",
+            Some("out/a b.md"),
+            None,
+            "do x",
+        ),
+        // Unquoted: unchanged from before #1213.
+        ("/spawn -o out/a.md do x", Some("out/a.md"), None, "do x"),
+        // Whitespace inside the quotes is kept as typed.
+        (r#"/spawn -o "a  b.md" do x"#, Some("a  b.md"), None, "do x"),
+        // Text glued to the close quote is part of the same value.
+        (
+            r#"/spawn -o "out/a b".md do x"#,
+            Some("out/a b.md"),
+            None,
+            "do x",
+        ),
+        // A quote inside a bare word is just a character, as before.
+        ("/spawn -o don't.md do x", Some("don't.md"), None, "do x"),
+        // Both quoted flags on one line, in either order.
+        (
+            r#"/spawn --system "Be brief" -o "out/a b.md" do x"#,
+            Some("out/a b.md"),
+            Some("Be brief"),
+            "do x",
+        ),
+        (
+            r#"/spawn -o "out/a b.md" --system 'Be brief' do x"#,
+            Some("out/a b.md"),
+            Some("Be brief"),
+            "do x",
+        ),
+        // The task text after the flags is tokenised exactly as before.
+        (
+            r#"/spawn -o x.md say "hi there""#,
+            Some("x.md"),
+            None,
+            r#"say "hi there""#,
+        ),
+        (
+            r#"/spawn -o "a b.md" say   "hi   there""#,
+            Some("a b.md"),
+            None,
+            r#"say "hi there""#,
+        ),
+        // `-o` with nothing after it is task text, as before.
+        ("/spawn -o", None, None, "-o"),
+    ];
+    for (input, path, system, task) in rows {
+        let a = parse_spawn_args(input).expect(input);
+        assert_eq!(
+            (
+                a.output_path.as_deref(),
+                a.system_prompt.as_deref(),
+                a.task.as_str()
+            ),
+            (*path, *system, *task),
+            "{input}"
+        );
+    }
+}
+
+/// #1213: an opening quote with no close is refused, naming the flag and the
+/// value, and the example it offers parses back to one value.
+#[test]
+fn an_unclosed_quote_is_refused_by_name() {
+    let rows = [
+        (
+            r#"/spawn -o "out/a b.md"#,
+            r#"-o "out/a b.md: the " is never closed, so yoyo can't tell where the file name ends. Nothing was run. Close the quote, e.g. /spawn -o "my notes.md" <task>"#,
+        ),
+        (
+            "/spawn --bg -o 'out/a b.md do x",
+            r#"-o 'out/a b.md do x: the ' is never closed, so yoyo can't tell where the file name ends. Nothing was run. Close the quote, e.g. /spawn -o "my notes.md" <task>"#,
+        ),
+        (
+            r#"/spawn --system "Be brief do x"#,
+            r#"--system "Be brief do x: the " is never closed, so yoyo can't tell where the system prompt ends. Nothing was run. Close the quote, e.g. /spawn --system "You are a reviewer" <task>"#,
+        ),
+    ];
+    for (input, want) in rows {
+        assert_eq!(
+            read_spawn_args(input).err().as_deref(),
+            Some(want),
+            "{input}"
+        );
+    }
+    // The examples round-trip: each is one value and the task stays the task.
+    let a = parse_spawn_args(r#"/spawn -o "my notes.md" do x"#).unwrap();
+    assert_eq!(
+        (a.output_path.as_deref(), a.task.as_str()),
+        (Some("my notes.md"), "do x")
+    );
+    let a = parse_spawn_args(r#"/spawn --system "You are a reviewer" do x"#).unwrap();
+    assert_eq!(
+        (a.system_prompt.as_deref(), a.task.as_str()),
+        (Some("You are a reviewer"), "do x")
+    );
+    // An empty quoted -o names no file, so it is refused rather than run.
+    assert_eq!(
+        read_spawn_args(r#"/spawn -o "" do x"#).err().as_deref(),
+        Some(
+            r#"-o "" names no file. Nothing was run. Give it a file name, e.g. /spawn -o "my notes.md" <task>"#
+        )
+    );
+}
+
+/// #1213: the refusal comes before anything is registered or written.
+#[tokio::test]
+async fn an_unclosed_quote_spawns_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path().display();
+    let input = format!(r#"/spawn -o "{d}/a b.md do x"#);
+    let tracker = SpawnTracker::new();
+    let mut usage = yoagent::Usage::default();
+    let out = handle_spawn(&input, &config(), &mut usage, "m", &[], &tracker).await;
+    assert_eq!(out, None);
+    assert!(
+        tracker.snapshot().is_empty(),
+        "an unclosed quote was spawned"
+    );
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+}
+
+/// #1213: the directory refusal's example quotes a path with a space, so it
+/// parses back to the path it names.
+#[test]
+fn directory_hint_quotes_a_path_with_a_space() {
+    let dir = tempfile::tempdir().unwrap();
+    let sub = dir.path().join("my dir");
+    std::fs::create_dir(&sub).unwrap();
+    let s = sub.display().to_string();
+    let input = format!(r#"/spawn -o "{s}" do x"#);
+    let args = parse_spawn_args(&input).unwrap();
+    assert_eq!(args.output_path.as_deref(), Some(s.as_str()));
+    let msg = spawn_output_start_refusal(&input, &args).unwrap();
+    assert_eq!(
+        msg,
+        format!(
+            r#"{s} is a directory. Nothing was run. Give -o a file name, e.g. -o "{s}/out.md""#
+        )
+    );
+    let example = msg.split("e.g. ").nth(1).unwrap();
+    let again = parse_spawn_args(&format!("/spawn {example} do x")).unwrap();
+    assert_eq!(again.output_path, Some(format!("{s}/out.md")));
+    assert_eq!(again.task, "do x");
 }

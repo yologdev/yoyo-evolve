@@ -338,8 +338,8 @@ pub fn spawn_output_start_refusal(input: &str, args: &SpawnArgs) -> Option<Strin
     match export_target_verdict(exists, p.is_dir(), args.force) {
         ExportVerdict::Write => None,
         ExportVerdict::RefuseDirectory => Some(format!(
-            "{path} is a directory. Nothing was run. Give -o a file name, e.g. -o {}/out.md",
-            path.trim_end_matches('/')
+            "{path} is a directory. Nothing was run. Give -o a file name, e.g. -o {}",
+            quote_for_flag(&format!("{}/out.md", path.trim_end_matches('/')))
         )),
         ExportVerdict::RefuseExists => {
             let rest = input.strip_prefix("/spawn").unwrap_or(input).trim();
@@ -367,22 +367,24 @@ pub fn write_spawn_output(path: &str, text: &str, force: bool) -> Result<(), Str
 /// - `/spawn -o <path> <task>` — run a task and capture output to a file
 /// - `/spawn --bg -o <path> <task>` — background with output capture
 /// - `/spawn --model <name> <task>` — use a specific model
-/// - `/spawn --system <prompt> <task>` — custom system prompt (quoted for multi-word)
+/// - `/spawn --system <prompt> <task>` — custom system prompt
 /// - `/spawn --pr <task>` — push handoff branch + open a draft PR on completion
 /// - `/spawn collect <id>` — collect a finished background spawn
 ///
-/// Returns `None` if no task or if this is a subcommand like `status`.
-pub fn parse_spawn_args(input: &str) -> Option<SpawnArgs> {
+/// `-o` and `--system` values may be quoted (`"..."` or `'...'`) to hold
+/// spaces (#1213). `Ok(None)` if no task or a subcommand like `status`;
+/// `Err` with the refusal when a quote is never closed or `-o` names no file.
+pub fn read_spawn_args(input: &str) -> Result<Option<SpawnArgs>, String> {
     let rest = input.strip_prefix("/spawn").unwrap_or("").trim();
     if rest.is_empty() || rest == "status" {
-        return None;
+        return Ok(None);
     }
 
     // Handle `/spawn collect <id>`
     if let Some(collect_rest) = rest.strip_prefix("collect") {
         let collect_rest = collect_rest.trim();
         if let Ok(id) = collect_rest.parse::<usize>() {
-            return Some(SpawnArgs {
+            return Ok(Some(SpawnArgs {
                 task: String::new(),
                 output_path: None,
                 background: false,
@@ -392,13 +394,12 @@ pub fn parse_spawn_args(input: &str) -> Option<SpawnArgs> {
                 parallel_tasks: None,
                 pr: false,
                 force: false,
-            });
+            }));
         }
         // "collect" without valid id — fall through to show usage
-        return None;
+        return Ok(None);
     }
 
-    let mut words: Vec<&str> = rest.split_whitespace().collect();
     let mut background = false;
     let mut parallel = false;
     let mut pr = false;
@@ -407,61 +408,38 @@ pub fn parse_spawn_args(input: &str) -> Option<SpawnArgs> {
     let mut model = None;
     let mut system_prompt = None;
 
-    // Extract flags from the front.
-    // For --system, the value can be a quoted multi-word string. Since we
-    // split on whitespace above, we need to rejoin quoted segments when we
-    // encounter --system. We do this by checking if the next token after
-    // --system starts with a quote.
-    while !words.is_empty() {
-        if words[0] == "--bg" {
-            background = true;
-            words.remove(0);
-        } else if words[0] == "--parallel" {
-            parallel = true;
-            words.remove(0);
-        } else if words[0] == "--pr" {
-            pr = true;
-            words.remove(0);
-        } else if words[0] == "--force" {
-            force = true;
-            words.remove(0);
-        } else if words[0] == "-o" && words.len() > 1 {
-            output_path = Some(words[1].to_string());
-            words.remove(0); // remove "-o"
-            words.remove(0); // remove the path (now at position 0)
-        } else if words[0] == "--model" && words.len() > 1 {
-            model = Some(words[1].to_string());
-            words.remove(0); // remove "--model"
-            words.remove(0); // remove the model name (now at position 0)
-        } else if words[0] == "--system" && words.len() > 1 {
-            words.remove(0); // remove "--system"
-                             // Check if next token starts with a quote
-            if words[0].starts_with('"') {
-                // Consume tokens until we find one that ends with a quote
-                let mut prompt_parts: Vec<String> = Vec::new();
-                while !words.is_empty() {
-                    let w = words.remove(0).to_string();
-                    prompt_parts.push(w.clone());
-                    if w.ends_with('"') {
-                        break;
-                    }
-                }
-                let joined = prompt_parts.join(" ");
-                // Strip surrounding quotes
-                let trimmed = joined
-                    .strip_prefix('"')
-                    .unwrap_or(&joined)
-                    .strip_suffix('"')
-                    .unwrap_or(&joined);
-                system_prompt = Some(trimmed.to_string());
-            } else {
-                // Single unquoted word
-                system_prompt = Some(words.remove(0).to_string());
+    // Extract flags from the front, reading the raw text so a quoted `-o` or
+    // `--system` value keeps its spaces (#1213). A flag with nothing after
+    // it stops flag processing and becomes task text.
+    let mut cur = rest;
+    loop {
+        let (word, after) = next_word(cur);
+        match word {
+            "--bg" => background = true,
+            "--parallel" => parallel = true,
+            "--pr" => pr = true,
+            "--force" => force = true,
+            "--model" if !after.trim().is_empty() => {
+                let (name, tail) = next_word(after);
+                model = Some(name.to_string());
+                cur = tail;
+                continue;
             }
-        } else {
-            break; // stop processing flags once we hit a non-flag word
+            "-o" | "--system" if !after.trim().is_empty() => {
+                let (value, tail) = read_flag_value(word, after)?;
+                if word == "-o" {
+                    output_path = Some(value);
+                } else {
+                    system_prompt = Some(value);
+                }
+                cur = tail;
+                continue;
+            }
+            _ => break, // stop processing flags once we hit a non-flag word
         }
+        cur = after;
     }
+    let mut words: Vec<&str> = cur.split_whitespace().collect();
 
     // `--pr` may also appear after the task text (e.g. `/spawn do thing --pr`).
     // Strip any remaining standalone occurrences so the flag never leaks into
@@ -473,7 +451,7 @@ pub fn parse_spawn_args(input: &str) -> Option<SpawnArgs> {
 
     let task = words.join(" ");
     if task.is_empty() {
-        return None;
+        return Ok(None);
     }
 
     // In parallel mode, split the task text on triple-dash separators
@@ -484,9 +462,9 @@ pub fn parse_spawn_args(input: &str) -> Option<SpawnArgs> {
             .filter(|s| !s.is_empty())
             .collect();
         if tasks.is_empty() {
-            return None;
+            return Ok(None);
         }
-        return Some(SpawnArgs {
+        return Ok(Some(SpawnArgs {
             task: String::new(),
             output_path: None, // -o is incompatible with --parallel
             background: false, // --parallel is implicitly background
@@ -496,10 +474,10 @@ pub fn parse_spawn_args(input: &str) -> Option<SpawnArgs> {
             parallel_tasks: Some(tasks),
             pr,
             force,
-        });
+        }));
     }
 
-    Some(SpawnArgs {
+    Ok(Some(SpawnArgs {
         task,
         output_path,
         background,
@@ -509,7 +487,13 @@ pub fn parse_spawn_args(input: &str) -> Option<SpawnArgs> {
         parallel_tasks: None,
         pr,
         force,
-    })
+    }))
+}
+
+/// [`read_spawn_args`] with a refusal folded into `None`, for tests.
+#[cfg(test)]
+pub fn parse_spawn_args(input: &str) -> Option<SpawnArgs> {
+    read_spawn_args(input).ok().flatten()
 }
 
 /// Parse the task from a `/spawn <task>` input (legacy compat).
@@ -833,9 +817,13 @@ pub async fn handle_spawn(
         }
     }
 
-    let args = match parse_spawn_args(input) {
-        Some(a) => a,
-        None => {
+    let args = match read_spawn_args(input) {
+        Ok(Some(a)) => a,
+        Err(msg) => {
+            eprintln!("{RED}  {msg}{RESET}\n");
+            return None;
+        }
+        Ok(None) => {
             println!("{DIM}  usage: /spawn <task>");
             println!("         /spawn --bg <task>              (run in background)");
             println!("         /spawn --parallel <t1> --- <t2> (run multiple tasks concurrently)");
@@ -4623,6 +4611,10 @@ mod tests {
         assert_eq!(sub_config.bash_cwd, None);
     }
 }
+
+#[path = "commands_spawn_args.rs"]
+mod commands_spawn_args;
+use commands_spawn_args::{next_word, quote_for_flag, read_flag_value};
 
 #[cfg(test)]
 #[path = "commands_spawn_output_tests.rs"]
