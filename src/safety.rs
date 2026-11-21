@@ -115,9 +115,8 @@ pub fn analyze_bash_command(command: &str) -> Option<String> {
     // #1193: a trigger glued to `$(`, `(`, `)` or a backtick slips the token
     // anchors, so each subshell piece (quotes stripped) is checked on its own.
     let stripped = strip_quoted_regions(cmd);
-    // #1196: a lone echo/printf's quoted text is a mention; `$(…)` bodies stay.
-    let lone_print = crate::bash_parse::lone_print_command(cmd);
-    check(if lone_print { &stripped } else { cmd })
+    // #1196/#1210: a lone echo/printf's quoted text, or a git commit/gh message, is a mention.
+    check(&crate::bash_parse::raw_pass_text(cmd, &stripped))
         .or_else(|| {
             let mut pieces = stripped.split(SUBSHELL_BREAKS).map(str::trim);
             let split = stripped.contains(SUBSHELL_BREAKS);
@@ -1824,7 +1823,7 @@ const READ_ONLY_GIT_SUBCOMMANDS: &[&str] = &[
 /// Git *global* options that consume the following token as their value.
 /// Without this, `git -C . commit` reads its subcommand as `-C` and the
 /// commit slips through the classifier entirely.
-const GIT_GLOBAL_VALUE_OPTS: &[&str] = &[
+pub(crate) const GIT_GLOBAL_VALUE_OPTS: &[&str] = &[
     "-C",
     "-c",
     "--git-dir",

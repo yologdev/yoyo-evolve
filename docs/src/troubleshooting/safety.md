@@ -106,8 +106,24 @@ Since Day 262 the quoted words of a command that is only `echo` or
 bodies inside are still checked (`echo "x $(kill -9 1)"` asks). This
 applies only to a bare `echo`/`printf` statement: piped onward
 (`echo "..." | sh`), redirected, or behind a wrapper such as `sudo`, the
-text is still checked as a command. Quoted mentions in other commands
-(`git commit -m "kill -9 1 at $(date)"`) can still ask (#1210).
+text is still checked as a command.
+Since Day 266 the same holds for a commit or issue message: the value of
+`git commit -m` (also `--message`, `--message=...`, glued `-m"..."`,
+clusters such as `-am`, and after `git -C dir` / `git -c k=v`) and of
+`gh issue|pr|release --body`/`-b`/`--title`/`-t` is a mention, so
+`git commit -m "kill -9 1 at $(date)"` runs without asking. `$( )`
+bodies inside the message are still checked (`git commit -m "x $(kill -9 1)"`
+asks), and so is every other argument and every other command in the
+line. Only `git` and `gh` spelled exactly, as a statement of their own or
+in a `&&`/`||`/`;` list, count: piped onward, behind `sudo`, as
+`git merge -m`, `git commit -F`, `gh api -f body=...` or a gh extension,
+the text is still checked as a command. Quoted text inside an
+interpreter body (`python3 -c "print('kill -9 1')"`, `node -e`) can
+still ask, because yoyo can't tell a string literal there from code that
+runs (#1222). The hard block on root deletes, which no confirmation
+or `--yes` overrides ([Permissions](../configuration/permissions.md)),
+is a separate check and still refuses a root-delete mention in a message
+that also contains a `$( )` (#1223).
 Since Day 263 the body of `bash -c "..."` / `sh -c '...'` (also `zsh`,
 `dash`, `ksh`, flag clusters such as `-lc`, and behind `sudo`/`env`) is
 checked like the command it runs when it is a literal string, so

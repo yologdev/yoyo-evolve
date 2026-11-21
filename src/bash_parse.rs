@@ -63,12 +63,14 @@ pub(crate) fn tree_refusal(cmd: &str, check: &dyn Fn(&str) -> Option<String>) ->
             // is read quote-stripped and its argv re-spelling is not checked;
             // the commands inside its `$(…)`/backticks are nodes walked next.
             let print = is_print_command(node, cmd);
+            // #1210: a git commit / gh message value is a mention the same way.
+            let said = message_value_ranges(node, cmd);
             let text = match print {
                 true => crate::safety::strip_quoted_regions(text),
-                false => text.to_string(),
+                false => blank_mentions(cmd, node.start_byte(), node.end_byte(), &said),
             };
             found = check(&text)
-                .or_else(|| match argv_text(node, cmd) {
+                .or_else(|| match argv_text(node, cmd, &said) {
                     Ok(Some(argv)) if !print => check(&argv),
                     Ok(_) => None,
                     Err(why) => Some(why),
@@ -98,6 +100,131 @@ fn is_print_command(node: tree_sitter::Node, src: &str) -> bool {
             .child_by_field_name("name")
             .and_then(|n| n.utf8_text(src.as_bytes()).ok())
             .is_some_and(|name| PRINT_ONLY_COMMANDS.contains(&name))
+}
+
+/// What `analyze_bash_command`'s raw-text pass reads. A lone `echo`/`printf`
+/// (#1196) is read quote-stripped (`stripped`); otherwise `cmd` with the
+/// quoted text of each git commit / gh message value blanked (#1210), whose
+/// `$(…)`/backtick bodies stay. A parse issue leaves `cmd` as it is.
+pub(crate) fn raw_pass_text(cmd: &str, stripped: &str) -> String {
+    if lone_print_command(cmd) {
+        return stripped.to_string();
+    }
+    let mut said = Vec::new();
+    let _ = walk_nodes(cmd, &["command"], &mut |_, node| {
+        said.extend(message_value_ranges(node, cmd))
+    });
+    blank_mentions(cmd, 0, cmd.len(), &said)
+}
+
+/// `src[from..to]` with each range in `said` (sorted, inside it) read
+/// quote-stripped: quoted literal text becomes blanks, substitutions stay.
+fn blank_mentions(src: &str, from: usize, to: usize, said: &[(usize, usize)]) -> String {
+    let mut out = String::new();
+    let mut at = from;
+    for &(s, e) in said.iter().filter(|r| r.0 >= from && r.1 <= to) {
+        // Node offsets fall on token edges; `get` keeps a bad one from panicking.
+        let (Some(before), Some(value)) = (src.get(at..s), src.get(s..e)) else {
+            return src.get(from..to).unwrap_or_default().to_string();
+        };
+        out.push_str(before);
+        out.push_str(&crate::safety::strip_quoted_regions(value));
+        at = e;
+    }
+    out.push_str(src.get(at..to).unwrap_or_default());
+    out
+}
+
+/// gh's builtin commands whose `--body`/`-b`/`--title`/`-t` value is text
+/// posted to GitHub (#1210). An extension or alias (`gh my-ext -b …`) can run
+/// its arguments, so only these exact names count.
+const GH_MESSAGE_COMMANDS: &[&str] = &["issue", "pr", "release"];
+
+/// #1210: byte ranges (in `src`) of the message values of `node` when it is
+/// `git … commit` (`-m`, `--message`, `--message=`, glued `-m…`, `-am …`) or
+/// `gh issue|pr|release …` (`--body`, `-b`, `--title`, `-t`, `=`/glued). Git
+/// stores that text and gh posts it; neither runs it. Exact program names
+/// only, and only a statement on its own or in a `&&`/`||`/`;` list: in a
+/// pipeline the next stage may run git's output (fail closed).
+fn message_value_ranges(node: tree_sitter::Node, src: &str) -> Vec<(usize, usize)> {
+    let mut said = Vec::new();
+    if node.kind() != "command"
+        || !node
+            .parent()
+            .is_none_or(|p| matches!(p.kind(), "program" | "list"))
+    {
+        return said;
+    }
+    let mut cursor = node.walk();
+    let words: Vec<tree_sitter::Node> = node
+        .named_children(&mut cursor)
+        .skip_while(|w| w.kind() != "command_name")
+        .filter(|w| !w.kind().ends_with("redirect"))
+        .collect();
+    let text = |w: &tree_sitter::Node| w.utf8_text(src.as_bytes()).unwrap_or_default();
+    let Some((name, args)) = words.split_first() else {
+        return said;
+    };
+    // (long flags, short flag letters, short letters that may come before it
+    // in a cluster, short flags that take the next word as their value).
+    let (rest, long, short, cluster, valued): (&[_], &[&str], &str, &str, &str) = match text(name) {
+        "git" => {
+            // Global options, as `safety::git_write_subcommand` steps them.
+            let mut i = 0;
+            while args.get(i).is_some_and(|w| text(w).starts_with('-')) {
+                i +=
+                    1 + usize::from(crate::safety::GIT_GLOBAL_VALUE_OPTS.contains(&text(&args[i])));
+            }
+            match args.get(i) {
+                Some(w) if text(w) == "commit" => {
+                    (&args[i + 1..], &["--message"], "m", "anpqsvz", "CFct")
+                }
+                _ => return said,
+            }
+        }
+        "gh" if args
+            .first()
+            .is_some_and(|w| GH_MESSAGE_COMMANDS.contains(&text(w))) =>
+        {
+            (&args[1..], &["--body", "--title"], "bt", "", "")
+        }
+        _ => return said,
+    };
+    let mut i = 0;
+    while let Some(w) = rest.get(i) {
+        let (t, start) = (text(w), w.start_byte());
+        i += 1;
+        if t == "--" {
+            break;
+        }
+        if long.contains(&t) {
+            said.extend(rest.get(i).map(|v| (v.start_byte(), v.end_byte())));
+            i += 1;
+        } else if let Some(eq) = long.iter().find(|l| t.starts_with(&format!("{l}="))) {
+            said.push((start + eq.len() + 1, w.end_byte()));
+        } else if t.starts_with('-') && !t.starts_with("--") {
+            // A short cluster: flag letters, then a message letter whose value
+            // is the rest of the word or the next word.
+            for (at, c) in t.char_indices().skip(1) {
+                let after = at + c.len_utf8();
+                if short.contains(c) {
+                    match after == t.len() {
+                        true => {
+                            said.extend(rest.get(i).map(|v| (v.start_byte(), v.end_byte())));
+                            i += 1;
+                        }
+                        false => said.push((start + after, w.end_byte())),
+                    }
+                    break;
+                }
+                if !cluster.contains(c) {
+                    i += usize::from(valued.contains(c) && after == t.len());
+                    break;
+                }
+            }
+        }
+    }
+    said
 }
 
 /// The whole of `cmd` is one `echo`/`printf` command (#1196): its quoted
@@ -233,7 +360,7 @@ pub(crate) fn unanalyzable_reason(cmd: &str) -> Option<String> {
     let walked = walk_nodes(cmd, &["command"], &mut |_, node| {
         if found.is_none() {
             found = eval_in_command_position(node, cmd)
-                .or_else(|| argv_text(node, cmd).err())
+                .or_else(|| argv_text(node, cmd, &[]).err())
                 .or_else(|| {
                     let body = dash_c_body(node, cmd)?;
                     nested(|| unanalyzable_reason(&body)).unwrap_or_else(|| {
@@ -734,7 +861,11 @@ const ARGV_WORD_KINDS: &[&str] = &[
 
 /// A check unit's text with every word re-spelt as the argv bash runs, or
 /// `None` when no word changes. `Err` is the Unanalyzable reason.
-fn argv_text(unit: tree_sitter::Node, src: &str) -> Result<Option<String>, String> {
+fn argv_text(
+    unit: tree_sitter::Node,
+    src: &str,
+    said: &[(usize, usize)],
+) -> Result<Option<String>, String> {
     let mut edits: Vec<(usize, usize, String)> = Vec::new();
     let mut cursor = unit.walk();
     let mut stack = vec![unit];
@@ -747,7 +878,11 @@ fn argv_text(unit: tree_sitter::Node, src: &str) -> Result<Option<String>, Strin
                 let Ok(text) = word.utf8_text(src.as_bytes()) else {
                     continue;
                 };
-                if let Some(words) = respell_word(text, word.kind() == "command_name")? {
+                let (s, e) = (word.start_byte(), word.end_byte());
+                if said.iter().any(|r| r.0 >= s && r.1 <= e) {
+                    // #1210: a message value is a mention, not argv to re-spell.
+                    edits.push((s, e, blank_mentions(src, s, e, said)));
+                } else if let Some(words) = respell_word(text, word.kind() == "command_name")? {
                     edits.push((word.start_byte(), word.end_byte(), words.join(" ")));
                 }
             }

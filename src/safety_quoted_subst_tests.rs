@@ -210,3 +210,74 @@ fn only_a_bare_echo_or_printf_statement_is_a_print_command() {
         assert_eq!(lone_print_command(cmd), want, "{cmd:?}");
     }
 }
+
+// ---- #1210: the value of a git commit / gh message flag is a mention ------
+
+/// #1210: `git commit -m "kill -9 1 at $(date)"` was refused as if the
+/// message ran. The value of a message flag is text git/gh store and never
+/// run, so for every SAFETY_CHECKS member's trigger, each spelling of that
+/// slot gets the verdict a lone `echo` of it gets (None); only `$(…)` bodies
+/// inside it are checked. Before this fix 18 of the 33 triggers refused in
+/// every one of these slots.
+#[test]
+fn a_git_commit_or_gh_message_value_is_a_mention() {
+    let triggers = trigger_per_check();
+    assert!(triggers.len() >= 33, "only {} triggers", triggers.len());
+    let mut wrong = Vec::new();
+    for (i, t) in &triggers {
+        let tq = t.replace('"', "\\\"");
+        for form in [
+            format!("git commit -m \"{tq} at $(date)\""),
+            format!("git commit --message \"{tq}\""),
+            format!("git commit --message=\"{tq}\""),
+            format!("git commit -m\"{tq}\""),
+            format!("git commit -am \"{tq}\""),
+            format!("git commit -m 'subject' -m \"{tq}\""),
+            format!("git -C repo commit -m \"{tq}\""),
+            format!("git -c user.name=x commit -m \"{tq}\""),
+            format!("git add -A && git commit -m \"{tq}\" && git push"),
+            format!("gh issue comment 1210 --body \"{tq}\""),
+            format!("gh issue comment 1210 -b \"{tq}\""),
+            format!("gh pr create --title=\"{tq}\" --body \"x\""),
+            format!("gh pr create -t \"{tq}\""),
+            format!("gh issue create -b\"{tq}\""),
+        ] {
+            if let Some(why) = super::analyze_bash_command(&form) {
+                wrong.push(format!("member {i} {form:?}: {why}"));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// The message slot is the only thing that changed: what runs inside it, the
+/// command's other arguments, other commands and other programs keep their
+/// verdicts (all of these were refused before #1210 too).
+#[test]
+fn only_the_message_slot_of_git_commit_and_gh_issue_pr_release_is_a_mention() {
+    let root = "/";
+    for cmd in [
+        // What bash runs inside the message.
+        format!("git commit -m \"x $(rm -rf {root})\""),
+        "git commit -m \"`kill -9 1`\"".to_string(),
+        "gh issue comment 1 --body \"$(crontab -r)\"".to_string(),
+        // A command after the message, or a runner of git's output.
+        format!("git commit -m \"ok\" && rm -rf {root}"),
+        format!("git commit -m \"rm -rf {root}\" | sh"),
+        // Other arguments of the same command.
+        format!("git commit -F \"rm -rf {root}\""),
+        format!("git commit -m \"ok\" -- \"rm -rf {root}\""),
+        // Not commit, not an exact `git`/`gh`, or not a builtin gh command.
+        format!("git merge -m \"rm -rf {root}\""),
+        format!("sudo git commit -m \"rm -rf {root}\""),
+        format!("/usr/bin/git commit -m \"rm -rf {root}\""),
+        format!("gh api repos/o/r/issues -f body=\"rm -rf {root}\""),
+        format!("gh my-extension -b \"rm -rf {root}\""),
+        // Interpreter bodies run (Day 266 incidence, python3 -c).
+        format!("python3 -c \"print('rm -rf {root}')\""),
+        format!("bash -c \"rm -rf {root}\""),
+        format!("node -e \"rm -rf {root}\""),
+    ] {
+        assert!(super::analyze_bash_command(&cmd).is_some(), "{cmd:?}");
+    }
+}
