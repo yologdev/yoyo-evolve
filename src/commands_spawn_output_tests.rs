@@ -406,3 +406,64 @@ fn directory_hint_quotes_a_path_with_a_space() {
     assert_eq!(again.output_path, Some(format!("{s}/out.md")));
     assert_eq!(again.task, "do x");
 }
+
+/// #1224: `-o` with `--parallel` is refused before anything runs, naming `-o`
+/// and the path, in any word order and even with `--force` (so the user never
+/// sees the force-without-path refusal for this line). The remedy round-trips:
+/// removing the words it names leaves a line that runs the same tasks.
+#[test]
+fn parallel_with_output_file_is_refused_naming_o() {
+    let plain = "-o x.md can't be used with --parallel: the tasks would all need their own file. Nothing was run. Remove -o x.md to run the tasks without saving, or save each one with /spawn -o <file> <task>";
+    let forced = "-o x.md can't be used with --parallel: the tasks would all need their own file. Nothing was run. Remove -o x.md and --force to run the tasks without saving, or save each one with /spawn -o <file> <task>";
+    let rows: &[(&str, &str, &[&str])] = &[
+        ("/spawn --parallel -o x.md a --- b", plain, &["-o", "x.md"]),
+        ("/spawn -o x.md --parallel a --- b", plain, &["-o", "x.md"]),
+        (
+            "/spawn --parallel -o x.md --force a --- b",
+            forced,
+            &["-o", "x.md", "--force"],
+        ),
+        (
+            "/spawn --force --parallel -o x.md a --- b",
+            forced,
+            &["-o", "x.md", "--force"],
+        ),
+    ];
+    for (input, want, remove) in rows {
+        assert_eq!(
+            read_spawn_args(input).err().as_deref(),
+            Some(*want),
+            "{input}"
+        );
+        // Round trip: drop exactly the words the remedy names.
+        let fixed: Vec<&str> = input
+            .split_whitespace()
+            .filter(|w| !remove.contains(w))
+            .collect();
+        let fixed = fixed.join(" ");
+        let a = parse_spawn_args(&fixed).expect("the remedy parses");
+        assert_eq!(a.output_path, None, "{fixed}");
+        assert_eq!(
+            a.parallel_tasks,
+            Some(vec!["a".to_string(), "b".to_string()]),
+            "{fixed}"
+        );
+        assert_eq!(spawn_output_start_refusal(&fixed, &a), None, "{fixed}");
+    }
+    // A quoted path with a space is named the way -o reads it back.
+    assert_eq!(
+        read_spawn_args(r#"/spawn --parallel -o "my notes.md" a --- b"#)
+            .err()
+            .as_deref(),
+        Some(
+            r#"-o "my notes.md" can't be used with --parallel: the tasks would all need their own file. Nothing was run. Remove -o "my notes.md" to run the tasks without saving, or save each one with /spawn -o <file> <task>"#
+        )
+    );
+    // Near miss: --parallel without -o still parses as before.
+    let a = parse_spawn_args("/spawn --parallel a --- b").unwrap();
+    assert_eq!(
+        a.parallel_tasks,
+        Some(vec!["a".to_string(), "b".to_string()])
+    );
+    assert_eq!(a.output_path, None);
+}

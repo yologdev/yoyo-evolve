@@ -456,6 +456,9 @@ pub fn read_spawn_args(input: &str) -> Result<Option<SpawnArgs>, String> {
 
     // In parallel mode, split the task text on triple-dash separators
     if parallel {
+        if let Some(p) = output_path {
+            return Err(parallel_output_refusal(&p, force));
+        }
         let tasks: Vec<String> = task
             .split("---")
             .map(|s| s.trim().to_string())
@@ -466,7 +469,7 @@ pub fn read_spawn_args(input: &str) -> Result<Option<SpawnArgs>, String> {
         }
         return Ok(Some(SpawnArgs {
             task: String::new(),
-            output_path: None, // -o is incompatible with --parallel
+            output_path: None, // -o with --parallel is refused above (#1224)
             background: false, // --parallel is implicitly background
             collect_id: None,
             model,
@@ -4614,7 +4617,7 @@ mod tests {
 
 #[path = "commands_spawn_args.rs"]
 mod commands_spawn_args;
-use commands_spawn_args::{next_word, quote_for_flag, read_flag_value};
+use commands_spawn_args::{next_word, parallel_output_refusal, quote_for_flag, read_flag_value};
 
 #[cfg(test)]
 #[path = "commands_spawn_output_tests.rs"]

@@ -61,3 +61,15 @@ pub(super) fn quote_for_flag(path: &str) -> String {
     let q = if path.contains('"') { '\'' } else { '"' };
     format!("{q}{path}{q}")
 }
+
+/// #1224: `-o <path>` with `--parallel` has no file to go to (each task would
+/// need its own), so it is refused before anything runs rather than dropped.
+/// The remedy names exactly the words to remove, including `--force`, which
+/// would otherwise be refused next as force-without-`-o`.
+pub(super) fn parallel_output_refusal(path: &str, force: bool) -> String {
+    let p = quote_for_flag(path);
+    let and_force = if force { " and --force" } else { "" };
+    format!(
+        "-o {p} can't be used with --parallel: the tasks would all need their own file. Nothing was run. Remove -o {p}{and_force} to run the tasks without saving, or save each one with /spawn -o <file> <task>"
+    )
+}
