@@ -1,0 +1,20 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls target/debug/yoyo && T=$(mkte… ✓ (51ms)
+  ▶ $ cd /tmp && T=$(mktemp -d) && mkdir -p $T/.yoyo && printf '{' > $T/.yoyo/memory.j… ✓ (6.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p ses… (9 lines) ✓ (14ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 22.3s (3 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_2.md.
+
+• Intent: The fix matches the task. The warning is now printed from one place, checked against a process-wide set that is keyed on the reason. The small first_warning helper the task asked for is there and is unit-tested. A second helper, warning_key, resolves the file path first, so the startup spelling (./.yoyo/memory.json) and the commands' spelling (.yoyo/memory.json) count as the same reason. load_memories_for_write is unchanged, so the refusal from #1216 still prints every time.
+• Running it: I ran the built binary interactively in a temp project whose .yoyo/memory.json contained just {, and sent /memories, /remember x, /memories, /quit. The "project memories not loaded" warning printed once, at startup. The /remember refusal ("not saved, nothing was written…") still printed.
+• Piped stdin doesn't work for this probe: the first attempt, piping the commands straight in, exited with code 2. The binary didn't run them as REPL commands, though it had already printed the warning once by then. Running it under script worked. The task's step-1 probe recipe pipes the commands in, so it won't work as written.
+• Nothing left unused: the new set, first_warning and warning_key are all called from load_memories_from and covered by the two new tests. src/memory.rs ends at 2008 lines, and it was added to the oversized-module allowlist with a #1217 comment.
+• Docs: the paragraph about a broken memory.json in docs/src/usage/commands.md now says the warning prints once per session for each distinct problem.
+• Product surface: no defaults, flags or config changed. The only visible effect is that a repeated status warning no longer repeats.
+  watch: no files changed this turn — skipping

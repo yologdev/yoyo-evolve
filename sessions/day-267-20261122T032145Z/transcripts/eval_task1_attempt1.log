@@ -1,0 +1,22 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --test ou… ✓ (1.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "let json_output" src/ma… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -A6 "fn wants_json_envel… ✓ (11ms)
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 16.8s (4 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_1.md.
+
+• The fix: an --output-format json -p run now catches SIGTERM, SIGHUP and SIGQUIT using the signal handler that piped text runs already had. Json runs are switched on by their own flag (mark_json_envelope), so the filter used by piped text runs was not widened, as the task asked.
+• Tests: I ran the two new tests in tests/output_failed_run.rs, and both passed. On SIGTERM the run exits 143, and on SIGHUP it exits 129. In both, stdout is one JSON object with is_error: true and the partial reply in response, stderr says (interrupted), and the existing -o out.txt is unchanged.
+• Stream-json unchanged: json mode is only switched on for --output-format json (or the older json flag). Stream-json is left alone and stays open on #1221, which the docs also say.
+• Loose ends: mark_json_envelope is called at both single-shot entry points in src/main.rs. The size limit for src/prompt.rs in tests/module_size.rs is raised to 3992, and no new enum variants were added.
+• Docs: piped-mode.md and single-prompt.md both describe the interrupted json behaviour.
+
+I didn't check the process steps outside the diff: the before/after comments on #1221, the deliberate-break test, the hand-run SIGINT check and the commit body.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
