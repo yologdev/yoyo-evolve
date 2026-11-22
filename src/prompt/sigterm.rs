@@ -11,9 +11,11 @@
 //! SIGTERM handler, the default disposition is gone for the rest of the
 //! process. A SIGTERM arriving while no `select!` polls it would be
 //! swallowed and `timeout` would have to escalate to SIGKILL. So:
-//! - the handler is registered only when the gate is filtering (TTY, REPL,
-//!   `--print`, json and stream-json never register it and still die by
-//!   default), and
+//! - the handler is registered only when the gate is filtering or the run
+//!   prints the `--output-format json` envelope (#1221: before, json died by
+//!   signal with an empty stdout; now its envelope says `is_error: true`).
+//!   TTY, REPL, `--print` and stream-json never register it and still die by
+//!   default, and
 //! - the handler is a process-lifetime watcher task that ALWAYS ends the
 //!   process with 143 (129 for SIGHUP, 131 for SIGQUIT): when a text loop is listening it hands the loop the
 //!   signal (the loop flushes and returns) and exits after a grace if `main`
@@ -34,12 +36,12 @@
 //! the user reaching for "harder Ctrl+C" lost everything already produced.
 //! The trade, stated: while the handler is armed, SIGQUIT no longer dumps
 //! core; it is armed in exactly the window SIGHUP/SIGTERM are (the filtering
-//! population only), so every other run keeps the core-dump default.
+//! and json-envelope populations only), so every other run keeps the core-dump default.
 //! Still not handled: SIGKILL (unflushable), SIGPIPE (the reader is gone;
 //! by reasoning, not probed); a panic while text is held is
 //! flushed by `RetrySafeGate`'s `Drop` (Day 228, probed: before it, `""`).
 
-use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
 use std::sync::OnceLock;
 use tokio::sync::watch;
 
@@ -55,6 +57,27 @@ static TERMINATED: AtomicI32 = AtomicI32::new(0);
 /// Text loops currently polling a [`SigtermListener`].
 static LISTENING: AtomicUsize = AtomicUsize::new(0);
 static CHANNEL: OnceLock<watch::Sender<bool>> = OnceLock::new();
+/// #1221: set by `main.rs` when this single-shot run prints the
+/// `--output-format json` envelope (not stream-json, not `--print`).
+static JSON_ENVELOPE: AtomicBool = AtomicBool::new(false);
+
+/// #1221: mark this run as one that ends in the json envelope, so a
+/// SIGTERM/SIGHUP/SIGQUIT ends the turn and `main` still prints the envelope
+/// (`is_error: true`, the partial reply) instead of dying with empty stdout.
+pub fn mark_json_envelope() {
+    JSON_ENVELOPE.store(true, Ordering::SeqCst);
+}
+
+/// Should this turn's loop listen for terminating signals? The piped text
+/// population (`filtering`, #1015) and the json envelope population (#1221):
+/// both have something to flush. Everything else keeps the default.
+pub(super) fn wants_listener(filtering: bool) -> bool {
+    wants_listener_for(filtering, JSON_ENVELOPE.load(Ordering::SeqCst))
+}
+
+fn wants_listener_for(filtering: bool, json_envelope: bool) -> bool {
+    filtering || json_envelope
+}
 
 /// The exit code owed to a terminating signal this process received:
 /// 143 for SIGTERM (#1015), 129 for SIGHUP, 131 for SIGQUIT (#1016),
@@ -79,10 +102,10 @@ impl Drop for SigtermListener {
 }
 
 /// Arm the watcher (once per process) and return a listener — only when
-/// `filtering` (the population whose text is held). `None` everywhere else,
-/// and on non-unix targets, so those runs never replace the default.
-pub(super) fn listen(filtering: bool) -> Option<SigtermListener> {
-    if !filtering || !cfg!(unix) {
+/// `wanted` (see [`wants_listener`]). `None` everywhere else, and on
+/// non-unix targets, so those runs never replace the default.
+pub(super) fn listen(wanted: bool) -> Option<SigtermListener> {
+    if !wanted || !cfg!(unix) {
         return None;
     }
     let tx = CHANNEL.get_or_init(install);
@@ -160,11 +183,21 @@ fn install() -> watch::Sender<bool> {
 mod tests {
     use super::*;
 
-    /// The population guard: a run whose gate does not hold text (TTY, REPL,
-    /// --print, json, stream-json) never registers a handler, so SIGTERM
-    /// keeps its default disposition there.
+    /// The population guard: a run whose gate does not hold text and that
+    /// prints no json envelope (TTY, REPL, --print, stream-json) never
+    /// registers a handler, so SIGTERM keeps its default disposition there.
     #[test]
     fn unfiltered_runs_never_register_a_sigterm_handler() {
         assert!(listen(false).is_none());
+    }
+
+    /// #1221: the json envelope population listens even though its gate
+    /// does not filter; nothing else is added.
+    #[test]
+    fn the_json_envelope_population_listens_and_nothing_else_is_added() {
+        assert!(!wants_listener_for(false, false));
+        assert!(wants_listener_for(true, false));
+        assert!(wants_listener_for(false, true));
+        assert!(wants_listener_for(true, true));
     }
 }

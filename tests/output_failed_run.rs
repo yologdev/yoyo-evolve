@@ -568,3 +568,58 @@ fn stream_json_piped_success_writes_the_output_file() {
     assert!(err.contains("wrote response to out.txt"), "{err}");
     assert_stdout_is_ndjson(&run);
 }
+
+// ---------------------------------------------------------------------------
+// #1221: `--output-format json -p` cut by a terminating signal. Before the
+// fix (measured Day 267 against HEAD 54f9d2b6) a SIGTERM killed the process
+// with the default disposition: exit 143 and an EMPTY stdout, so a script
+// under `timeout` had nothing to parse and no note saying why.
+// ---------------------------------------------------------------------------
+
+const JSON: &[&str] = &["--output-format", "json"];
+
+/// The one json envelope an interrupted run must still print: exit `code`,
+/// stdout parses as a single object with `is_error: true` and the partial
+/// reply in `response`, the `-o` file left as it was, and a stderr note.
+#[cfg(unix)]
+fn assert_interrupted_json_envelope(signal: &str, code: i32) {
+    let tmp = tempfile::tempdir().unwrap();
+    let out = tmp.path().join("out.txt");
+    std::fs::write(&out, OLD).unwrap();
+    let run = run_yoyo_interrupted_with(tmp.path(), signal, JSON);
+    let err = &run.stderr;
+    assert_eq!(
+        run.code,
+        Some(code),
+        "stdout:\n{}\nstderr:\n{err}",
+        run.stdout
+    );
+    let v: serde_json::Value = serde_json::from_str(run.stdout.trim()).unwrap_or_else(|e| {
+        panic!(
+            "stdout is not one JSON object ({e}): {:?}\nstderr:\n{err}",
+            run.stdout
+        )
+    });
+    assert_eq!(v["is_error"], serde_json::json!(true), "{v}");
+    assert_eq!(v["response"], serde_json::json!(NEW), "{v}");
+    assert!(err.contains("(interrupted)"), "no interrupt note:\n{err}");
+    assert_eq!(
+        std::fs::read_to_string(&out).unwrap(),
+        OLD,
+        "an interrupted json run replaced the existing --output file\n{err}"
+    );
+}
+
+/// #1221 row: SIGTERM (what `timeout` sends) -> 143 plus the envelope.
+#[cfg(unix)]
+#[test]
+fn json_sigterm_prints_an_is_error_envelope_with_the_partial_reply() {
+    assert_interrupted_json_envelope("-TERM", 143);
+}
+
+/// #1221 row: SIGHUP (terminal closed) -> 129 plus the envelope.
+#[cfg(unix)]
+#[test]
+fn json_sighup_prints_an_is_error_envelope_with_the_partial_reply() {
+    assert_interrupted_json_envelope("-HUP", 129);
+}

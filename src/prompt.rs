@@ -28,6 +28,7 @@ pub use interrupt::{
     was_interrupted,
 };
 pub use output_limit::{incomplete_forces_failure, incomplete_json, Incomplete};
+pub use sigterm::mark_json_envelope;
 mod stream_external_servers;
 #[cfg(test)]
 mod stream_json_retry_tests;
@@ -1104,7 +1105,7 @@ async fn handle_prompt_events(
     // #991: a single-shot run writing to a pipe reads through yoagent's
     // retry_safe filter; everything else (TTY, REPL, --print/json) is unchanged.
     let mut gate = retry_safe_pipe::RetrySafeGate::new(retry_safe_pipe::retry_safe_pipe_live());
-    let mut term = sigterm::listen(gate.is_filtering());
+    let mut term = sigterm::listen(sigterm::wants_listener(gate.is_filtering()));
 
     loop {
         tokio::select! {
@@ -1229,7 +1230,7 @@ async fn handle_prompt_events(
                 return interrupt::finish_interrupted_turn(state, &mut gate, agent);
             }
             // #1015/#1016: SIGTERM (what `timeout` sends), SIGHUP or SIGQUIT flushes the same way;
-            // armed only when the gate holds text, else it never resolves.
+            // armed when the gate holds text or a json envelope follows (#1221), else never resolves.
             _ = sigterm::recv(&mut term) => {
                 return interrupt::finish_interrupted_turn(state, &mut gate, agent);
             }

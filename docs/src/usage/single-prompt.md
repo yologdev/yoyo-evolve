@@ -83,6 +83,8 @@ yoyo -p "summarize this repo" --output-format json | jq -r .response
 If the run is interrupted with Ctrl+C (SIGINT), yoyo exits with code **130**, writes
 `(interrupted)` to stderr, and leaves whatever text was already streamed on stdout
 unchanged. A script can tell a cut-off answer from a complete one, which exits 0.
+With `--output-format json`, an interrupted run (SIGINT, SIGTERM, SIGHUP or SIGQUIT)
+still prints the envelope, with `"is_error": true` and the partial reply in `response`.
 
 ## Exit codes
 

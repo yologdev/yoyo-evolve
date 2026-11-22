@@ -1622,6 +1622,10 @@ async fn main() {
         // #966: stdout carries only the final payload in --print / json.
         // #993: single-shot doors print a plain interrupt note, never the REPL hint.
         prompt::mark_single_shot();
+        // #1221: a json run catches SIGTERM/SIGHUP/SIGQUIT and still prints its envelope.
+        if json_output {
+            prompt::mark_json_envelope();
+        }
         if reserves_stdout(print_mode, json_output) {
             format::reserve_stdout_for_payload();
         } else {
@@ -1660,6 +1664,10 @@ async fn main() {
         }
         // #993: single-shot doors print a plain interrupt note, never the REPL hint.
         prompt::mark_single_shot();
+        // #1221: a json run catches SIGTERM/SIGHUP/SIGQUIT and still prints its envelope.
+        if json_output {
+            prompt::mark_json_envelope();
+        }
         if reserves_stdout(print_mode, json_output) {
             format::reserve_stdout_for_payload();
         } else {
