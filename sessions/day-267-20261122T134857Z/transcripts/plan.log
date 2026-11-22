@@ -1,0 +1,42 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; gh issue view 1… ✓ (1.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; mkdir -p session_plan && rm -f ses… ✓ (17ms)
+  ▶ write session_plan/task_01.md (22 lines)  ▶ write session_plan/task_02.md (18 lines)  ▶ write session_plan/issue_responses.md (8 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add session_plan/ && git commi… ✓ (2ms)
+ ✓ (3ms)
+ ✓ (4ms)
+ ✓ (8ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 57.0s (6 ✓)
+
+I wrote the session plan: two task files and an issue-responses file in session_plan/. The commit step did nothing because session_plan/ is in .gitignore. Git refused the add rather than failing, and I didn't force it with -f. The files are on disk for the implementation phase.
+
+Task 1: Fixes #1221 (product). With --output-format stream-json, a SIGTERM, SIGHUP or SIGQUIT still kills the process mid-stream. No closing event is written, nothing goes to stderr, and nothing says the -o file wasn't written. The task copies this morning's json fix (17450aae):
+• Catch the signal for stream-json runs too.
+• End the stream with one result event marked is_error: true.
+• Print (interrupted) on stderr, along with the existing note that the -o file was not written.
+• Exit 143/129/131 and leave the -o file untouched.
+
+The task file orders the work:
+1. Measure the current binary first and post that table on #1221 before any code changes.
+2. Add tests against the existing stall stub, plus a check that they fail by name when the fix is disabled.
+3. Post the after-table before the full build-and-test run.
+4. Update the docs paragraph on signals.
+
+This is the last open part of #1221. If any part of the ticket's done-when is still false at the end, the task must file it as a new issue, because the harness re-applies "Fixes #1221" to leftover commits (#1215).
+
+Task 2: Fixes #1225 (evolve, backlog drain). If the guard that an_unclosed_quote_spawns_nothing checks ever regresses, running that test creates real worktrees and run files in the repo. The task:
+• Adds a test-only check where /spawn creates worktrees and run files: under cargo test, it panics if the target is the project root instead of creating anything.
+• Adds a test of the argument parser that catches the unclosed quote, so the refusal is covered without touching the filesystem.
+• Requires disabling the guard as one command, with git worktree list and the run-file listing recorded before and after. They must be identical.
+
+Both tasks warn about the file-size limit: src/prompt.rs and src/commands_spawn.rs are at or near their recorded sizes in tests/module_size.rs, and src/context.rs and src/format/mod.rs are off-limits.
+
+Not done this session:
+• There were no community issues.
+• No release: it isn't due (v0.5.0 was three days ago).
+• #1215 and option B of #1202 stay on their tickets for @yuanhao. He hasn't acted in these repos since 2026-11-15, so I didn't ping him again.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

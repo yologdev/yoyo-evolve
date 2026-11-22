@@ -1,0 +1,137 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue view 1225 --json title,bo… ✓ (20ms)
+ ✓ (238ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 700,900p src/commands_spawn… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1400,1440p src/commands_spa… ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 170,260p src/git.rs; grep -… ✓ (24ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "fn run_git_in\b\|fn run_g… ✓ (18ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 60,100p src/spawn_worktree.… ✓ (23ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "create_spawn_worktree\|wr… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "create_spawn_worktree\|wr… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1175,1260p src/commands_spa… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "fn read_spawn_args" -B5 -… ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "unclosed\|never closed" … ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 320,352p src/commands_spawn… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "const .*CAP\|DEFAULT\|fn … ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "^const\|^pub const\|^stat… ✓ (5ms)
+  ▶ edit src/spawn_worktree.rs (1 → 31 lines)
+  + /// #1225: under `cargo test`, a spawn sink (worktree, manifest) aimed inside
+  + /// this repo panics instead of writing. `handle_spawn` tests run from the repo
+  + /// root with no cwd seam, so a regressed refusal (Day 266, a neutered guard)
+  + /// made real `.yoyo/worktrees/spawn-*` and `.yoyo/spawn_runs/*.json` that
+  + /// `git add -A` staged. The panic names the sink; production never compiles it.
+  + #[cfg(test)]
+  + pub(crate) fn refuse_real_repo_in_tests(target: &Path, sink: &str) {
+  +     let abs = std::env::current_dir().unwrap_or_default().join(target);
+  +     // Canonicalize the nearest existing ancestor (the target may not exist yet).
+  +     let mut probe = abs.as_path();
+  +     let resolved = loop {
+  +         if let Ok(c) = probe.canonicalize() {
+  +             break c.join(abs.strip_prefix(probe).unwrap_or(Path::new("")));
+  +         }
+  +         match probe.parent() {
+  +             Some(p) => probe = p,
+  +             None => break abs.clone(),
+  +         }
+  +     };
+  +     let real = Path::new(env!("CARGO_MANIFEST_DIR"));
+  ... (11 more lines)
+ ✓ (24.3s)
+  + /// #1225: under `cargo test`, a spawn sink (worktree, manifest) aimed inside
+  + /// this repo panics instead of writing. `handle_spawn` tests run from the repo
+  + /// root with no cwd seam, so a regressed refusal (Day 266, a neutered guard)
+  + /// made real `.yoyo/worktrees/spawn-*` and `.yoyo/spawn_runs/*.json` that
+  + /// `git add -A` staged. The panic names the sink; production never compiles it.
+  + #[cfg(test)]
+  + pub(crate) fn refuse_real_repo_in_tests(target: &Path, sink: &str) {
+  +     let abs = std::env::current_dir().unwrap_or_default().join(target);
+  ... (13 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  16 tools completed in 1m 25s (16 ✓)
+
+Now the call sites in the two sinks.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (19 lines) ✓ (25ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit src/commands_spawn_output_tests.rs (2 → 16 lines)
+  + /// #1225: the refusal `an_unclosed_quote_spawns_nothing` relies on, pinned at
+  + /// the pure parser for its exact input, so it holds with no process effects.
+  + #[test]
+  + fn an_unclosed_quote_in_the_spawn_test_input_is_refused_by_the_parser() {
+  +     let input = r#"/spawn -o "/tmp/x/a b.md do x"#;
+  +     let err = read_spawn_args(input).expect_err("an unclosed quote must be refused");
+  +     assert_eq!(
+  +         err,
+  +         r#"-o "/tmp/x/a b.md do x: the " is never closed, so yoyo can't tell where the file name ends. Nothing was run. Close the quote, e.g. /spawn -o "my notes.md" <task>"#
+  +     );
+  + }
+  + 
+    /// #1213: the refusal comes before anything is registered or written.
+  + /// #1225: if that refusal regresses, the spawn sinks' test guard
+  + /// (`refuse_real_repo_in_tests`) panics before a worktree or manifest is made.
+    #[tokio::test]
+ ✓ (6m 9s)
+  + /// #1225: the refusal `an_unclosed_quote_spawns_nothing` relies on, pinned at
+  + /// the pure parser for its exact input, so it holds with no process effects.
+  + #[test]
+  + fn an_unclosed_quote_in_the_spawn_test_input_is_refused_by_the_parser() {
+  +     let input = r#"/spawn -o "/tmp/x/a b.md do x"#;
+  +     let err = read_spawn_args(input).expect_err("an unclosed quote must be refused");
+  +     assert_eq!(
+  +         err,
+  ... (8 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "    fn scratch_repo" src/… ✓ (3ms)
+  ▶ edit src/spawn_worktree.rs (1 → 15 lines)
+  +     /// #1225: the test guard refuses the repo's own relative manifest dir
+  +     /// (cwd is the repo root under cargo test) and passes a temp dir.
+  +     #[test]
+  +     #[should_panic(expected = "SAFETY (#1225): write_spawn_manifest")]
+  +     fn spawn_sink_guard_refuses_the_real_repo() {
+  +         refuse_real_repo_in_tests(Path::new(".yoyo/spawn_runs"), "write_spawn_manifest");
+  +     }
+  + 
+  +     #[test]
+  +     fn spawn_sink_guard_passes_a_temp_dir() {
+  +         let tmp = tempfile::tempdir().unwrap();
+  +         refuse_real_repo_in_tests(&tmp.path().join("a/b"), "create_spawn_worktree");
+  +     }
+  + 
+        fn scratch_repo() -> tempfile::TempDir {
+ ✓ (6m 8s)
+  +     /// #1225: the test guard refuses the repo's own relative manifest dir
+  +     /// (cwd is the repo root under cargo test) and passes a temp dir.
+  +     #[test]
+  +     #[should_panic(expected = "SAFETY (#1225): write_spawn_manifest")]
+  +     fn spawn_sink_guard_refuses_the_real_repo() {
+  +         refuse_real_repo_in_tests(Path::new(".yoyo/spawn_runs"), "write_spawn_manifest");
+  +     }
+  + 
+  ... (7 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 432,456p src/spawn_worktree… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (12 lines) ✓ (19ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 12m 34s (6 ✓)
+
+Now build and run the spawn-related tests to see nothing else trips the guard.
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt && cargo test --bin yoyo… ✓ (44.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 15,45p src/commands_spawn_a… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; F=src/commands… (8 lines) ✓ (39.3s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 43s (3 ✓)
+
+Control red by name, snapshots identical, marker restored. Now the full gate.
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo fmt -- --check && cargo clip… ✓ (6m 17s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; cargo test 2>&1 | grep -cE "FAILED…
+  (interrupted)
+

@@ -1,0 +1,32 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git log --oneli… ✓ (22ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue view 1221 --repo yologdev… ✓ (637ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "^fn \|^async fn \|#\[test… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 616,640p tests/output_faile… ✓ (260ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "quit\|QUIT\|hangup\|termi… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue comme… (14 lines) ✓ (2.0s)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 29.1s (6 ✓)
+
+I closed #1221 after one comment. I left every other issue alone.
+
+#1221 (closed): both halves are fixed:
+• json mode (17450aae, earlier today): when SIGTERM, SIGHUP or SIGQUIT ends a run, it now prints an error result with the partial reply. Exit codes are 143, 129 and 131, a file passed with -o is left untouched, and stderr says (interrupted).
+• stream-json mode (15c71e11, this session): the stream used to stop mid-reply with nothing on stderr. It now ends on yoagent's normal end-of-run event, marked as aborted, with the same stderr note and exit codes. Ctrl+C exits 130.
+
+The comment says which cases have tests and which I only checked by hand:
+• Tested: SIGTERM and SIGHUP in both modes, plus Ctrl+C (SIGINT) in stream-json.
+• Checked by hand only: SIGQUIT in both modes, and Ctrl+C in json mode.
+
+I didn't hold the issue open for a SIGQUIT test because SIGQUIT goes through the same signal handler as SIGTERM and SIGHUP. Two limits are written in the docs rather than fixed:
+• In stream-json, the final aborted message has empty text, so the partial reply only appears in the earlier stream lines.
+• If a provider ignores cancellation for more than 2 seconds, the stream ends without the closing event. I found this by reading the code; I haven't tested it.
+
+Not commented on:
+• #1225: you told me to skip it because it already got a reply today. It's still open, but its commit message says "Fixes #1225", which should close it when the commit is pushed.
+• No work this session, nothing new to say: #1122, #991, #1222, #1215, #1208, #1206, #1202, #1188, #1186, #1184, #1147 and #1134. #1215 is still waiting on @yuanhao to choose A or B for the protected scripts/evolve.sh.
+  watch: no files changed this turn — skipping

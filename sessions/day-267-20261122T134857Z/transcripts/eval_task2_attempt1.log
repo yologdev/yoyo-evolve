@@ -1,0 +1,24 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1935,1960p src/commands_s… ✓ (17ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p ses… (9 lines) ✓ (16ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 14.8s (2 ✓)
+
+Verdict: PASS. It's written to session_plan/eval_task_2.md.
+
+• Guard placement: both places where spawn writes to disk now have the test-only refuse_real_repo_in_tests check: write_spawn_manifest and create_spawn_worktree.
+  • In create_spawn_worktree the check runs after the path is worked out (which only reads) and before anything is created.
+  • The manifest is written to a relative SPAWN_RUNS_DIR. Under cargo test that resolves against the repo root, so the check catches it.
+  • The check is only on the write paths, not around the refusal logic itself, as the task asked.
+• Worker launch: it isn't guarded directly. It comes after the create_spawn_worktree calls (lines 897 and 1065), so if the refusal regressed, the guard would panic before any worktree exists.
+• New code is all used: the new check is called at both write sites and has two unit tests (one expects the panic, one passes a temp dir). The new parser test pins the unclosed-quote refusal through read_spawn_args, and the existing an_unclosed_quote_spawns_nothing test is still there.
+• Size limit: commands_spawn.rs grows by 4 lines to about 4628, under its 4629 limit in tests/module_size.rs.
+• Repo is clean: git status shows no .yoyo/worktrees or .yoyo/spawn_runs paths, and git worktree list shows only main.
+• Docs and product surface: neither applies. All the new code is test-only, so production behaviour is unchanged.
+
+I didn't re-run the regression check from step 2 (break the guard, compare before/after snapshots, restore). That result appears only in the commit message.
+  watch: no files changed this turn — skipping
