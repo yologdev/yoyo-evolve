@@ -1411,6 +1411,8 @@ pub fn build_spawn_manifest(
 /// Follows the risk-snapshot write pattern (`create_dir_all` +
 /// `to_string_pretty`). Returns the path so the caller can print it.
 pub fn write_spawn_manifest(dir: &Path, manifest: &serde_json::Value) -> std::io::Result<PathBuf> {
+    #[cfg(test)]
+    crate::spawn_worktree::refuse_real_repo_in_tests(dir, "write_spawn_manifest");
     std::fs::create_dir_all(dir)?;
     let run_id = manifest
         .get("run_id")
@@ -1951,6 +1953,8 @@ pub fn create_spawn_worktree(repo_dir: &Path, task_id: usize) -> Result<Worktree
         .as_secs();
     let dir_name = format!("spawn-{task_id}-{ts}");
     let wt_path = root.join(".yoyo").join("worktrees").join(&dir_name);
+    #[cfg(test)]
+    crate::spawn_worktree::refuse_real_repo_in_tests(&wt_path, "create_spawn_worktree");
 
     // Pre-flight: refuse if any existing path component is a symlink that
     // resolves outside the repo root (worker writes would escape the repo).

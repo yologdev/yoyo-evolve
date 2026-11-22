@@ -366,7 +366,21 @@ fn an_unclosed_quote_is_refused_by_name() {
     );
 }
 
+/// #1225: the refusal `an_unclosed_quote_spawns_nothing` relies on, pinned at
+/// the pure parser for its exact input, so it holds with no process effects.
+#[test]
+fn an_unclosed_quote_in_the_spawn_test_input_is_refused_by_the_parser() {
+    let input = r#"/spawn -o "/tmp/x/a b.md do x"#;
+    let err = read_spawn_args(input).expect_err("an unclosed quote must be refused");
+    assert_eq!(
+        err,
+        r#"-o "/tmp/x/a b.md do x: the " is never closed, so yoyo can't tell where the file name ends. Nothing was run. Close the quote, e.g. /spawn -o "my notes.md" <task>"#
+    );
+}
+
 /// #1213: the refusal comes before anything is registered or written.
+/// #1225: if that refusal regresses, the spawn sinks' test guard
+/// (`refuse_real_repo_in_tests`) panics before a worktree or manifest is made.
 #[tokio::test]
 async fn an_unclosed_quote_spawns_nothing() {
     let dir = tempfile::tempdir().unwrap();

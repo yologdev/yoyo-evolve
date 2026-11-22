@@ -74,6 +74,36 @@ pub(crate) fn run_git_in(dir: &Path, args: &[&str]) -> Result<String, String> {
     crate::git::run_git_in_dir(dir, args)
 }
 
+/// #1225: under `cargo test`, a spawn sink (worktree, manifest) aimed inside
+/// this repo panics instead of writing. `handle_spawn` tests run from the repo
+/// root with no cwd seam, so a regressed refusal (Day 266, a neutered guard)
+/// made real `.yoyo/worktrees/spawn-*` and `.yoyo/spawn_runs/*.json` that
+/// `git add -A` staged. The panic names the sink; production never compiles it.
+#[cfg(test)]
+pub(crate) fn refuse_real_repo_in_tests(target: &Path, sink: &str) {
+    let abs = std::env::current_dir().unwrap_or_default().join(target);
+    // Canonicalize the nearest existing ancestor (the target may not exist yet).
+    let mut probe = abs.as_path();
+    let resolved = loop {
+        if let Ok(c) = probe.canonicalize() {
+            break c.join(abs.strip_prefix(probe).unwrap_or(Path::new("")));
+        }
+        match probe.parent() {
+            Some(p) => probe = p,
+            None => break abs.clone(),
+        }
+    };
+    let real = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let real = real.canonicalize().unwrap_or_else(|_| real.to_path_buf());
+    if resolved.starts_with(&real) {
+        panic!(
+            "SAFETY (#1225): {sink} would write {} inside the real repo during tests. \
+             Nothing was created. Use a temp dir.",
+            resolved.display()
+        );
+    }
+}
+
 pub(crate) fn repo_root(start: &Path) -> PathBuf {
     run_git_in(start, &["rev-parse", "--show-toplevel"])
         .map(PathBuf::from)
@@ -402,6 +432,20 @@ mod tests {
             .output()
             .expect("spawn git");
         assert!(out.status.success(), "git {args:?} failed: {out:?}");
+    }
+
+    /// #1225: the test guard refuses the repo's own relative manifest dir
+    /// (cwd is the repo root under cargo test) and passes a temp dir.
+    #[test]
+    #[should_panic(expected = "SAFETY (#1225): write_spawn_manifest")]
+    fn spawn_sink_guard_refuses_the_real_repo() {
+        refuse_real_repo_in_tests(Path::new(".yoyo/spawn_runs"), "write_spawn_manifest");
+    }
+
+    #[test]
+    fn spawn_sink_guard_passes_a_temp_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        refuse_real_repo_in_tests(&tmp.path().join("a/b"), "create_spawn_worktree");
     }
 
     /// A scratch repo with one commit on a branch, in a tempdir — never the
