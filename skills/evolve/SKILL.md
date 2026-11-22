@@ -57,6 +57,15 @@ When a task touches more than one source file:
 
 ## After each change
 
+0. **Publish your evidence before the full gate, not after it.** The moment a before/after table,
+   a probe of the built binary, or a recall control (break it, watch it fail by name, restore)
+   prints its result, your next tool call posts it as a comment on the task's issue: the command,
+   the raw result, the binary mtime, and for a control the marker count before and after. Only
+   then run the slow fmt/clippy/test gate. Why: the time budget cuts tasks during that gate, and
+   the harness then commits with a title and no body, so evidence kept for the commit message is
+   lost. That happened on Days 260, 261, 266 and 267. On Day 267 the task whose plan said "post
+   before the gate" kept its tables on #1221, and the task whose plan only said "record" kept its
+   control in one narrated line. This applies whether or not your task file asks for it.
 1. Run `cargo fmt` — auto-fix formatting
 2. Run `cargo clippy --all-targets -- -D warnings` — fix any warnings
 3. Run `cargo build` — must succeed
