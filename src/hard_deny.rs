@@ -28,7 +28,9 @@
 //! `rm -rf /`, and no word in it equals `rm`; a `git commit -m "…"` whose
 //! body has that text on a line of its own is the same. A `#` comment and a
 //! heredoc body are not quote-tracked, so an apostrophe there cannot pair up
-//! with another across lines and hide the line between.
+//! with another across lines and hide the line between. A heredoc body
+//! that `cat`/`tee` only writes to a file is data and is skipped (#1102,
+//! see Known residue).
 //!
 //! - **rm-root** (`rm -rf /`, or `rm -rf /*` when the target is exactly
 //!   `/*`): a word whose basename is `rm`, anywhere in the segment (so
@@ -55,12 +57,24 @@
 //!
 //! # Known residue (deliberate, not fixed)
 //!
-//! - A heredoc BODY line that reads like a command (`rm -rf /` on its own
-//!   line in a markdown file being written) is tokenized as a command and
-//!   refused. That fails closed, which is the safe direction; its
-//!   incidence on mentions is counted on #1102. Remedy for
-//!   the refused user or model: write the text with `write_file` and pass
-//!   the path (`git commit -F msg.txt`, `gh issue create --body-file f`).
+//! - A heredoc body fed to a bare `cat`/`tee` that writes a file, not
+//!   piped onward (`cat > f <<'EOF'`, `cat >> f <<EOF`, `tee -a f <<EOF`),
+//!   is data: bash writes it and runs none of it, so it is skipped (#1102).
+//!   An unquoted body's lines with `$(` or a backtick are still read (bash
+//!   runs those). Every other body is still tokenized as commands, and a
+//!   mention there is refused: a shell or interpreter reading it (`bash
+//!   <<EOF`, `cat <<EOF | sh`, `python3 - <<EOF`, counted on #1222), `cat`
+//!   to the screen, process substitution, and any body whose end this may
+//!   read differently from bash (a delimiter that is not plain
+//!   `[A-Za-z0-9_]`, a `\`-newline anywhere in the command, no
+//!   terminator). NOT covered, and not called safe: `cat > s.sh <<EOF …
+//!   EOF; bash s.sh` passes, exactly as `write_file` then `bash s.sh`
+//!   always has; this guard reads commands, it does not follow files.
+//!   Remedy for a refused mention: write the text with `write_file` and
+//!   pass the path. Superseded, recorded rather than erased: until #1102
+//!   every heredoc body was tokenized as commands, and this bullet called
+//!   refusing a mention in a file being written "the safe direction"; it
+//!   protected nothing and refused my own loop's plan writes ~16 times.
 //! - A quoted argument that spans lines (`python3 -c "…"`, a
 //!   `git commit -m "…"` with a body, `gh issue create --body "…"`) is one
 //!   word (#1101). The verdict for a multi-line command equals the verdict
@@ -218,7 +232,9 @@ fn match_at_depth(command: &str, depth: usize) -> Option<HardDenyHit> {
     }
     let joined = command.replace("\\\r\n", " ").replace("\\\n", " ");
     let mut unbalanced = false;
-    let logical = logical_lines(&joined);
+    // A joined `\`-newline can hide a quoted heredoc's terminator (bash does
+    // not join inside `<<'EOF'`), so no body is skipped as data then (#1102).
+    let logical = logical_lines(&joined, joined == command);
     for line in &logical {
         let (segments, balanced) = split_line(line);
         unbalanced |= !balanced;
@@ -236,7 +252,9 @@ fn match_at_depth(command: &str, depth: usize) -> Option<HardDenyHit> {
         // Day 266 any `$(`/backtick sent the whole command to the
         // quote-deleting scan below, so `echo "rm -rf / at $(date)"` was
         // hard-blocked while `echo "rm -rf /"` passed.
-        return substitution_bodies(&joined)
+        // Read from the logical lines, so a skipped data body's apostrophe
+        // cannot open a quote that hides a later `$(…)` (#1102).
+        return substitution_bodies(&logical.join("\n"))
             .iter()
             .find_map(|body| match_at_depth(body, depth + 1));
     }
@@ -372,24 +390,34 @@ fn backtick_body(chars: &[char], i: &mut usize) -> String {
 /// NOT quote-tracked, so an apostrophe in them cannot pair up across lines
 /// and hide the line between: a `#` comment (to the end of its line), and a
 /// heredoc body, each of whose lines is emitted as a logical line of its own
-/// (tokenized as a command, which fails closed). An unclosed quote runs to
+/// (tokenized as a command, which fails closed). The exception (#1102, when
+/// `skip_data` is set): a terminated body that [`heredocs_are_data`] says is
+/// only written to a file is dropped, except an unquoted body's lines with
+/// `$(` or a backtick, which bash runs. An unclosed quote runs to
 /// the end; `split_line` then reports it unbalanced and the caller falls
 /// back to the per-physical-line desugar scan.
-fn logical_lines(text: &str) -> Vec<String> {
+fn logical_lines(text: &str, skip_data: bool) -> Vec<String> {
     let chars: Vec<char> = text.chars().collect();
     let n = chars.len();
     let mut lines = Vec::new();
     let mut cur = String::new();
-    let mut heredocs: Vec<(String, bool)> = Vec::new();
+    // (delimiter, `<<-`, quoted, delimiter spelled plainly enough to trust)
+    let mut heredocs: Vec<(String, bool, bool, bool)> = Vec::new();
     let mut i = 0;
     while i < n {
         let c = chars[i];
         let next = chars.get(i + 1).copied();
         match c {
             '\n' => {
-                lines.push(std::mem::take(&mut cur));
+                let line = std::mem::take(&mut cur);
+                let data = skip_data
+                    && heredocs.iter().all(|h| h.3)
+                    && heredocs_are_data(&line, heredocs.len());
+                lines.push(line);
                 i += 1;
-                for (delim, strip_tabs) in heredocs.drain(..) {
+                for (delim, strip_tabs, quoted, _) in heredocs.drain(..) {
+                    let mut body_lines = Vec::new();
+                    let mut terminated = false;
                     while i < n {
                         let end = chars[i..]
                             .iter()
@@ -403,11 +431,17 @@ fn logical_lines(text: &str) -> Vec<String> {
                         } else {
                             trimmed
                         };
-                        let done = trimmed == delim;
-                        lines.push(body);
-                        if done {
+                        terminated = trimmed == delim;
+                        body_lines.push(body);
+                        if terminated {
                             break;
                         }
+                    }
+                    if data && terminated {
+                        let runs = |l: &String| !quoted && (l.contains("$(") || l.contains('`'));
+                        lines.extend(body_lines.into_iter().filter(runs));
+                    } else {
+                        lines.extend(body_lines);
                     }
                 }
             }
@@ -466,15 +500,26 @@ fn logical_lines(text: &str) -> Vec<String> {
                     i += 1;
                 }
                 let mut delim = String::new();
+                let mut raw = String::new();
                 while i < n && !chars[i].is_whitespace() && !";&|()<>".contains(chars[i]) {
                     cur.push(chars[i]);
+                    raw.push(chars[i]);
                     if !matches!(chars[i], '\'' | '"' | '\\') {
                         delim.push(chars[i]);
                     }
                     i += 1;
                 }
                 if !delim.is_empty() {
-                    heredocs.push((delim, strip_tabs));
+                    let plain = delim.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                        && [
+                            delim.clone(),
+                            format!("'{delim}'"),
+                            format!("\"{delim}\""),
+                            format!("\\{delim}"),
+                        ]
+                        .contains(&raw);
+                    let quoted = raw.len() > delim.len();
+                    heredocs.push((delim, strip_tabs, quoted, plain));
                 }
             }
             _ => {
@@ -487,6 +532,51 @@ fn logical_lines(text: &str) -> Vec<String> {
         lines.push(cur);
     }
     lines
+}
+
+/// #1102: true when the `count` heredocs on `line` all feed a bare `cat` or
+/// `tee` (a path like `/bin/cat` counts; no wrappers) whose output goes to a
+/// file and is not piped on. bash writes such a body and runs none of it.
+/// Anything this cannot read cleanly (an open quote, process substitution,
+/// a word count that disagrees with `count`) is false: the body is read.
+fn heredocs_are_data(line: &str, count: usize) -> bool {
+    if line.contains(">(") || line.contains("<(") {
+        return false;
+    }
+    let (segments, balanced) = split_line(line);
+    let mut seen = 0;
+    let all = segments.iter().all(|seg| {
+        let w = &seg.words;
+        let ops = w.iter().filter(|x| x.contains("<<")).count();
+        if ops == 0 {
+            return true;
+        }
+        seen += ops;
+        let piped = line
+            .get(seg.span.end..)
+            .unwrap_or("|")
+            .trim_start()
+            .starts_with('|');
+        let file = |t: Option<&String>| {
+            t.is_some_and(|t| !t.is_empty() && !t.starts_with(['&', '<', '>']))
+        };
+        let redirect = w.iter().enumerate().skip(1).any(|(k, x)| {
+            match x.strip_prefix(">>").or_else(|| x.strip_prefix('>')) {
+                Some("") => file(w.get(k + 1)),
+                Some(t) => file(Some(&t.to_string())),
+                None => false,
+            }
+        });
+        let tee_file = w[1..]
+            .iter()
+            .any(|x| !x.starts_with(['-', '<', '>']) && !x.contains("<<"));
+        let b = basename(&w[0]);
+        ops == 1
+            && !piped
+            && !w.iter().any(|x| x.contains("<<<"))
+            && (b == "cat" && redirect || b == "tee" && (redirect || tee_file))
+    });
+    balanced && all && seen == count
 }
 
 /// One shell segment: its words (quote removal applied) and the byte span
@@ -863,7 +953,9 @@ mod tests {
 
     #[test]
     fn refusal_quotes_only_the_matching_line_of_a_multi_line_command() {
-        let cmd = "cat <<EOF > notes.md\nfirst line\nrm -rf ~/\nlast line\nEOF";
+        // Piped into `sh`, so the body runs. Until #1102 this fixture was
+        // `cat <<EOF > notes.md`, which is now data and passes.
+        let cmd = "cat <<EOF | sh > notes.md\nfirst line\nrm -rf ~/\nlast line\nEOF";
         let got = hard_deny_refusal(HARD_DENY_PATTERNS, cmd).expect("refuses");
         assert!(got.contains("`rm -rf ~/` reads as"), "{got}");
         for other in ["first line", "last line", "notes.md", "EOF"] {
@@ -1196,3 +1288,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "hard_deny_heredoc_tests.rs"]
+mod hard_deny_heredoc_tests;
