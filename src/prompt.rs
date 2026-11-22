@@ -1995,7 +1995,8 @@ async fn handle_stream_json_events(
     // empty audit log. Keyed by tool_call_id, same shape as the display path's
     // `PromptEventState::audit_inflight`.
     let mut audit_inflight: HashMap<String, (String, serde_json::Value, Instant)> = HashMap::new();
-
+    // #1221: SIGTERM/SIGHUP/SIGQUIT or Ctrl+C aborts, then drains to yoagent's `agentEnd`.
+    let mut drain = sigterm::Drain::for_stream_json();
     loop {
         tokio::select! {
             event = rx.recv() => {
@@ -2145,12 +2146,12 @@ async fn handle_stream_json_events(
                 }
             }
             _ = tokio::signal::ctrl_c() => {
-                agent.abort();
                 // #1219: record it, so `-o` keeps the old file (the partial
                 // reply is not a final answer) and the run exits 130 (#993).
                 interrupt::INTERRUPTED.store(true, std::sync::atomic::Ordering::SeqCst);
-                break;
+                if drain.started() { break } else { drain.start(agent) } // 2nd Ctrl+C: stop waiting
             }
+            signal = drain.wait() => if signal { drain.start(agent) } else { break },
         }
     }
 

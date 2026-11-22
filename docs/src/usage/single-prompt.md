@@ -85,6 +85,8 @@ If the run is interrupted with Ctrl+C (SIGINT), yoyo exits with code **130**, wr
 unchanged. A script can tell a cut-off answer from a complete one, which exits 0.
 With `--output-format json`, an interrupted run (SIGINT, SIGTERM, SIGHUP or SIGQUIT)
 still prints the envelope, with `"is_error": true` and the partial reply in `response`.
+With `--output-format stream-json`, the same signals end the event stream on yoagent's
+`agentEnd` (last assistant message `"stopReason": "aborted"`) and print `(interrupted)` on stderr.
 
 ## Exit codes
 

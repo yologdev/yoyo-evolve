@@ -623,3 +623,80 @@ fn json_sigterm_prints_an_is_error_envelope_with_the_partial_reply() {
 fn json_sighup_prints_an_is_error_envelope_with_the_partial_reply() {
     assert_interrupted_json_envelope("-HUP", 129);
 }
+
+// ---------------------------------------------------------------------------
+// #1221 (stream-json row): before the fix (measured Day 267 12:19 against HEAD
+// 5c35f81c) a SIGTERM/SIGHUP killed a stream-json run outright: the NDJSON
+// stream stopped at the last delta, nothing on stderr, nothing said that the
+// `-o` file was not written.
+// ---------------------------------------------------------------------------
+
+/// The end an interrupted stream-json run must still have: exit `code`, every
+/// stdout line a whole JSON value, the LAST line yoagent's own `agentEnd`
+/// whose final assistant message says `stopReason: "aborted"`, the `-o` file
+/// left as it was, and stderr saying both that the run was interrupted and
+/// that the file was not written.
+#[cfg(unix)]
+fn assert_interrupted_stream_json(signal: &str, code: i32) {
+    let tmp = tempfile::tempdir().unwrap();
+    let out = tmp.path().join("out.txt");
+    std::fs::write(&out, OLD).unwrap();
+    let run = run_yoyo_interrupted_with(tmp.path(), signal, STREAM_JSON);
+    let err = &run.stderr;
+    assert_eq!(
+        run.code,
+        Some(code),
+        "stdout:\n{}\nstderr:\n{err}",
+        run.stdout
+    );
+    assert_stdout_is_ndjson(&run);
+    let last = run.stdout.lines().rfind(|l| !l.is_empty()).unwrap();
+    let v: serde_json::Value = serde_json::from_str(last).unwrap();
+    assert_eq!(
+        v["type"],
+        serde_json::json!("agentEnd"),
+        "last line: {last}"
+    );
+    let final_assistant = v["messages"]
+        .as_array()
+        .and_then(|m| m.iter().rev().find(|m| m["role"] == "assistant"))
+        .unwrap_or_else(|| panic!("agentEnd has no assistant message: {last}"));
+    assert_eq!(
+        final_assistant["stopReason"],
+        serde_json::json!("aborted"),
+        "last line: {last}"
+    );
+    assert!(err.contains("(interrupted)"), "no interrupt note:\n{err}");
+    assert!(
+        err.contains(
+            "out.txt was not written: the run was interrupted, so the existing file was left as it was"
+        ),
+        "stderr does not say the file was kept:\n{err}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&out).unwrap(),
+        OLD,
+        "an interrupted stream-json run replaced the existing --output file\n{err}"
+    );
+}
+
+/// #1221 row: SIGTERM (what `timeout` sends) -> 143, the stream still ends.
+#[cfg(unix)]
+#[test]
+fn stream_json_sigterm_ends_the_stream_with_an_aborted_agent_end() {
+    assert_interrupted_stream_json("-TERM", 143);
+}
+
+/// #1221 row: SIGHUP (terminal closed) -> 129, the stream still ends.
+#[cfg(unix)]
+#[test]
+fn stream_json_sighup_ends_the_stream_with_an_aborted_agent_end() {
+    assert_interrupted_stream_json("-HUP", 129);
+}
+
+/// #1221 row: Ctrl+C (SIGINT) -> 130, same ending and the same stderr note.
+#[cfg(unix)]
+#[test]
+fn stream_json_sigint_ends_the_stream_with_an_aborted_agent_end() {
+    assert_interrupted_stream_json("-INT", 130);
+}

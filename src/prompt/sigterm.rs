@@ -14,8 +14,10 @@
 //! - the handler is registered only when the gate is filtering or the run
 //!   prints the `--output-format json` envelope (#1221: before, json died by
 //!   signal with an empty stdout; now its envelope says `is_error: true`).
-//!   TTY, REPL, `--print` and stream-json never register it and still die by
-//!   default, and
+//!   A single-shot stream-json run registers it too (#1221, Day 267: before,
+//!   its NDJSON stopped mid-turn with nothing on stderr; now it aborts, drains
+//!   yoagent's own `agentEnd` and notes the interrupt, see [`Drain`]).
+//!   TTY, REPL and `--print` never register it and still die by default, and
 //! - the handler is a process-lifetime watcher task that ALWAYS ends the
 //!   process with 143 (129 for SIGHUP, 131 for SIGQUIT): when a text loop is listening it hands the loop the
 //!   signal (the loop flushes and returns) and exits after a grace if `main`
@@ -36,7 +38,7 @@
 //! the user reaching for "harder Ctrl+C" lost everything already produced.
 //! The trade, stated: while the handler is armed, SIGQUIT no longer dumps
 //! core; it is armed in exactly the window SIGHUP/SIGTERM are (the filtering
-//! and json-envelope populations only), so every other run keeps the core-dump default.
+//! json-envelope and stream-json populations only), so every other run keeps the core-dump default.
 //! Still not handled: SIGKILL (unflushable), SIGPIPE (the reader is gone;
 //! by reasoning, not probed); a panic while text is held is
 //! flushed by `RetrySafeGate`'s `Drop` (Day 228, probed: before it, `""`).
@@ -77,6 +79,65 @@ pub(super) fn wants_listener(filtering: bool) -> bool {
 
 fn wants_listener_for(filtering: bool, json_envelope: bool) -> bool {
     filtering || json_envelope
+}
+
+/// #1221: a stream-json loop listens on the single-shot doors (the only
+/// doors that run it); the REPL keeps the default disposition.
+fn wants_stream_json_listener() -> bool {
+    super::interrupt::is_single_shot()
+}
+
+/// How long a stream-json run waits, after aborting, for yoagent's own
+/// `agentEnd`. Well under the watcher's 5 s grace, so `main` still gets to
+/// print the `-o` note and exit with the signal's code.
+const DRAIN_BOUND: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// #1221: the stream-json loop's interrupt (any terminating signal or
+/// Ctrl+C). Starting it aborts the agent and says `(interrupted)` on stderr;
+/// the loop keeps emitting events, so the NDJSON ends on yoagent's own
+/// `agentEnd` (last assistant message `stopReason: "aborted"`) rather than
+/// mid-turn. [`Drain::wait`] bounds the wait if that event never comes.
+pub(super) struct Drain {
+    term: Option<SigtermListener>,
+    deadline: Option<std::pin::Pin<Box<tokio::time::Sleep>>>,
+}
+
+impl Drain {
+    /// Arms the signal listener when [`wants_stream_json_listener`] says so.
+    pub(super) fn for_stream_json() -> Self {
+        Drain {
+            term: listen(wants_stream_json_listener()),
+            deadline: None,
+        }
+    }
+
+    pub(super) fn started(&self) -> bool {
+        self.deadline.is_some()
+    }
+
+    /// Before [`Drain::start`]: resolves `true` when a terminating signal
+    /// arrives (never, when unarmed). After it: resolves `false` when the
+    /// drain bound passes.
+    pub(super) async fn wait(&mut self) -> bool {
+        match self.deadline.as_mut() {
+            Some(sleep) => {
+                sleep.as_mut().await;
+                false
+            }
+            None => {
+                recv(&mut self.term).await;
+                true
+            }
+        }
+    }
+
+    pub(super) fn start(&mut self, agent: &yoagent::agent::Agent) {
+        use std::io::Write;
+        agent.abort();
+        let note = super::interrupt::interrupt_note(super::interrupt::is_single_shot());
+        let _ = std::io::stderr().write_all(note.as_bytes());
+        self.deadline = Some(Box::pin(tokio::time::sleep(DRAIN_BOUND)));
+    }
 }
 
 /// The exit code owed to a terminating signal this process received:
@@ -184,7 +245,7 @@ mod tests {
     use super::*;
 
     /// The population guard: a run whose gate does not hold text and that
-    /// prints no json envelope (TTY, REPL, --print, stream-json) never
+    /// prints no json envelope (TTY, REPL, --print) never
     /// registers a handler, so SIGTERM keeps its default disposition there.
     #[test]
     fn unfiltered_runs_never_register_a_sigterm_handler() {

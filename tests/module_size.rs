@@ -649,7 +649,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // printer and the json field builder live in src/prompt/output_limit.rs.
     // +1 Day 261 (#1206): `mod refusal_history;`; the three `agent.finish()` joins
     // became `finish_and_scrub` in place, the logic lives in that module.
-    ("src/prompt.rs", 3992),
+    ("src/prompt.rs", 3993),
     // Day 183: first entry for this file — 2042, i.e. 42 past MAX_MODULE_LINES and
     // so inside OVERSHOOT_GRACE_LINES, which is why it warned instead of failing.
     // Registering it is this gate's OWN stated remedy for a grace-band overshoot
