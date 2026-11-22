@@ -480,6 +480,21 @@ fn scan_rm_destruction(cmd: &str, _cmd_lower: &str) -> Option<String> {
                         }
                     }
                 }
+                // #1227: a top-level folder or the working folder, up to a separator.
+                for raw_token in tokens.iter().skip(1) {
+                    if matches!(*raw_token, "&&" | "||" | "|" | ";" | "&")
+                        || raw_token.contains(['>', '<'])
+                    {
+                        break;
+                    }
+                    if let Some(what) = rm_wide_target(raw_token) {
+                        let severity = if has_f { "force-" } else { "" };
+                        return Some(format!("Destructive command: {severity}recursive delete targeting {what} '{raw_token}'"));
+                    }
+                    if raw_token.ends_with(';') {
+                        break;
+                    }
+                }
                 // Day 144: recursive-force rm on an unresolved shell variable.
                 // `rm -rf "$BUILD_DIR/"` with an empty/unset BUILD_DIR expands
                 // to `rm -rf /` (or cwd). Guarded expansions (`${VAR:?}`) abort
@@ -507,6 +522,28 @@ fn scan_rm_destruction(cmd: &str, _cmd_lower: &str) -> Option<String> {
         search_from = abs_pos + 2;
     }
     None
+}
+
+/// #1227: what a recursive rm of `token` wipes if it is a top-level folder
+/// (`/home`, `/data/`, `/mnt/*`: any one-component absolute path) or the
+/// working folder (`./`, `$PWD`, `${PWD}`, `"$(pwd)"`, `` `pwd` ``, with or
+/// without a trailing `/`). Quotes and a trailing `;` are ignored.
+fn rm_wide_target(token: &str) -> Option<&'static str> {
+    let t: String = token
+        .chars()
+        .filter(|c| !matches!(c, '"' | '\'' | ';'))
+        .collect();
+    let t = t
+        .strip_suffix("/*")
+        .unwrap_or(&t)
+        .trim_end_matches(['/', ')', '`', '}']);
+    if matches!(t, "." | "$PWD" | "${PWD" | "$(pwd" | "`pwd") {
+        return Some("the working folder");
+    }
+    let top = t
+        .strip_prefix('/')
+        .is_some_and(|r| !r.is_empty() && !r.contains('/'));
+    top.then_some("top-level folder")
 }
 
 /// Find an unguarded shell variable reference in a token, returning its display
@@ -4813,3 +4850,7 @@ mod read_guard_delete_tests;
 #[cfg(test)]
 #[path = "safety_git_glued_tests.rs"]
 mod safety_git_glued_tests;
+
+#[cfg(test)]
+#[path = "safety_rm_target_tests.rs"]
+mod safety_rm_target_tests;

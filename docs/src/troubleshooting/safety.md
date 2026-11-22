@@ -153,6 +153,24 @@ unset, so `rm -rf "${BUILD_DIR:?}/build"` passes this check — the
 expansion can never silently widen the blast radius. Existing
 destructive-pattern rules still apply on top.
 
+Since Day 267 a recursive `rm` (`-r`, `-R`, `--recursive`, with or
+without `-f`, behind `sudo` too) also asks when its target is a
+**top-level folder** (any one-component absolute path: `/home`,
+`/Users`, `/root`, `/mnt`, `/media`, `/tmp`, `/data`, with or without a
+trailing `/` or `/*`) or **the working folder** spelled as `./`, `$PWD`,
+`${PWD}`, `$(pwd)` or `` `pwd` `` (quoted or not), the same way
+`rm -rf .` always has. Deeper paths such as `rm -rf /tmp/x` or
+`rm -rf ./target` don't ask, and a path that belongs to a later command
+(`rm -rf build && cd /app`) or to a redirect (`> /out.log`) doesn't
+count. Two limits: the working folder spelled as its absolute path
+(`rm -rf /home/me/proj` run from that folder) is not recognised, because
+the check doesn't know the working folder (#1229); and `rm -rf
+"$PWD/target"` still asks, through the empty-variable rule above (#1230).
+Like every warning on this page, it is a confirmation prompt: in the
+REPL you are asked; under `-p` (which implies `--yes`) or `--yes`
+nobody is asked and the command runs (#1231). Only the hard block on
+`/`, `~` and `$HOME` stops a command there.
+
 ## Restricting a session with `--restricted`
 
 `--restricted` is an **opt-in narrowing** for pointing yoyo at code you
