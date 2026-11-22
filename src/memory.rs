@@ -5,7 +5,9 @@
 //! Users can add memories with `/remember`, list with `/memories`, remove with `/forget`.
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 /// Valid memory categories.
 pub const MEMORY_CATEGORIES: &[&str] = &["general", "build", "convention", "architecture", "bug"];
@@ -65,10 +67,24 @@ pub fn load_memories() -> ProjectMemory {
 /// [`load_memories_for_write`] instead (#1216).
 pub fn load_memories_from(path: &Path) -> ProjectMemory {
     read_memories(path).unwrap_or_else(|reason| {
-        let reason = crate::cli::sanitize_for_display(&reason);
-        eprintln!("warning: project memories not loaded - {reason}");
+        let mut seen = crate::sync_util::lock_or_recover(WARNED.get_or_init(Default::default));
+        if first_warning(&mut seen, &warning_key(path, &reason)) {
+            let reason = crate::cli::sanitize_for_display(&reason);
+            eprintln!("warning: project memories not loaded - {reason}");
+        }
         ProjectMemory::default()
     })
+}
+
+/// Reasons warned about this process: once per session per reason (#1217).
+static WARNED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+fn first_warning(seen: &mut HashSet<String>, key: &str) -> bool {
+    seen.insert(key.to_owned())
+}
+/// The reason with its path resolved: startup says `./.yoyo/..`, commands `.yoyo/..`.
+fn warning_key(path: &Path, reason: &str) -> String {
+    let real = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    reason.replace(&path.display().to_string(), &real.display().to_string())
 }
 
 /// Only an absent file is an empty store. A non-regular, unreadable or

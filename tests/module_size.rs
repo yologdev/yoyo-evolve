@@ -601,6 +601,12 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // and the source guard now refusing a raw stdin.write_all). The helper
     // and its tests live in their own module to keep this growth small.
     ("src/hooks.rs", 3732),
+    // Day 267 (#1217): NEW entry, 1992 -> 2008 (+16) -- the once-per-reason
+    // dedup for the 'project memories not loaded' warning (a static set, a pure
+    // `first_warning` helper and `warning_key`, which canonicalizes the path so
+    // startup's `./.yoyo/..` and the commands' `.yoyo/..` are one reason) plus
+    // three imports; the lock goes through sync_util::lock_or_recover. Its tests live in src/memory_parse_guard_tests.rs.
+    ("src/memory.rs", 2008),
     // Day 209: +139 — `pre_hook_block_message` plus its two tests (a table over
     // the pure formatter and a behavioural test through the real registry). A
     // blocking pre-hook's own stderr was captured, capped and dropped, so the

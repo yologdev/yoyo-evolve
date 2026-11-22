@@ -122,3 +122,31 @@ fn test_load_memories_invalid_json() {
         "Invalid JSON should return empty memory"
     );
 }
+
+/// #1217: the 'not loaded' warning is a status, so one session shows each
+/// distinct reason once, however often the store is reloaded.
+#[test]
+fn the_not_loaded_warning_is_first_only_per_distinct_reason() {
+    let mut seen = std::collections::HashSet::new();
+    assert!(first_warning(&mut seen, "a.json is not valid JSON: line 1"));
+    assert!(!first_warning(
+        &mut seen,
+        "a.json is not valid JSON: line 1"
+    ));
+    assert!(first_warning(&mut seen, "a.json is not valid JSON: line 2"));
+}
+
+/// Startup reads `<dir>/./.yoyo/memory.json`-style paths and the commands
+/// read `.yoyo/memory.json`; both spellings of one file are one reason.
+#[test]
+fn two_spellings_of_one_broken_store_are_one_warning_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = store(&dir, Some(BROKEN));
+    let dotted = dir.path().join(".").join(".yoyo").join("memory.json");
+    let key = |p: &Path| warning_key(p, &read_memories(p).unwrap_err());
+    assert_eq!(key(&path), key(&dotted));
+    // Still lenient on every reload, warned or not.
+    for _ in 0..3 {
+        assert!(load_memories_from(&dotted).entries.is_empty());
+    }
+}
