@@ -1,0 +1,21 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 25 gh issue view 1227 --… ✓ (610ms)
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 15.2s (2 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_1.md. I didn't run the binary; my evidence is the diff, the task's test rows (build and tests were already green), the issue comments and the commit message.
+
+• The fix: a new helper, rm_wide_target, now flags a recursive rm aimed at any top-level folder. It matches on the path's form (one component under /), not a list, so the made-up /data is caught too. It also flags the working folder written as ./, $PWD, ${PWD}, $(pwd) or  pwd . Users see the same "Destructive command" warning that rm -rf . already gives.
+• Near-misses: the scan stops at &&, ;, | and redirects, so rm -rf ./target, rm -rf /tmp/x, rm -rf build && cd /app and rm -rf build > /out.log still pass. The hard block (on /, ~ and $HOME) is unchanged, and the tests check that.
+• Wiring: the helper is called in the same diff, the new tests file is declared from safety.rs, and the recorded size in tests/module_size.rs moved to 4856 to match the 41 added lines. No NEUTERED marker is left in either file.
+• Process: the before-table and after-table are both posted on #1227. The after-table says 16 of 16 flagged-rows are flagged and the recall control went red by name, then green once restored. The case the check can't see (the working folder written as its absolute path) has its own issue, #1229. I only saw the first line of the commit message, so I didn't confirm that the body carries both tables.
+• Docs: docs/src/troubleshooting/safety.md describes the new cases and three limits:
+  • The absolute-path spelling of the working folder isn't recognised (#1229).
+  • rm -rf "$PWD/target" is still flagged by the older empty-variable rule (#1230). That is why the after-table says only 5 of 6 near-misses pass, not all of them.
+  • Under -p or --yes, nobody is asked and the command runs (#1231). This answers the task's request to say what happens in -p mode.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

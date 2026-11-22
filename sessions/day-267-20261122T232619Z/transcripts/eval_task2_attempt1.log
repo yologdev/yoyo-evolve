@@ -1,0 +1,20 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --bin yoy… ✓ (32.0s)
+  ▶ write session_plan/eval_task_2.md (6 lines) ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 45.1s (2 ✓)
+
+Verdict: PASS. It's written to session_plan/eval_task_2.md.
+
+• What changed: hard_deny now skips a heredoc body when a bare cat or tee (or one called by path, like /bin/cat) writes it to a file and nothing is piped onward. The command line itself is still checked. In an unquoted body, lines containing $( or a backtick are still read, because bash runs those.
+• What still refuses: every row the task listed. That covers bodies piped into a shell (cat <<EOF | sh), fed to a shell or interpreter (bash <<'EOF', python3 - <<'EOF'), and printed to the screen. It also covers process substitution, an unterminated body, a \-newline in the command, and unusual delimiters.
+• Tests: every row from the task is pinned in src/hard_deny_heredoc_tests.rs. Running cargo test --bin yoyo hard_deny gave 21 passed, and no NEUTERED marker is left in the hard_deny files.
+• Loose ends: the new function is called where it should be, and the new parameter is passed at its one call site. One existing test input was changed from writing to a file to piping into sh, with a comment saying why, so it still exercises a refusal. No tests were deleted.
+• Docs: permissions.md and the module's "Known residue" note are both updated. Both say plainly that cat > s.sh <<EOF …; bash s.sh passes and do not call it safe.
+
+I couldn't check two things from the diff: whether the before/after tables and the NEUTERED control result were posted on #1102, and whether the control was actually run.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

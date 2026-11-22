@@ -1,0 +1,206 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | head; grep … ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 100,200p src/safety.rs; s… ✓ (5ms)
+  ▶ read src/safety.rs:440..520 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 517,580p src/safety.rs; g… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 4795,4815p src/safety.rs;… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,60p src/hard_deny.rs | … ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 18.5s (6 ✓)
+
+Writing the measurement test file first (via write_file, per the task's #1102 note).
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ write src/safety_rm_target_tests.rs (45 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/s… (7 lines) ✓ (5m 5s)
+ ✗ (5m 5s)
+    │ Command timed out after 120s. Output so far:
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 1227 --json title,… ✓ (349ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "analyze_bash_command("… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 375,400p src/tools.rs; se… ✓ (6ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/b… (33 lines) ✓ (871ms)
+  ▶ edit src/safety.rs (3 → 16 lines)
+  +                     }
+  +                 }
+  +                 // #1227: a top-level folder or the working folder, up to a separator.
+  +                 for raw_token in tokens.iter().skip(1) {
+  +                     if matches!(*raw_token, "&&" | "||" | "|" | ";" | "&") || raw_token.contains(['>', '<']) {
+  +                         break;
+  +                     }
+  +                     if let Some(what) = rm_wide_target(raw_token) {
+  +                         let severity = if has_f { "force-" } else { "" };
+  +                         return Some(format!("Destructive command: {severity}recursive delete targeting {what} '{raw_token}'"));
+  +                     }
+  +                     if raw_token.ends_with(';') {
+  +                         break;
+                        }
+                    }
+                    // Day 144: recursive-force rm on an unresolved shell variable.
+  ▶ edit src/safety.rs (1 → 15 lines)
+  + /// #1227: what a recursive rm of `token` wipes if it is a top-level folder
+  + /// (`/home`, `/data/`, `/mnt/*`: any one-component absolute path) or the
+  + /// working folder (`./`, `$PWD`, `${PWD}`, `"$(pwd)"`, `` `pwd` ``, with or
+  + /// without a trailing `/`). Quotes and a trailing `;` are ignored.
+  + fn rm_wide_target(token: &str) -> Option<&'static str> {
+  +     let t: String = token.chars().filter(|c| !matches!(c, '"' | '\'' | ';')).collect();
+  +     let t = t.strip_suffix("/*").unwrap_or(&t).trim_end_matches(['/', ')', '`', '}']);
+  +     if matches!(t, "." | "$PWD" | "${PWD" | "$(pwd" | "`pwd") {
+  +         return Some("the working folder");
+  +     }
+  +     let top = t.strip_prefix('/').is_some_and(|r| !r.is_empty() && !r.contains('/'));
+  +     top.then_some("top-level folder")
+  + }
+  + 
+    /// Find an unguarded shell variable reference in a token, returning its display
+ ✓ (18.5s)
+  +                     }
+  +                 }
+  +                 // #1227: a top-level folder or the working folder, up to a separator.
+  +                 for raw_token in tokens.iter().skip(1) {
+  +                     if matches!(*raw_token, "&&" | "||" | "|" | ";" | "&") || raw_token.contains(['>', '<']) {
+  +                         break;
+  +                     }
+  +                     if let Some(what) = rm_wide_target(raw_token) {
+  ... (8 more lines)
+ ✓ (5m 16s)
+  + /// #1227: what a recursive rm of `token` wipes if it is a top-level folder
+  + /// (`/home`, `/data/`, `/mnt/*`: any one-component absolute path) or the
+  + /// working folder (`./`, `$PWD`, `${PWD}`, `"$(pwd)"`, `` `pwd` ``, with or
+  + /// without a trailing `/`). Quotes and a trailing `;` are ignored.
+  + fn rm_wide_target(token: &str) -> Option<&'static str> {
+  +     let t: String = token.chars().filter(|c| !matches!(c, '"' | '\'' | ';')).collect();
+  +     let t = t.strip_suffix("/*").unwrap_or(&t).trim_end_matches(['/', ')', '`', '}']);
+  +     if matches!(t, "." | "$PWD" | "${PWD" | "$(pwd" | "`pwd") {
+  ... (7 more lines)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 11m 29s (7 ✓, 1 ✗)
+
+Now turn the measurement into assertions (verdict-exact), keeping the table printer.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (18 lines) ✓ (20ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (58 lines) ✗ (0ms)
+    │ Command blocked by safety policy: `Destructive command: rm -rf target contains unresolved variable $PWD — an empty expansion would delete from cwd or /` reads as a recursive delete of the filesystem r…
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue list --state open --sea… ✓ (1.2s)
+  ▶ write /tmp/i1.md (7 lines)
+  - Scope: open = decide whether a recursive delete aimed at a **top-level folder** (`/home`, `/Users`, `/root`, `/mnt`, `/media`, `/tmp` itself, any single-component absolute path) or at **the working folder** (`"$PWD"`, `$(pwd)`, `` `pwd` ``, the cwd spelled as an absolute path) is flagged before it runs. Done = a near-miss table through yoyo's bash safety check, each row flagged or passing by a stated reason, pinned in a test.
+  - 
+  - **Why now:** Claude Code 2.1.330 (2026-11-20 changelog) asks before recursive deletes aimed at root, home, a top-level folder, or the working folder, and refuses where nobody can answer.
+  + Scope: open = a recursive delete of **the working folder spelled as its absolute path** (e.g. `rm -rf /home/me/proj` run from `/home/me/proj`, or an ancestor of it) is not flagged. Done = the bash safety check knows the session's cwd and flags a recursive rm whose target resolves to the cwd or one of its ancestors, with a near-miss row for a child of the cwd (`rm -rf /home/me/proj/target` must pass).
+    
+  - **What yoyo has (read from code by the Day 267 assessment, NOT run):** `CRITICAL_SYSTEM_DIRS` in src/safety.rs lists `/etc /usr /var /boot /bin /sbin /lib /lib64 /opt /srv`, plus rules for `/`, `~`, `$HOME`, `.`, `..`. Not listed: `/home`, `/Users`, `/root`, `/mnt`, `/media`; no rule seen for `$PWD`/`$(pwd)` or the cwd as an absolute path. Unprobed, so some rows may already be flagged by another rule.
+  + Found by #1227 (Day 267 21:35). #1227 flags `$PWD`, `${PWD}`, `$(pwd)`, `` `pwd` ``, `./` and every one-component absolute path (`/home`, `/data`), but `analyze_bash_command(command)` in src/safety.rs takes only the command text, so a two-or-more-component absolute path that happens to be the cwd cannot be told apart from any other folder. Claude Code 2.1.330 asks for this case.
+    
+  - Must still pass (near-miss): `rm -rf ./target`, `rm -rf /tmp/x`, `rm -rf build/`, `rm -r node_modules`.
+  + Adding the cwd input touches every caller of `analyze_bash_command` (src/tools.rs StreamingBashTool and child_confirm_refusal, src/tool_wrappers.rs read-only guard, src/bash_parse.rs nested bodies), so it was kept out of #1227's slice. The cwd must be the one the command will run in (spawn workers pin theirs), not the process cwd at startup.
+    
+    Kind: product.
+  ▶ write /tmp/i2.md (7 lines)
+  - Scope: open = with `--output-format stream-json -p`, a run ended by SIGTERM/SIGHUP/SIGQUIT/Ctrl+C ends on yoagent's `agentEnd` with `stopReason: aborted`, and that aborted assistant message has **empty text**, so the partial reply exists only in the earlier `messageUpdate` deltas. A consumer that reads only the final message gets nothing. Done = either yoyo carries the partial text onto the closing event (or a yoyo-side final line), or an upstream ask to yoagent to keep the streamed text on the … [yoyo: 53 more bytes elided — diff lines are capped at 500 bytes]
+  + Scope: open = decide whether `$PWD` should count as an "unresolved variable" for the Day-144 empty-variable rule in src/safety.rs (`find_unguarded_variable`). Done = either `rm -rf "$PWD/target"` passes the check (with `$PWD`, `"$PWD"`, `$PWD/` still flagged by #1227's working-folder rule), or a stated reason it should keep asking, pinned in src/safety_rm_target_tests.rs.
+    
+  - Source: 15c71e11 (Fixes #1221), its "Seen, not changed" line, which had no issue number; docs/src/usage/piped-mode.md documents the behaviour. Also from that commit, not probed: a provider that ignores cancellation for more than 2 s, where the stream ends with no `agentEnd` at all.
+  + Measured on Day 267 (#1227's before-table): `rm -rf "$PWD/target"` asks for confirmation with "rm -rf target contains unresolved variable $PWD — an empty expansion would delete from cwd or /". The warning's reason does not hold for `PWD`: bash and dash set it at startup, so it expands to the working folder, not to empty, unless the command itself unsets it. Read from shell behaviour, not measured against yoyo's own bash spawn.
+    
+  - Evidence grade: the implementer's read of the run in 15c71e11; not re-run for this filing. Kind: product.
+  + Who pays: someone who writes `rm -rf "$PWD/build"` gets a prompt that says the delete might widen to `/`, which is not true. Low harm (one extra confirmation), and narrowing a safety rule needs care, so this is a question rather than a fix in #1227.
+  + 
+  + Kind: product.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue create --label agent-se… ✓ (3ms)
+ ✓ (3ms)
+ ✓ (3.2s)
+  ▶ write src/safety_rm_target_tests.rs (88 lines)
+    //! #1227: a recursive delete aimed at a top-level folder (`/home`, `/Users`,
+    //! `/data`: any single-component absolute path) or at the working folder
+  - //! spelt as `$PWD` / `$(pwd)` / `` `pwd` `` is refused like `rm -rf .`.
+  + //! spelt as `$PWD` / `$(pwd)` / `` `pwd` `` / `./` asks like `rm -rf .`.
+    //! Pure-function rows: nothing here runs a command.
+    
+    use super::analyze_bash_command;
+    use crate::hard_deny::hard_deny_match;
+    
+  - /// (command, the exact warning `analyze_bash_command` must give, or `None`).
+  - const ROWS: &[(&str, Option<&str>)] = &[
+  + const TOP: &str = "Destructive command: force-recursive delete targeting top-level folder";
+  + const CWD: &str = "Destructive command: force-recursive delete targeting the working folder";
+  + 
+  + /// (command, the start of the exact warning before its quoted target, the
+  + /// quoted target), or `None` for a row that must pass.
+  + const ROWS: &[(&str, Option<(&str, &str)>)] = &[
+        // Top-level folders.
+  -     ("rm -rf /home", WANT),
+  -     ("rm -rf /Users", WANT),
+  ... (93 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && timeout 600 cargo t… ✓ (5m 24s)
+ ✓ (5m 24s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "rm_wide_target(raw_toke… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/safety.rs /tmp/safety.bak… ✓ (1m 11s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "confirm_fn" src/tools.r… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "with_confirm(" src/*.rs… ✓ (11ms)
+  ▶ read src/tools.rs:1235..1305 ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "build_bash_tool(" src/*… ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue list --state open --lim… ✓ (437ms)
+  ▶ write /tmp/i3.md (7 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue create --label agent-se… ✓ (2ms)
+ ✓ (1.1s)
+
+────────────────────────────────────────────────────────────────────────────────
+  17 tools completed in 8m 6s (16 ✓, 1 ✗)
+
+Now the after-table on #1227, before the gate.
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ write /tmp/after1227.md (20 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue comment 1227 --body-fil… ✓ (2ms)
+ ✓ (975ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/safety.rs && git diff … ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/safety.rs ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (9 lines) ✓ (15ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 14.9s (5 ✓)
+
+Now the docs.
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ edit docs/src/troubleshooting/safety.md (2 → 20 lines)
+    expansion can never silently widen the blast radius. Existing
+    destructive-pattern rules still apply on top.
+  + 
+  + Since Day 267 a recursive `rm` (`-r`, `-R`, `--recursive`, with or
+  + without `-f`, behind `sudo` too) also asks when its target is a
+  + **top-level folder** (any one-component absolute path: `/home`,
+  + `/Users`, `/root`, `/mnt`, `/media`, `/tmp`, `/data`, with or without a
+  + trailing `/` or `/*`) or **the working folder** spelled as `./`, `$PWD`,
+  + `${PWD}`, `$(pwd)` or `` `pwd` `` (quoted or not), the same way
+  + `rm -rf .` always has. Deeper paths such as `rm -rf /tmp/x` or
+  + `rm -rf ./target` don't ask, and a path that belongs to a later command
+  + (`rm -rf build && cd /app`) or to a redirect (`> /out.log`) doesn't
+  + count. Two limits: the working folder spelled as its absolute path
+  + (`rm -rf /home/me/proj` run from that folder) is not recognised, because
+  + the check doesn't know the working folder (#1229); and `rm -rf
+  + "$PWD/target"` still asks, through the empty-variable rule above (#1230).
+  + Like every warning on this page, it is a confirmation prompt: in the
+  + REPL you are asked; under `-p` (which implies `--yes`) or `--yes`
+  + nobody is asked and the command runs (#1231). Only the hard block on
+  + `/`, `~` and `$HOME` stops a command there.
+ ✓ (1ms)
+    expansion can never silently widen the blast radius. Existing
+    destructive-pattern rules still apply on top.
+  + 
+  + Since Day 267 a recursive `rm` (`-r`, `-R`, `--recursive`, with or
+  + without `-f`, behind `sudo` too) also asks when its target is a
+  + **top-level folder** (any one-component absolute path: `/home`,
+  + `/Users`, `/root`, `/mnt`, `/media`, `/tmp`, `/data`, with or without a
+  + trailing `/` or `/*`) or **the working folder** spelled as `./`, `$PWD`,
+  ... (12 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo fmt -- --chec… ✓ (24.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/safety.rs; (timeout 15…
+  (interrupted)
+
