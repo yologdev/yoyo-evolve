@@ -97,12 +97,10 @@ const PWD_ROWS: &[(&str, Option<&str>)] = &[
     // A second variable is still flagged, by its own name.
     ("rm -rf \"$PWD/$X\"", Some("$X")),
     ("rm -rf $PWD/target $X", Some("$X")),
-    // Not a child: the folder itself or its parent.
-    ("rm -rf \"$PWD/..\"", Some("$PWD")),
-    ("rm -rf $PWD/x/..", Some("$PWD")),
-    ("rm -rf \"$PWD/.\"", Some("$PWD")),
+    // Not a child: the folder itself or its parent. `$PWD/..`, `$PWD/x/..`,
+    // `$PWD/.` and `$PWD/..&&ls` still ask, now with the parent/working-folder
+    // reason first (#1232, PARENT_ROWS below).
     ("rm -rf $PWD/*/", Some("$PWD")),
-    ("rm -rf $PWD/..&&ls", Some("$PWD")),
     // The command names PWD to change it, so $PWD may be empty.
     ("unset PWD; rm -rf \"$PWD/target\"", Some("$PWD")),
     ("PWD= rm -rf \"$PWD/target\"", Some("$PWD")),
@@ -135,6 +133,83 @@ fn a_pwd_child_passes_and_pwd_itself_its_parent_or_a_rewritten_pwd_still_asks() 
             wrong.push(format!(
                 "{cmd}: got {got:?}, want the working-folder warning"
             ));
+        }
+    }
+    assert!(wrong.is_empty(), "rows off:\n{}", wrong.join("\n"));
+}
+
+const PARENT: &str = "Destructive command: force-recursive delete targeting the parent folder";
+const ABOVE: &str =
+    "Destructive command: force-recursive delete targeting a folder above the parent";
+const ALL_IN_PARENT: &str =
+    "Destructive command: force-recursive delete targeting everything in the parent folder";
+const ABOVE_ALL: &str =
+    "Destructive command: force-recursive delete targeting everything in a folder above the parent";
+
+/// #1232: a recursive delete that resolves, lexically, to the parent folder
+/// or above asks however it is spelled, not only as the exact token `..`.
+/// GNU rm 9.7 and BusyBox 1.37 themselves refuse every operand ending in
+/// `..` (measured, posted on #1232); the one spelling they run is a glob
+/// into the parent (`../*`), which deletes the working folder with its
+/// siblings. Asking on the refused rows still flags what the model meant.
+const PARENT_ROWS: &[(&str, Option<(&str, &str)>)] = &[
+    ("rm -rf ..", Some((PARENT, ".."))),
+    ("rm -rf ../", Some((PARENT, "../"))),
+    ("rm -rf ./..", Some((PARENT, "./.."))),
+    ("rm -rf ../..", Some((ABOVE, "../.."))),
+    ("rm -rf build/../..", Some((PARENT, "build/../.."))), // build/.. cancels
+    ("rm -rf ${PWD:?}/..", Some((PARENT, "${PWD:?}/.."))),
+    ("rm -rf \"$(pwd)/..\"", Some((PARENT, "\"$(pwd)/..\""))),
+    // Unguarded $PWD asked before via the empty-variable rule (#1230); the
+    // parent/working-folder reason now comes first.
+    ("rm -rf \"$PWD/..\"", Some((PARENT, "\"$PWD/..\""))),
+    ("rm -rf $PWD/..&&ls", Some((PARENT, "$PWD/..&&ls"))),
+    ("rm -rf $PWD/x/..", Some((CWD, "$PWD/x/.."))),
+    ("rm -rf \"$PWD/.\"", Some((CWD, "\"$PWD/.\""))),
+    // The spelling rm does run: everything in the parent, cwd included.
+    ("rm -rf ../*", Some((ALL_IN_PARENT, "../*"))),
+    ("rm -rf ../../*", Some((ABOVE_ALL, "../../*"))),
+    ("rm -rf build/..", Some((CWD, "build/.."))), // the working folder
+    ("rm -rf ${PWD:?}", Some((CWD, "${PWD:?}"))),
+    ("(rm -rf ../)", Some((PARENT, "../)"))),
+    ("cd sub && rm -rf ../..", Some((ABOVE, "../.."))),
+    ("rm -rf ..;", Some((PARENT, "..;"))),
+    (
+        "rm -r ../",
+        Some((
+            "Destructive command: recursive delete targeting the parent folder",
+            "../",
+        )),
+    ),
+    // A redirect is skipped, not a stop (the exact-`..` check it replaces
+    // read past it).
+    ("rm -rf 2>/dev/null ..", Some((PARENT, ".."))),
+    ("rm -rf > /tmp/log ../", Some((PARENT, "../"))),
+    ("rm -rf 2>/dev/null /home", Some((TOP, "/home"))),
+    ("rm -rf build > ../out.log", None), // the redirect's target, not rm's
+    ("rm -rf build 2> ..", None),
+    // Near-misses: a real name is left after the `..`s.
+    ("rm -rf ../sibling", None),
+    ("rm -rf ./build", None),
+    ("rm -rf build/../dist", None),
+    ("rm -rf ../*.log", None), // only some files in the parent
+    // `${X:?}` aborts if X is empty, and X/.. is the parent of an unknown
+    // folder, not of the working folder.
+    ("rm -rf ${X:?}/..", None),
+    // A `..` after a separator is not an rm operand.
+    ("rm -rf build && cd ..", None),
+    ("rm -r build; cd ../..", None),
+];
+
+#[test]
+fn a_recursive_delete_of_the_parent_asks_however_it_is_spelled() {
+    let mut wrong = Vec::new();
+    for (cmd, want) in PARENT_ROWS {
+        let want = want.map(|(head, target)| format!("{head} '{target}'"));
+        let got = analyze_bash_command(cmd);
+        println!("PARENT | {cmd} | {got:?}");
+        if got != want {
+            wrong.push(format!("{cmd}: got {got:?}, want {want:?}"));
         }
     }
     assert!(wrong.is_empty(), "rows off:\n{}", wrong.join("\n"));

@@ -437,7 +437,7 @@ fn scan_rm_destruction(cmd: &str, _cmd_lower: &str) -> Option<String> {
             if has_r {
                 // Check for " /" at end of command (bare root) or " / " (root as arg)
                 // Also check "~" and "$HOME" as standalone args
-                // Also check "." and ".." — recursive delete of cwd or parent is almost always destructive
+                // Also check "." (the parent, `..`, is rm_wide_target's, #1232)
                 for raw_token in &tokens {
                     // Strip trailing closers from nested constructs first, so
                     // `/)]}` (subscript/test-bracket nesting) compares as `/`.
@@ -458,7 +458,6 @@ fn scan_rm_destruction(cmd: &str, _cmd_lower: &str) -> Option<String> {
                         || token == "${HOME}/"
                         || token == "${HOME}/*"
                         || token == "."
-                        || token == ".."
                     {
                         let severity = if has_f { "force-" } else { "" };
                         return Some(format!(
@@ -481,11 +480,16 @@ fn scan_rm_destruction(cmd: &str, _cmd_lower: &str) -> Option<String> {
                     }
                 }
                 // #1227: a top-level folder or the working folder, up to a separator.
+                // #1232: a redirect and its target are skipped, not a stop, so
+                // `rm -rf 2>/dev/null ..` is still read.
+                let mut redirect_target = false;
                 for raw_token in tokens.iter().skip(1) {
-                    if matches!(*raw_token, "&&" | "||" | "|" | ";" | "&")
-                        || raw_token.contains(['>', '<'])
-                    {
+                    if matches!(*raw_token, "&&" | "||" | "|" | ";" | "&") {
                         break;
+                    }
+                    if std::mem::take(&mut redirect_target) || raw_token.contains(['>', '<']) {
+                        redirect_target = raw_token.ends_with(['>', '<']);
+                        continue;
                     }
                     if let Some(what) = rm_wide_target(raw_token) {
                         let severity = if has_f { "force-" } else { "" };
@@ -534,6 +538,9 @@ fn rm_wide_target(token: &str) -> Option<&'static str> {
         .chars()
         .filter(|c| !matches!(c, '"' | '\'' | ';'))
         .collect();
+    if let Some(what) = safety_rm_parent::rm_parent_target(&t) {
+        return Some(what); // #1232: `..` however spelled, `../*`, `build/..`
+    }
     let t = t
         .strip_suffix("/*")
         .unwrap_or(&t)
@@ -4885,6 +4892,8 @@ mod read_guard_delete_tests;
 #[path = "safety_git_glued_tests.rs"]
 mod safety_git_glued_tests;
 
+#[path = "safety_rm_parent.rs"]
+mod safety_rm_parent;
 #[cfg(test)]
 #[path = "safety_rm_target_tests.rs"]
 mod safety_rm_target_tests;

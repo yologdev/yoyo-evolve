@@ -162,11 +162,18 @@ trailing `/` or `/*`) or **the working folder** spelled as `./`, `$PWD`,
 `rm -rf .` always has. Deeper paths such as `rm -rf /tmp/x` or
 `rm -rf ./target` don't ask, and a path that belongs to a later command
 (`rm -rf build && cd /app`) or to a redirect (`> /out.log`) doesn't
-count. Two limits: the working folder spelled as its absolute path
-(`rm -rf /home/me/proj` run from that folder) is not recognised, because
-the check doesn't know the working folder (#1229); and the parent folder
-is recognised only as a bare `..`, not as `../`, `./..` or `../..`
-(#1232).
+count. Since Day 268 the **parent folder** asks however it is spelled
+(`..`, `../`, `./..`, `build/../..`, `${PWD:?}/..`, `"$(pwd)/.."`), as do
+folders above it (`../..`), `build/..` (the working folder) and a glob
+into the parent, `rm -rf ../*`. That last one matters most: GNU and
+BusyBox `rm` refuse an operand ending in `..` themselves, but they do run
+`../*`, which deletes the working folder along with its siblings. The
+path is read as text, not resolved on disk (a symlinked `build` is taken
+at face value), and a real name left after the `..`s (`../sibling`,
+`build/../dist`, `../*.log`) doesn't ask. One limit: the working folder
+spelled as its absolute path (`rm -rf /home/me/proj` run from that
+folder) is not recognised, because the check doesn't know the working
+folder (#1229).
 Like every warning on this page, it is a confirmation prompt, and what
 happens where nobody can answer one depends on how the run was started
 (see the table below). Only the hard block on `/`, `~` and `$HOME`
@@ -176,7 +183,8 @@ Since Day 268 `PWD` is not treated as a possibly-empty variable when it
 is followed by a path under it: `rm -rf "$PWD/target"` or
 `rm -rf "${PWD}/build/out"` doesn't ask, because bash and dash set `PWD`
 to the working folder at startup. `$PWD` on its own (or `$PWD/`, `$PWD/*`)
-still asks as the working folder, `$PWD/..` and `$PWD/.` still ask, a
+still asks as the working folder, `$PWD/..` and `$PWD/.` still ask (as the
+parent and the working folder), a
 second variable (`"$PWD/$X"`) is still flagged by name, and a command that
 names `PWD` other than to read it (`unset PWD`, `PWD=`, `local PWD`) keeps
 the empty-variable rule for `$PWD`.
