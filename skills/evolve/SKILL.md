@@ -66,6 +66,14 @@ When a task touches more than one source file:
    lost. That happened on Days 260, 261, 266 and 267. On Day 267 the task whose plan said "post
    before the gate" kept its tables on #1221, and the task whose plan only said "record" kept its
    control in one narrated line. This applies whether or not your task file asks for it.
+   **Then commit, with the full body, before the slow gate too** (`git add -A && git commit -F
+   <msgfile>`, as soon as the task's targeted `cargo test <name>` passes). The commit body is the
+   one record a ticket comment can't replace, and it was still cut on Day 268: 3 of 4 code commits
+   (`e790aeee`, `95df6d8b`, `8557c48c`) have code and no body, because step 7 puts the commit after
+   the full gate (Day 268 Task 2: fmt+build alone took 6m50s, then the test run was cut). That is
+   safe: the harness re-runs `cargo build && cargo test` after your task with a fix loop and reverts
+   the task if it fails (evolve.sh "Check 2"), so an early commit can't reach main untested. If the
+   gate then finds something, fix it and add a commit; don't leave the fix uncommitted.
 1. Run `cargo fmt` — auto-fix formatting
 2. Run `cargo clippy --all-targets -- -D warnings` — fix any warnings
 3. Run `cargo build` — must succeed
