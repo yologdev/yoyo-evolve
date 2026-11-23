@@ -106,6 +106,12 @@ limit nobody chose is a failure: the partial text would otherwise pass for the w
 The same codes apply to piped mode and to `--output-format json`; `--output-format stream-json`
 exits 0 or 1 by the same rules (it has no checkpoint code).
 
+If stdout itself cannot be written (for example `yoyo -p ... > out.txt` on a full disk), the
+answer is lost, so the run fails in every output format: stderr gets one
+`error writing to stdout: <os error>` line and the exit code is 1 (an already non-zero code is
+kept). A closed pipe is not such a failure: `yoyo -p ... | head -1` still ends quietly by
+SIGPIPE, like `cat`.
+
 With `--output-format json`, the result object says how the final reply ended in an
 `incomplete` field, so `jq .response` is not the only thing a script can read:
 

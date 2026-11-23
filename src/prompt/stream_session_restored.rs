@@ -52,11 +52,11 @@ pub(crate) fn write_stream_event_with<W: Write>(
     store: &Mutex<Option<usize>>,
 ) {
     if let Ok(json) = serde_json::to_string(event) {
-        let _ = writeln!(out, "{}", escape_unsafe_json_chars(&json));
+        crate::stdout_write::note(writeln!(out, "{}", escape_unsafe_json_chars(&json)));
     }
     if matches!(event, AgentEvent::AgentStart) {
         if let Some(n) = drain_restored(store) {
-            let _ = writeln!(out, "{}", session_restored_line(n));
+            crate::stdout_write::note(writeln!(out, "{}", session_restored_line(n)));
         }
     }
 }
@@ -119,6 +119,10 @@ pub(crate) fn escape_unsafe_json_chars(json: &str) -> String {
 
 /// The production writer: stdout and the process-global store.
 pub(crate) fn write_stream_event(event: &AgentEvent) {
+    // #1234: once stdout has failed, stop writing into it.
+    if crate::stdout_write::has_failed() {
+        return;
+    }
     let stdout = std::io::stdout();
     let mut lock = stdout.lock();
     write_stream_event_with(&mut lock, event, &RESTORED);

@@ -151,7 +151,7 @@ fn write_chrome(s: &str) {
         let _ = io::stderr().write_all(s.as_bytes());
     } else {
         let s = crate::stream_leading_blank::filter_stdout(s);
-        let _ = io::stdout().write_all(s.as_bytes());
+        crate::stdout_write::note(io::stdout().write_all(s.as_bytes()));
     }
 }
 
@@ -161,7 +161,7 @@ fn write_stream_text_with(reserved: bool, s: &str, out: &mut impl Write) -> bool
     if reserved {
         return false;
     }
-    out.write_all(s.as_bytes()).is_ok()
+    crate::stdout_write::note(out.write_all(s.as_bytes()))
 }
 
 /// Outcome of a prompt execution, including the text response and any tool error.

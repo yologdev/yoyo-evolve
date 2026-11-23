@@ -211,6 +211,7 @@ mod setup;
 mod sigpipe_safe_write;
 mod skill_fence;
 mod smart_edit;
+mod stdout_write;
 mod stream_leading_blank;
 mod symbols;
 mod sync_util;
@@ -417,22 +418,22 @@ fn emit_output(
     // #1073: the one per-run drain of delegated spend happens in there; the
     // json envelope reads the value it hands back, never a second drain.
     let sub_agents = prompt_budget::audit_log_usage(usage, model, duration, num_turns, is_error);
+    // #1234: written through `stdout_write`, which records a failed write
+    // (full disk) for the exit path instead of panicking like `println!`.
     if print_mode {
-        print!("{}", answer_payload(&response.text));
+        stdout_write::write_str(answer_payload(&response.text));
     } else if json_output {
-        println!(
-            "{}",
-            build_json_output(
-                response,
-                model,
-                usage,
-                is_error,
-                session_changes,
-                duration,
-                num_turns,
-                &sub_agents,
-            )
+        let envelope = build_json_output(
+            response,
+            model,
+            usage,
+            is_error,
+            session_changes,
+            duration,
+            num_turns,
+            &sub_agents,
         );
+        stdout_write::write_str(&format!("{envelope}\n"));
     }
     // `--output` is honored in *every* mode, not just the default one. It and
     // `--print` / `--output-format json` are all scripting flags, so reaching
@@ -587,6 +588,7 @@ async fn run_single_prompt(
         };
         let code = stream_json_exit_code(&response, output_path);
         let code = save_session_after_turn(agent, save_session, code).await;
+        let code = stdout_write::exit_code_after_stdout(code); // #1234
         if code != 0 {
             exit_after_shutdown(code).await;
         }
@@ -762,6 +764,7 @@ async fn run_single_prompt(
     // partial answer kept on stdout.
     let code = prompt::interrupted_exit_code().unwrap_or(code);
     let code = save_session_after_turn(agent, save_session, code).await;
+    let code = stdout_write::exit_code_after_stdout(code); // #1234
     if code != 0 {
         exit_after_shutdown(code).await;
     }
@@ -912,6 +915,7 @@ async fn run_piped_mode(
         .await;
         let code = stream_json_exit_code(&response, output_path);
         let code = save_session_after_turn(agent, save_session, code).await;
+        let code = stdout_write::exit_code_after_stdout(code); // #1234
         if code != 0 {
             exit_after_shutdown(code).await;
         }
@@ -1102,6 +1106,7 @@ async fn run_piped_mode(
     // from a complete one.
     let code = prompt::interrupted_exit_code().unwrap_or(code);
     let code = save_session_after_turn(agent, save_session, code).await;
+    let code = stdout_write::exit_code_after_stdout(code); // #1234
     if code != 0 {
         exit_after_shutdown(code).await;
     }

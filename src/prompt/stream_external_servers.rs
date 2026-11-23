@@ -43,7 +43,7 @@ pub(crate) fn emit_external_servers_line() {
     if let Some(line) =
         external_servers_stream_line(&crate::agent_builder::external_server_report())
     {
-        println!("{line}");
+        crate::stdout_write::write_str(&format!("{line}\n"));
     }
 }
 
