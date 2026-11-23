@@ -220,6 +220,7 @@ mod tool_truncate;
 mod tool_wrappers;
 mod tools;
 mod update;
+mod warned_policy;
 mod watch;
 mod watch_shell;
 mod watch_wait;
@@ -1499,6 +1500,15 @@ async fn main() {
     let print_mode = config.print_mode;
     let is_interactive = io::stdin().is_terminal() && config.prompt_arg.is_none();
     let auto_approve = config.auto_approve || !is_interactive;
+    // #1231: a prompt on the command line without --yes refuses warned commands.
+    warned_policy::set_refuse_warned(
+        warned_policy::warned_command_policy(
+            config.auto_approve,
+            config.explicit_yes,
+            config.prompt_arg.is_some(),
+            io::stdin().is_terminal(),
+        ) == warned_policy::WarnedCommandPolicy::Refuse,
+    );
 
     let mut agent_config = AgentConfig {
         model: config.model,

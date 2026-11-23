@@ -96,6 +96,8 @@ pub struct StreamingBashTool {
     pub progress_requires_tty: bool,
     /// Credential env vars stripped from the child (#1064, opt-in; `subprocess_env.rs`).
     pub scrub_vars: Vec<&'static str>,
+    /// Refuse a warned command instead of running it (#1231, `warned_policy`).
+    pub refuse_warned: bool,
 }
 
 impl Default for StreamingBashTool {
@@ -112,6 +114,7 @@ impl Default for StreamingBashTool {
             lines_per_update: 20,
             progress_requires_tty: true,
             scrub_vars: Vec::new(),
+            refuse_warned: false,
         }
     }
 }
@@ -384,6 +387,11 @@ impl AgentTool for StreamingBashTool {
 
         // Safety analysis — soft warning that routes through confirmation
         if let Some(warning) = analyze_bash_command(command) {
+            if self.refuse_warned {
+                return Err(ToolError::Failed(crate::warned_policy::unattended_refusal(
+                    &warning,
+                )));
+            }
             if let Some(ref confirm) = self.confirm_fn {
                 if !confirm(&format!("⚠️  {warning}{WARNED_COMMAND_SEP}{command}")) {
                     return Err(ToolError::Failed(
@@ -393,8 +401,8 @@ impl AgentTool for StreamingBashTool {
                 // User confirmed the dangerous command — skip the normal confirm below
                 // by proceeding directly to execution
             }
-            // If no confirm_fn (piped mode), log warning but allow
-            // (the deny_patterns still block the truly catastrophic ones)
+            // No confirm_fn and not refusing: explicit --yes or piped stdin
+            // (`warned_policy`'s table); the deny lists still apply above.
         } else {
             // No safety warning — check normal confirmation callback
             if let Some(ref confirm) = self.confirm_fn {
@@ -1257,6 +1265,7 @@ pub(crate) fn build_bash_tool(
     base_bash.user_deny = permissions.deny.clone();
     base_bash.scrub_vars = crate::subprocess_env::scrub_vars_for_session();
     if auto_approve {
+        base_bash.refuse_warned = crate::warned_policy::refuses_warned();
         return base_bash;
     }
     let flag = Arc::clone(always_approved);
@@ -1669,11 +1678,21 @@ pub(crate) fn child_confirm_refusal(parent_confirms: bool, command: &str) -> Opt
     // #1202 step 1: what the parent would ask about even after "always".
     let warning = analyze_bash_command(command)
         .or_else(|| crate::bash_parse::unanalyzable_reason(command))?;
-    Some(format!(
-        "Command needs user confirmation that a sub-agent cannot obtain: {warning} \
-         Return this step to the parent agent and let it run the command itself, \
-         where the user can confirm it."
+    Some(crate::warned_policy::needs_confirmation(
+        "a sub-agent",
+        &warning,
+        "Return this step to the parent agent and let it run the command itself, \
+         where the user can confirm it.",
     ))
+}
+
+/// #1231: under a parent that refuses warned commands, the child refuses them
+/// with the parent's own text, so delegating is never a way around it.
+pub(crate) fn child_unattended_refusal(refuse: bool, command: &str) -> Option<String> {
+    refuse
+        .then(|| analyze_bash_command(command))
+        .flatten()
+        .map(|w| crate::warned_policy::unattended_refusal(&w))
 }
 
 /// A sub-agent child's bash is yoagent's raw `BashTool`, which never sees
@@ -1717,6 +1736,7 @@ impl AgentTool for UserDenyBashTool {
                     crate::cd_deny::effective_user_deny_refusal(&self.user_deny, &self.cd_deny, c)
                 })
                 .or_else(|| child_confirm_refusal(self.parent_confirms, c))
+                .or_else(|| child_unattended_refusal(crate::warned_policy::refuses_warned(), c))
         });
         if let Some(refusal) = refusal {
             return Err(yoagent::types::ToolError::Failed(refusal));

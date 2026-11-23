@@ -25,9 +25,13 @@ Both forms are equivalent. The bare prompt form is shorter and matches how most 
 
 ## Tool approval
 
-A single-prompt run approves every tool call without asking, with or without `-y`/`--yes`:
-there is no one to answer a `[y/N]` prompt, so every bash command and file write the model asks
-for runs. This holds for `-p`, `--prompt`, a bare `yoyo "..."` and `--print`. What still applies
+A single-prompt run approves tool calls without asking: there is no one to answer a `[y/N]`
+prompt, so bash commands and file writes the model asks for run. This holds for `-p`, `--prompt`,
+a bare `yoyo "..."` and `--print`. The one difference `-y`/`--yes` makes: a bash command the
+safety check would have asked about in the REPL (`rm -rf /home`, `git push --force`,
+`chmod -R 777`, ...) is **refused** without `--yes` and runs with it. The refusal names the
+warning and tells the model, and you, to rerun with `--yes`. See
+[the per-mode table](../troubleshooting/safety.md#warned-commands-when-nobody-can-answer). What still applies
 is your deny list (`--deny`, or `[permissions] deny` in `.yoyo.toml`), the built-in refusals no
 approval can override (such as `rm -rf /`), and `--allow-dir`/`--deny-dir` on the file tools.
 Before running it on a repository you don't trust, set a deny list or run it in a sandbox. See

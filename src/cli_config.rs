@@ -215,6 +215,8 @@ pub struct Config {
     pub mcp_server_configs: Vec<McpServerConfig>,
     pub openapi_specs: Vec<String>,
     pub auto_approve: bool,
+    /// `--yes`/`-y` was given (not implied by `--print` or a missing terminal).
+    pub explicit_yes: bool,
     pub auto_commit: bool,
     pub permissions: PermissionConfig,
     pub dir_restrictions: DirectoryRestrictions,

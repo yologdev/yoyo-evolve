@@ -1378,6 +1378,8 @@ fn parse_editor_model_flag(args: &[String]) -> Option<String> {
 struct OutputFlags {
     verbose: bool,
     auto_approve: bool,
+    /// `--yes`/`-y` itself, not implied by `--print` (#1231).
+    explicit_yes: bool,
     auto_edit: bool,
     auto_commit: bool,
     no_update_check: bool,
@@ -1392,11 +1394,12 @@ struct OutputFlags {
 fn parse_output_flags(args: &[String], file_config: &HashMap<String, String>) -> OutputFlags {
     let verbose = has_option(args, &["--verbose", "-v"]);
 
-    let auto_approve = has_option(args, &["--yes", "-y"]);
+    let explicit_yes = has_option(args, &["--yes", "-y"]);
+    let auto_approve = explicit_yes;
 
     let print_mode = has_option(args, &["--print"]);
 
-    // --print implies --yes (auto-approve all tool use)
+    // --print implies auto-approve, but not explicit_yes (warned_policy.rs, #1231)
     let auto_approve = auto_approve || print_mode;
 
     let auto_commit = has_option(args, &["--auto-commit"])
@@ -1450,6 +1453,7 @@ fn parse_output_flags(args: &[String], file_config: &HashMap<String, String>) ->
     OutputFlags {
         verbose,
         auto_approve,
+        explicit_yes,
         auto_edit,
         auto_commit,
         no_update_check,
@@ -3042,6 +3046,7 @@ directory ({e}); this run is trusted, later runs will not be."
         mcp_server_configs: mcp.mcp_server_configs,
         openapi_specs: mcp.openapi_specs,
         auto_approve: of.auto_approve,
+        explicit_yes: of.explicit_yes,
         auto_edit: of.auto_edit,
         auto_commit: of.auto_commit,
         permissions,

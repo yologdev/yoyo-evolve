@@ -166,10 +166,42 @@ count. Two limits: the working folder spelled as its absolute path
 (`rm -rf /home/me/proj` run from that folder) is not recognised, because
 the check doesn't know the working folder (#1229); and `rm -rf
 "$PWD/target"` still asks, through the empty-variable rule above (#1230).
-Like every warning on this page, it is a confirmation prompt: in the
-REPL you are asked; under `-p` (which implies `--yes`) or `--yes`
-nobody is asked and the command runs (#1231). Only the hard block on
-`/`, `~` and `$HOME` stops a command there.
+Like every warning on this page, it is a confirmation prompt, and what
+happens where nobody can answer one depends on how the run was started
+(see the table below). Only the hard block on `/`, `~` and `$HOME`
+stops a command on every row.
+
+## Warned commands when nobody can answer
+
+Every warning on this page asks in the REPL. In a run with no terminal to
+ask on, the answer depends on whether you chose to skip the question:
+
+| how the run was started | a warned command |
+|---|---|
+| REPL on a terminal, no `--yes` | asks you |
+| `--yes` / `-y`, with or without `-p` | runs without asking |
+| a prompt on the command line (`-p`, `--prompt`, a bare `yoyo "..."`, also with `--print`) and no `--yes` | **refused** |
+| piped stdin (`echo "..." \| yoyo`), no prompt flag, no `--yes` | runs without asking |
+
+The refusal names the warning and the remedy, and goes back to the model
+as the tool's result, so the run carries on without that command:
+
+```text
+Command needs user confirmation that this run cannot obtain: Recursive
+permission change: 'chmod -R 777' makes everything world-writable Nobody
+can answer a confirmation prompt in this run (a prompt given on the
+command line without --yes), so it was not run. To let commands like this
+run without asking, rerun with --yes.
+```
+
+`--yes` is a choice you made: skip every question. A `-p` run without it
+never made that choice; yoyo only skips the prompts because there is
+nobody to show them to, so a command it would have asked about is refused
+instead (since Day 268, #1231; before that it ran). Sub-agents in such a
+run refuse the same commands with the same text. Piped stdin without a
+prompt flag still runs them, as it always has. The hard deny list and your
+own `deny` rules apply before any of this, on every row, `--yes` included.
+An `allow` rule does not turn a refusal into a run.
 
 ## Restricting a session with `--restricted`
 

@@ -781,6 +781,7 @@ fn test_config() -> Config {
         mcp_server_configs: vec![],
         openapi_specs: vec![],
         auto_approve: false,
+        explicit_yes: false,
         auto_edit: false,
         auto_commit: false,
         permissions: cli::PermissionConfig::default(),

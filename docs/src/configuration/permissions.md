@@ -32,12 +32,15 @@ yoyo -y
 
 This auto-approves every tool call — bash commands, file writes, everything.
 
-**Non-interactive runs already approve every tool call, with or without `-y`.** That is any run
-with a prompt on the command line (`yoyo -p "..."`, `yoyo --prompt "..."`, or a bare
-`yoyo "..."`), any run with input on piped stdin (`echo "..." | yoyo`), and `--print`. There is
-no one to answer a `[y/N]` prompt there, so yoyo does not ask: `yoyo -p "refactor the auth module"`
-runs every bash command and file write the model asks for, exactly as `yoyo -y -p` would. `-y`
-only changes anything in the interactive REPL.
+**Non-interactive runs already approve tool calls without `-y`.** That is any run with a prompt
+on the command line (`yoyo -p "..."`, `yoyo --prompt "..."`, or a bare `yoyo "..."`), any run
+with input on piped stdin (`echo "..." | yoyo`), and `--print`. There is no one to answer a
+`[y/N]` prompt there, so yoyo does not ask: `yoyo -p "refactor the auth module"` runs the bash
+commands and file writes the model asks for. One exception: with a prompt on the command line and
+no `-y`, a bash command the safety check warns about (one the REPL would have asked about, such
+as `rm -rf /home` or `git push --force`) is **refused**, and `yoyo -y -p` runs it. Piped stdin
+without a prompt flag still runs it. The per-mode table is in
+[Safety](../troubleshooting/safety.md#warned-commands-when-nobody-can-answer).
 
 What still applies in those runs is the same fence that applies under `-y`: your deny list
 (`--deny`, or `[permissions] deny` in `.yoyo.toml`), the built-in refusals that no approval can
