@@ -1,0 +1,21 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 300 cargo test --test st… ✓ (550ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p ses… (9 lines) ✓ (17ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 14.8s (2 ✓)
+
+Verdict: PASS. It's written to session_plan/eval_task_1.md.
+
+• The fix covers every format: plain text, --print, json and stream-json all now pass their write result to a new src/stdout_write.rs. It keeps the first real write failure, flushes stdout at exit, and turns that failure into one stderr line (error writing to stdout: <os error>) and exit 1. Before the fix, text and stream-json exited 0 with nothing on stderr and json crashed with exit 101.
+• Closed pipes stay quiet: a broken-pipe error is never reported, and the SIGPIPE handling in main.rs is untouched, so yoyo -p ... | head -1 still ends quietly.
+• Module size limits respected: no lines were added to src/format/mod.rs or src/context.rs.
+• Test run: I ran the new tests/stdout_write_failure.rs and all 6 tests passed. With stdout on /dev/full, each format exits 1 with that error and no crash. A healthy pipe gets the answer and exit 0, and a closed pipe dies quietly by SIGPIPE.
+• No unused definitions: every new function in stdout_write.rs is called somewhere in this diff, and the new error check sits on all four exit paths in main.rs (single prompt and piped mode, each with a stream-json and a regular path).
+• Docs: docs/src/usage/single-prompt.md gained a paragraph in its exit-code section describing the new behaviour.
+
+I didn't check the process steps the task asked for that leave no trace in the diff: the before and after tables posted on #1234, and the deliberate-break test of the new error branch.
+  watch: no files changed this turn — skipping

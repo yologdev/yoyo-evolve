@@ -1,0 +1,40 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --porcelain | head &&…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 1234 --json state,… ✓ (35ms)
+ ✓ (299ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 3.8s (2 ✓)
+
+The work is committed with a full body, and both tables are already on #1234. What's left is to confirm the full gate is green on HEAD.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && cargo cl… ✓ (5m 16s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 > /tmp/t.log; ec… ✓ (5m 9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -A9 "Running tests/stdout_w… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test stdout_write_f… ✓ (459ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 10m 41s (4 ✓)
+
+The task is finished: commit 2291eada was already in place when this attempt started, and I re-ran the full gate on it. There was nothing to add or recommit.
+
+Check run now on HEAD:
+• cargo fmt -- --check and cargo clippy --all-targets -- -D warnings both pass.
+• cargo build passes. cargo test passes with 7687 tests and 0 failures.
+• The new tests/stdout_write_failure.rs passes 6 of 6: four tests with stdout on /dev/full, plus two near-miss tests (a healthy pipe, and a pipe whose reader has closed).
+• The working tree is clean.
+
+What the earlier attempt left, checked rather than assumed:
+• The commit has a full body (git show -s --format=%b HEAD). It covers the before/after table, the recall control, the four formats covered (text, --print, json and stream-json) and the docs change.
+• Both tables were posted on #1234 before the full gate ran: the before-table at 14:30:15Z and the after-table at 14:34:56Z. The after-table gives the binary's build time, 14:34:47.
+• The recall control is described in the commit body and wasn't re-run in this attempt. The guard was disabled with a NEUTERED marker, and a count confirmed the marker was there before the run. The four full-disk tests then failed by name while the two near-miss tests stayed green. With the guard restored, the count was 0 and all six passed.
+• SIGPIPE handling is unchanged. yoyo -p … | head -1 still exits quietly on SIGPIPE, and a broken-pipe error is never reported as a stdout failure.
+
+Not covered: if the run has already failed for another reason, such as an API error or a bad image, yoyo doesn't print the "error writing to stdout" line. Those paths already exit 1, so a script still sees a failure.
+
+The title says Fixes #1234, and all formats are covered, so the issue is still open and will close when this is pushed. tests/module_size.rs printed 18 non-fatal size warnings. None of them involve files this change touched beyond src/prompt.rs, whose line count didn't change.
+  watch: no files changed this turn — skipping

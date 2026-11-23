@@ -1,0 +1,55 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git log --oneli…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; head -c 9000 journals/JOURNAL.md  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue list --repo yologdev/yoyo… ✓ (6ms)
+ ✓ (20ms)
+ ✓ (348ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh run list --repo yologdev/yoyo-e…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; for n in 1233 1232 1229 1202; do e… ✓ (1.1s)
+ ✓ (1.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; ./target/debug/yoyo --version; tim… ✓ (2.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1,60p tests/module_size.rs … ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; tail -c 1500 journals/llm-wiki.md;… ✓ (939ms)
+  ▶ write session_plan/assessment.md (42 lines) ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1,80p skills/yopedia/SKILL.… ✓ (12ms)
+  ▶ $ BASE=https://yopedia.yolog.dev; AGENT_ID="${YOPEDIA_AGENT_TOKEN%%.*}"; for q in … ✓ (24.7s)
+  ▶ $ BASE=https://yopedia.yolog.dev; AGENT_ID="${YOPEDIA_AGENT_TO… (3 lines) ✓ (4.4s)
+  ▶ web search 'Claude Code changelog November 2026' ✓ (4.9s)
+  ▶ $ curl -sS --max-time 20 https://raw.githubusercontent.com/anthropics/claude-code/… ✓ (42ms)
+  ▶ $ curl -sS --max-time 20 https://raw.githubusercontent.com/anthropics/claude-code/… ✓ (77ms)
+  ▶ $ curl -sS --max-time 20 https://raw.githubusercontent.com/anthropics/claude-code/… ✓ (74ms)
+  ▶ read /tmp/ccfix.txt (70 lines) ✓ (1ms)
+  ▶ $ cd /tmp; Y=/home/runner/work/yoyo-evolve/yoyo-evolve/target/debug/yoyo; timeout … ✓ (3.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue list --repo yologdev/yoyo… ✓ (1.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "SIGPIPE\|sigpipe" src/ma… ✓ (31ms)
+  ▶ web search 'openai codex cli release notes November 2026' ✓ (1.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "gpt-6\.2\|gpt-6-2" src |… ✓ (39ms)
+  ▶ $ BASE=https://yopedia.yolog.dev; AGENT_ID="${YOPEDIA_AGENT_TO… (14 lines) ✓ (1.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1,40p src/sigpipe_safe_writ… ✓ (18ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; python3 - <<'E… (33 lines) ✓ (21ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; wc -c session_plan/assessment.md; … ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue view 1233 --repo yologdev… ✓ (317ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -i 's/^3\. #1233 needs an owne… ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  28 tools completed in 2m 45s (28 ✓)
+
+The assessment is written to session_plan/assessment.md. It isn't committed: session_plan/ is gitignored, so the planned commit was refused, and the instruction's || true lets that pass. The file is on disk for the planner.
+
+Main points for the planner:
+
+• Build: green. The harness verified this commit, CI passed on the last 5 pushes, and the last 5 evolve runs succeeded (this session's run is still in progress). The trajectory shows 0 reverts in 14 days. A quick -p run of the built binary answered and exited 0.
+• New bug, found by running the binary: when yoyo can't write its output (full disk, tested by sending output to /dev/full):
+  • plain text and stream-json output exit 0 with no message, so a script thinks it succeeded and the reply is lost;
+  • --output-format json crashes ("failed printing to stdout: No space left on device", exit 101);
+  • -o /dev/full already handles it correctly (error message, exit 1).
+
+  Claude Code fixed this same bug for claude -p in 2.1.330 (Nov 20). There's no existing issue and I haven't filed one. The fix has to keep yoyo | head ending quietly when the reader goes away, as cat does. I didn't find where text mode swallows the error.
+• Two files are close to failing the size test, which would revert a whole task:
+  • src/context.rs is 2035 lines and not on the list of files allowed to exceed the cap. 15 more lines makes cargo test fail.
+  • src/format/mod.rs is 2874 lines against a recorded 2788. 14 more lines makes it fail.
+• Recent work: Days 267–268 fixed #1227, #1102, #1231 and #1230, all bash safety checks. Safety-related work accounts for 5 of the last 12 task commits. The leftover safety tickets are #1229, #1232, #1233 and #1222. #1233 (a prompt piped into yoyo still runs commands the bash safety check warns about) affects my own loop, whose scripts are files I can't edit, so it needs a question to @yuanhao. It has 0 comments, so that question hasn't been asked yet.
+• Research: I recalled my earlier Day-249 notes and then compared what changed since in Claude Code 2.1.329–2.1.330 and Codex 0.169–0.171. I saved a summary to yopedia.
+  • Claude Code candidates I haven't probed in yoyo: settings lost when two processes save at the same time, --resume failing on a saved message with a bad timestamp, MCP tools whose input schemas the API rejects, and grep patterns containing a line break.
+  • Codex: added GPT-6.2 Sol and Astra. yoyo has no 6.2 model ids, and I didn't add one because I haven't verified the exact API spelling.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
