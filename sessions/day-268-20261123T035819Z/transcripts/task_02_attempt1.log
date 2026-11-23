@@ -1,0 +1,252 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | head; git l… ✓ (337ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 470,640p src/safety.rs; w… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 440,530p src/safety.rs; c… ✓ (8ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/safety.rs:380..540  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/safety_rm_target_tests.rs ✓ (2ms)
+ ✓ (2ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 43.7s (5 ✓)
+
+Before-table first (step 0). I'll add a throwaway corpus printer, run it at HEAD, and post the output.
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/s… (30 lines) ✓ (128ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib zz_tmp_corpus_1… ✓ (121ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo zz_tmp_cor… ✓ (39.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ sed 's/Destructive command: //; s/ — an empty expansion would delete from cwd or…  ▶ read /tmp/b.txt ✗ (0ms)
+    │ Cannot access /tmp/b.txt: No such file or directory (os error 2)
+ ✓ (4ms)
+  ▶ $ mkdir -p ~/s1230 && sed 's/Destructive command: //; s/ — an empty expansion woul… ✓ (12ms)
+  ▶ read /home/runner/s1230/before.txt ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 1m 2s (6 ✓, 1 ✗)
+
+Before-table captured (127 rows). Posting a compact version on #1230 before any code change.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > ~/s123… (16 lines) ✓ (1.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Now the change. Production edit in find_unguarded_variable plus two small helpers, all consumed in the same edit.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/safety.rs (4 → 11 lines)
+            if j > name_start {
+                let name = &token[name_start..j];
+                let guarded = braced && token[j..].starts_with(":?");
+  -             if !guarded {
+  +             // #1230: bash and dash set PWD at startup, so `$PWD/<child>` is
+  +             // under the working folder; bare `$PWD`, `$PWD/`, `/.`, `/..`
+  +             // stay flagged, as does any command that names PWD to change it.
+  +             let pwd_child = pwd_trusted
+  +                 && name == "PWD"
+  +                 && (!braced || token[j..].starts_with('}'))
+  +                 && pwd_suffix_names_child(&token[j + usize::from(braced)..]);
+  +             if !guarded && !pwd_child {
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/safety.rs (1 → 1 lines)
+  - fn find_unguarded_variable(token: &str) -> Option<String> {
+  + fn find_unguarded_variable(token: &str, pwd_trusted: bool) -> Option<String> {
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/safety.rs (7 → 8 lines)
+                    if has_f {
+  +                     let pwd_trusted = !names_pwd_to_change_it(cmd);
+                        for raw_token in tokens.iter().skip(1) {
+                            if matches!(*raw_token, "&&" | "||" | "|" | ";" | "&") {
+                                break;
+                            }
+                            if !raw_token.starts_with('-') {
+  -                             if let Some(var) = find_unguarded_variable(raw_token) {
+  +                             if let Some(var) = find_unguarded_variable(raw_token, pwd_trusted) {
+ ✓ (22.2s)
+            if j > name_start {
+                let name = &token[name_start..j];
+                let guarded = braced && token[j..].starts_with(":?");
+  -             if !guarded {
+  +             // #1230: bash and dash set PWD at startup, so `$PWD/<child>` is
+  +             // under the working folder; bare `$PWD`, `$PWD/`, `/.`, `/..`
+  +             // stay flagged, as does any command that names PWD to change it.
+  +             let pwd_child = pwd_trusted
+  ... (4 more lines)
+ ✓ (44.3s)
+  - fn find_unguarded_variable(token: &str) -> Option<String> {
+  + fn find_unguarded_variable(token: &str, pwd_trusted: bool) -> Option<String> {
+ ✓ (1m 6s)
+                    if has_f {
+  +                     let pwd_trusted = !names_pwd_to_change_it(cmd);
+                        for raw_token in tokens.iter().skip(1) {
+                            if matches!(*raw_token, "&&" | "||" | "|" | ";" | "&") {
+                                break;
+                            }
+                            if !raw_token.starts_with('-') {
+  -                             if let Some(var) = find_unguarded_variable(raw_token) {
+  +                             if let Some(var) = find_unguarded_variable(raw_token, pwd_trusted) {
+  3 tools completed in 1m 11s (3 ✓)
+
+Now the two helpers, placed right after find_unguarded_variable.
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/src/safety.rs:583..595 ✓ (1ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/src/safety.rs (4 → 28 lines)
+            i = j.max(i + 1);
+        }
+        None
+  + }
+  + 
+  + /// #1230: `rest` (what follows `$PWD` / `${PWD}`, quotes dropped, cut at a
+  + /// shell operator) is `/` plus a path with no `..` part and at least one part
+  + /// that is not `.` or a bare glob, so it names something under the folder.
+  + fn pwd_suffix_names_child(rest: &str) -> bool {
+  +     let path: String = rest.chars().filter(|c| !matches!(c, '"' | '\'')).collect();
+  +     let path = path.split([';', '&', '|', ')', '`', '>', '<', '}']).next();
+  +     let Some(path) = path.and_then(|p| p.strip_prefix('/')) else {
+  +         return false;
+  +     };
+  +     !path.split('/').any(|p| p == "..")
+  +         && path.split('/').any(|p| p.contains(|c| !matches!(c, '*' | '?' | '.')))
+  + }
+  + 
+  + /// #1230: `cmd` names PWD other than to read it (`unset PWD`, `PWD=`,
+  + /// `local PWD`), so `$PWD` may be empty there. `OLDPWD` is not PWD.
+  ... (8 more lines)
+ ✓ (3m 48s)
+            i = j.max(i + 1);
+        }
+        None
+  + }
+  + 
+  + /// #1230: `rest` (what follows `$PWD` / `${PWD}`, quotes dropped, cut at a
+  + /// shell operator) is `/` plus a path with no `..` part and at least one part
+  + /// that is not `.` or a bare glob, so it names something under the folder.
+  ... (13 more lines)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo zz_tmp_cor… ✓ (180ms)
+  ▶ read /home/runner/s1230/flips.txt ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && { cat <<'EOF… (14 lines) ✓ (809ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 4m 39s (5 ✓)
+
+Now the permanent rows (expected-value only, no old-vs-new oracle), replacing the temp printer and the test that pinned the bug.
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (63 lines) ✓ (43.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Rows green. Now the recall control: one serial command, marker counted before running, restore guaranteed.
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/safety.rs ~/s1230/safety.… ✓ (1m 22s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The control went red by name: 7 rows failed (5 must-pass rows plus the 2 $X-reason rows). After the restore it was green. I'm running a second control on the unset/assign guard, serially.
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's|let pwd_trusted = !nam… ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The || clashed with sed's | delimiter, so nothing was mutated and the && chain stopped before any run. That is the void-control case. Rerunning with # as the delimiter:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's#let pwd_trusted = !nam… ✓ (1m 21s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Both controls went red by name and came back green after restore. Posting that on #1230 before the full gate, and checking how wide the parent-folder gap is for its own issue:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue com… (5 lines) ✓ (876ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/s… (12 lines)  ▶ read /home/runner/s1230/parent.txt ✗ (0ms)
+    │ Cannot access /home/runner/s1230/parent.txt: No such file or directory (os error 2)
+ ✓ (40.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la ~/s1230/; tail -5 src/saf… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/safet… (9 lines) ✓ (40.6s)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 1m 39s (4 ✓, 1 ✗)
+
+At HEAD, only a bare .. is caught: ../, ./.., ../.., build/../.. and ${X:?}/.. all pass. My diff doesn't change any of these, so it gets its own issue. Checking for a duplicate first:
+  ╭─ Turn 26 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue list --state open --sea… ✓ (810ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue cre… (20 lines) ✓ (995ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 12.5s (2 ✓)
+
+Filed #1232. Next: size gate, docs grep, then the full gate.
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/safety.rs src/safety_r… ✓ (12ms)
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/troubleshooting/safety.md:138..173 ✓ (0ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 9.6s (2 ✓)
+
+The docs still describe the old behaviour (line 167-168). Updating them:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ edit /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/troubleshooting/safety.md (4 → 14 lines)
+    count. Two limits: the working folder spelled as its absolute path
+    (`rm -rf /home/me/proj` run from that folder) is not recognised, because
+  - the check doesn't know the working folder (#1229); and `rm -rf
+  - "$PWD/target"` still asks, through the empty-variable rule above (#1230).
+  + the check doesn't know the working folder (#1229); and the parent folder
+  + is recognised only as a bare `..`, not as `../`, `./..` or `../..`
+  + (#1232).
+  + 
+  + Since Day 268 `PWD` is not treated as a possibly-empty variable when it
+  + is followed by a path under it: `rm -rf "$PWD/target"` or
+  + `rm -rf "${PWD}/build/out"` doesn't ask, because bash and dash set `PWD`
+  + to the working folder at startup. `$PWD` on its own (or `$PWD/`, `$PWD/*`)
+  + still asks as the working folder, `$PWD/..` and `$PWD/.` still ask, a
+  + second variable (`"$PWD/$X"`) is still flagged by name, and a command that
+  + names `PWD` other than to read it (`unset PWD`, `PWD=`, `local PWD`) keeps
+  + the empty-variable rule for `$PWD`.
+ ✓ (2ms)
+    count. Two limits: the working folder spelled as its absolute path
+    (`rm -rf /home/me/proj` run from that folder) is not recognised, because
+  - the check doesn't know the working folder (#1229); and `rm -rf
+  - "$PWD/target"` still asks, through the empty-variable rule above (#1230).
+  + the check doesn't know the working folder (#1229); and the parent folder
+  + is recognised only as a bare `..`, not as `../`, `./..` or `../..`
+  + (#1232).
+  + 
+  ... (8 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ read /home/runner/work/yoyo-evolve/yoyo-evolve/docs/src/troubleshooting/safety.md:168..184 ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (10 lines) ✓ (18ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 11.7s (3 ✓)
+
+Docs read cleanly. Now checking for other pointers to #1230, since this push closes it:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git grep -n '#1230\b' -- src doc… ✓ (11ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Each remaining hit records where the code came from; none says the work is still open. safety.rs went from 4856 to 4890 lines (+34), so I'm updating its module-size entry:
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (7 lines) ✓ (25.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -1 && ca… ✓ (6m 12s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test…
+  (interrupted)
+
