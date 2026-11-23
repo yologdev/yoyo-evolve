@@ -76,13 +76,66 @@ fn rm_of_a_top_level_or_working_folder_asks_and_near_misses_pass() {
     assert!(wrong.is_empty(), "rows off:\n{}", wrong.join("\n"));
 }
 
-/// Not #1227's rule: the Day-144 empty-variable rule asks about `$PWD/target`
-/// because `$PWD` reads as a variable that might be empty (#1230).
+const EMPTY: &str = " — an empty expansion would delete from cwd or /";
+
+/// #1230: bash and dash set `PWD` at startup, so `$PWD/<child>` is not an
+/// "unresolved variable". (command, the variable the warning must name, or
+/// `None` for a row that must pass.) Working-folder rows (`$PWD`, `"$PWD/"`)
+/// are in [`ROWS`] above and are re-asserted here by reason.
+const PWD_ROWS: &[(&str, Option<&str>)] = &[
+    // Must now pass: a child of the working folder.
+    ("rm -rf \"$PWD/target\"", None),
+    ("rm -rf $PWD/target", None),
+    ("rm -rf \"${PWD}/build/out\"", None),
+    ("rm -rf \"$PWD\"/target", None),
+    ("cd /tmp && rm -rf \"$PWD/target\"", None), // cd moves PWD, never empties it
+    // Other variables can be empty.
+    ("rm -rf $OLDPWD/x", Some("$OLDPWD")),
+    ("rm -rf $PWDX/x", Some("$PWDX")),
+    ("rm -rf $PWD_DIR/x", Some("$PWD_DIR")),
+    ("rm -rf ${PWD:-}/x", Some("$PWD")),
+    // A second variable is still flagged, by its own name.
+    ("rm -rf \"$PWD/$X\"", Some("$X")),
+    ("rm -rf $PWD/target $X", Some("$X")),
+    // Not a child: the folder itself or its parent.
+    ("rm -rf \"$PWD/..\"", Some("$PWD")),
+    ("rm -rf $PWD/x/..", Some("$PWD")),
+    ("rm -rf \"$PWD/.\"", Some("$PWD")),
+    ("rm -rf $PWD/*/", Some("$PWD")),
+    ("rm -rf $PWD/..&&ls", Some("$PWD")),
+    // The command names PWD to change it, so $PWD may be empty.
+    ("unset PWD; rm -rf \"$PWD/target\"", Some("$PWD")),
+    ("PWD= rm -rf \"$PWD/target\"", Some("$PWD")),
+    ("PWD=; rm -rf \"$PWD/target\"", Some("$PWD")),
+    ("local PWD; rm -rf \"$PWD/target\"", Some("$PWD")),
+];
+
 #[test]
-fn pwd_child_is_asked_about_by_the_empty_variable_rule_not_the_folder_rule() {
-    let got = analyze_bash_command("rm -rf \"$PWD/target\"").unwrap_or_default();
-    assert!(
-        got.starts_with("Destructive command: rm -rf target contains unresolved variable $PWD"),
-        "{got}"
-    );
+fn a_pwd_child_passes_and_pwd_itself_its_parent_or_a_rewritten_pwd_still_asks() {
+    let mut wrong = Vec::new();
+    for (cmd, var) in PWD_ROWS {
+        let want = var.map(|v| {
+            format!("Destructive command: rm -rf target contains unresolved variable {v}{EMPTY}")
+        });
+        let got = analyze_bash_command(cmd);
+        if got != want {
+            wrong.push(format!("{cmd}: got {got:?}, want {want:?}"));
+        }
+    }
+    // The working folder itself keeps #1227's reason, not this rule's.
+    for cmd in [
+        "rm -rf $PWD",
+        "rm -rf \"$PWD\"",
+        "rm -rf ${PWD}",
+        "rm -rf $PWD/",
+        "rm -rf \"$PWD/\"",
+    ] {
+        let got = analyze_bash_command(cmd).unwrap_or_default();
+        if !got.starts_with(CWD) {
+            wrong.push(format!(
+                "{cmd}: got {got:?}, want the working-folder warning"
+            ));
+        }
+    }
+    assert!(wrong.is_empty(), "rows off:\n{}", wrong.join("\n"));
 }

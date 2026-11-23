@@ -501,12 +501,13 @@ fn scan_rm_destruction(cmd: &str, _cmd_lower: &str) -> Option<String> {
                 // on empty by design and pass. Scanning stops at command
                 // separators so variables in later commands aren't rm targets.
                 if has_f {
+                    let pwd_trusted = !names_pwd_to_change_it(cmd);
                     for raw_token in tokens.iter().skip(1) {
                         if matches!(*raw_token, "&&" | "||" | "|" | ";" | "&") {
                             break;
                         }
                         if !raw_token.starts_with('-') {
-                            if let Some(var) = find_unguarded_variable(raw_token) {
+                            if let Some(var) = find_unguarded_variable(raw_token, pwd_trusted) {
                                 return Some(format!(
                                     "Destructive command: rm -rf target contains unresolved variable {var} — an empty expansion would delete from cwd or /"
                                 ));
@@ -551,7 +552,7 @@ fn rm_wide_target(token: &str) -> Option<&'static str> {
 /// they abort on empty by design. `$(...)` command substitution is not a
 /// variable reference. All scanned characters are ASCII, so byte indexing here
 /// always lands on char boundaries.
-fn find_unguarded_variable(token: &str) -> Option<String> {
+fn find_unguarded_variable(token: &str, pwd_trusted: bool) -> Option<String> {
     let bytes = token.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
@@ -571,13 +572,46 @@ fn find_unguarded_variable(token: &str) -> Option<String> {
         if j > name_start {
             let name = &token[name_start..j];
             let guarded = braced && token[j..].starts_with(":?");
-            if !guarded {
+            // #1230: bash and dash set PWD at startup, so `$PWD/<child>` is
+            // under the working folder; bare `$PWD`, `$PWD/`, `/.`, `/..`
+            // stay flagged, as does any command that names PWD to change it.
+            let pwd_child = pwd_trusted
+                && name == "PWD"
+                && (!braced || token[j..].starts_with('}'))
+                && pwd_suffix_names_child(&token[j + usize::from(braced)..]);
+            if !guarded && !pwd_child {
                 return Some(format!("${name}"));
             }
         }
         i = j.max(i + 1);
     }
     None
+}
+
+/// #1230: `rest` (what follows `$PWD` / `${PWD}`, quotes dropped, cut at a
+/// shell operator) is `/` plus a path with no `..` part and at least one part
+/// that is not `.` or a bare glob, so it names something under the folder.
+fn pwd_suffix_names_child(rest: &str) -> bool {
+    let path: String = rest.chars().filter(|c| !matches!(c, '"' | '\'')).collect();
+    let path = path.split([';', '&', '|', ')', '`', '>', '<', '}']).next();
+    let Some(path) = path.and_then(|p| p.strip_prefix('/')) else {
+        return false;
+    };
+    !path.split('/').any(|p| p == "..")
+        && path
+            .split('/')
+            .any(|p| p.contains(|c| !matches!(c, '*' | '?' | '.')))
+}
+
+/// #1230: `cmd` names PWD other than to read it (`unset PWD`, `PWD=`,
+/// `local PWD`), so `$PWD` may be empty there. `OLDPWD` is not PWD.
+fn names_pwd_to_change_it(cmd: &str) -> bool {
+    let word = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    cmd.match_indices("PWD").any(|(i, _)| {
+        let (pre, post) = (&cmd[..i], &cmd[i + 3..]);
+        let read = pre.ends_with('$') || pre.ends_with("${");
+        !read && !pre.ends_with(word) && !post.starts_with(word)
+    })
 }
 
 /// Check for force git operations.
