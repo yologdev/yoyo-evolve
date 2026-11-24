@@ -104,13 +104,9 @@ fn plain_top_level_keys_read_as_they_did_at_head() {
         new["fallback"], "",
         "empty stays empty (config get reports it as unset, #1172)"
     );
-    // The array is re-rendered, so compare what its reader makes of it.
+    // The list is read from the parsed table, not from the flat map's text.
     assert_eq!(
-        crate::config::parse_toml_array(&new["mcp"]),
-        crate::config::parse_toml_array(&old["mcp"])
-    );
-    assert_eq!(
-        crate::config::parse_toml_array(&new["mcp"]),
+        crate::config::parse_mcp_list_from_config(doc),
         vec!["npx a".to_string(), "b, c".to_string()]
     );
 }
@@ -118,9 +114,8 @@ fn plain_top_level_keys_read_as_they_did_at_head() {
 #[test]
 fn an_array_with_quotes_and_backslashes_survives_its_reader() {
     let doc = "mcp = [\"say \\\"hi\\\"\", 'C:\\tmp', \"\"]\n";
-    let new = parse_config_file(doc);
     assert_eq!(
-        crate::config::parse_toml_array(&new["mcp"]),
+        crate::config::parse_mcp_list_from_config(doc),
         vec![
             "say \"hi\"".to_string(),
             "C:\\tmp".to_string(),
@@ -206,6 +201,15 @@ const MCP_LIST_ROWS: &[(&str, &[&str])] = &[
     ("mcp = [[\"a\"]]\n", &[]),            // a nested list is unreadable: nothing starts
     ("[mcp]\nx = 1\n", &[]),               // a table is not the list
     ("not toml = = =\n", &[]),             // invalid TOML configures nothing
+    // Cases moved from the deleted hand-reader tests (Day 269, #1184):
+    ("mcp = [\"git *\", \"cargo *\"]\n", &["git *", "cargo *"]),
+    ("mcp = [\"rm -rf *\"]\n", &["rm -rf *"]),
+    ("mcp = ['git *', 'ls']\n", &["git *", "ls"]),
+    (
+        "mcp = [\"one\", \"two\", \"three\"]\n",
+        &["one", "two", "three"],
+    ),
+    ("mcp = not an array\n", &[]), // invalid TOML: the file configures nothing
 ];
 
 #[test]
@@ -216,24 +220,6 @@ fn the_mcp_list_is_read_from_the_parsed_table() {
             crate::config::parse_mcp_list_from_config(doc),
             want,
             "parse_mcp_list_from_config on {doc:?}"
-        );
-    }
-}
-
-/// The old path (flat text re-read by `parse_toml_array`) is the baseline:
-/// on every row the new reader gives what users got before, except the
-/// multi-line array, which the flattening already rendered on one line.
-#[test]
-fn the_mcp_list_reader_matches_the_old_flat_text_path() {
-    for (doc, _) in MCP_LIST_ROWS {
-        let old = parse_config_file(doc)
-            .get("mcp")
-            .map(|raw| crate::config::parse_toml_array(raw))
-            .unwrap_or_default();
-        assert_eq!(
-            crate::config::parse_mcp_list_from_config(doc),
-            old,
-            "old vs new on {doc:?}"
         );
     }
 }

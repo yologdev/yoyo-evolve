@@ -4503,36 +4503,6 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_toml_array_basic() {
-        let arr = crate::config::parse_toml_array(r#"["git *", "cargo *"]"#);
-        assert_eq!(arr, vec!["git *", "cargo *"]);
-    }
-
-    #[test]
-    fn test_parse_toml_array_single() {
-        let arr = crate::config::parse_toml_array(r#"["rm -rf *"]"#);
-        assert_eq!(arr, vec!["rm -rf *"]);
-    }
-
-    #[test]
-    fn test_parse_toml_array_empty() {
-        let arr = crate::config::parse_toml_array("[]");
-        assert!(arr.is_empty());
-    }
-
-    #[test]
-    fn test_parse_toml_array_single_quotes() {
-        let arr = crate::config::parse_toml_array("['git *', 'ls']");
-        assert_eq!(arr, vec!["git *", "ls"]);
-    }
-
-    #[test]
-    fn test_parse_toml_array_not_array() {
-        let arr = crate::config::parse_toml_array("not an array");
-        assert!(arr.is_empty());
-    }
-
-    #[test]
     fn test_parse_permissions_from_config() {
         let content = r#"
 model = "claude-opus-4-6"

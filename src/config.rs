@@ -476,15 +476,6 @@ pub fn glob_match(pattern: &str, text: &str) -> bool {
     true
 }
 
-/// Parse a TOML-style array value like `["pattern1", "pattern2"]` into a Vec<String>.
-/// Test-only since Day 265: deletion debt for #1184. No production code reads
-/// it (`mcp` goes through [`parse_mcp_list_from_config`]); its tests still need
-/// moving to the parsed reader before it can be deleted.
-#[cfg(test)]
-pub fn parse_toml_array(value: &str) -> Vec<String> {
-    crate::config_value::read_array(value).unwrap_or_default()
-}
-
 /// The `[permissions]` table, read through the `toml` crate (#1184): every
 /// TOML spelling of `allow` / `deny` (an array over several lines, a dotted
 /// `permissions.deny`, an inline table) builds the same fence. A file that is
@@ -714,10 +705,10 @@ pub(crate) fn padding_end(raw: &str) -> Option<PaddingEnd> {
 /// and this cannot drift from either. Returns `(key label, raw value)` pairs in config
 /// order; an empty vec means every value is clean.
 ///
-/// Scope is **MCP values only**. `parse_toml_array` (the `mcp` reader until Day 265) was
-/// shared with `[permissions]` and `[directories]` (until Day 262, #1184), so
-/// detection deliberately does not live inside it; a warning there would have fired on
-/// glob patterns this task never measured.
+/// Scope is **MCP values only**. The hand array reader that read `mcp` until Day 265
+/// (deleted Day 269, #1184) was shared with `[permissions]` and `[directories]` (until
+/// Day 262), so detection deliberately did not live inside it; a warning there would
+/// have fired on glob patterns this task never measured.
 pub(crate) fn whitespace_padded_config_values(
     config_servers: &[String],
     server_configs: &[McpServerConfig],
@@ -2090,12 +2081,6 @@ mod tests {
     }
 
     #[test]
-    fn test_config_module_parse_toml_array() {
-        let result = parse_toml_array(r#"["one", "two", "three"]"#);
-        assert_eq!(result, vec!["one", "two", "three"]);
-    }
-
-    #[test]
     fn test_config_module_parse_permissions() {
         let content = r#"
 [permissions]
@@ -3430,8 +3415,8 @@ model = "claude-sonnet-4-20250514"
 mcp = ["npx open-websearch@latest", "npx @mcp/server-filesystem /tmp"]
 "#;
         let config = parse_config_file(content);
-        let mcp_val = config.get("mcp").expect("mcp key should exist");
-        let mcps = parse_toml_array(mcp_val);
+        assert!(config.contains_key("mcp"), "mcp key should exist");
+        let mcps = parse_mcp_list_from_config(content);
         assert_eq!(mcps.len(), 2);
         assert_eq!(mcps[0], "npx open-websearch@latest");
         assert_eq!(mcps[1], "npx @mcp/server-filesystem /tmp");
@@ -3441,8 +3426,8 @@ mcp = ["npx open-websearch@latest", "npx @mcp/server-filesystem /tmp"]
     fn test_parse_config_file_mcp_empty_array() {
         let content = "mcp = []";
         let config = parse_config_file(content);
-        let mcp_val = config.get("mcp").expect("mcp key should exist");
-        let mcps = parse_toml_array(mcp_val);
+        assert!(config.contains_key("mcp"), "mcp key should exist");
+        let mcps = parse_mcp_list_from_config(content);
         assert!(mcps.is_empty());
     }
 
@@ -3450,8 +3435,8 @@ mcp = ["npx open-websearch@latest", "npx @mcp/server-filesystem /tmp"]
     fn test_parse_config_file_mcp_single_entry() {
         let content = r#"mcp = ["npx open-websearch@latest"]"#;
         let config = parse_config_file(content);
-        let mcp_val = config.get("mcp").expect("mcp key should exist");
-        let mcps = parse_toml_array(mcp_val);
+        assert!(config.contains_key("mcp"), "mcp key should exist");
+        let mcps = parse_mcp_list_from_config(content);
         assert_eq!(mcps.len(), 1);
         assert_eq!(mcps[0], "npx open-websearch@latest");
     }
