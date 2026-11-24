@@ -1,0 +1,151 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --short | head;… ✓ (19ms)
+  ▶ $ sed -n 255,380p tests/output_failed_run.rs; sed -n 625,710p tests/output_failed_…  ▶ $ grep -n "stream_session_restored\|stream_external_servers\|write_stream_event\|f… ✓ (6ms)
+ ✓ (6ms)
+  ▶ $ sed -n 1905,1925p src/prompt.rs; sed -n 1974,2170p src/prompt.rs; sed -n 240,278… ✓ (6ms)
+  ▶ $ Y=~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.27.9/src; gre… ✓ (7ms)
+  ▶ $ Y=~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.27.9/src; gre… ✓ (5ms)
+  ▶ $ Y=~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.27.9/src; gre… ✓ (8ms)
+  ▶ $ Y=~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.27.9/src; gre… ✓ (16ms)
+  ▶ $ Y=~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.27.9/src; gre… ✓ (7ms)
+  ▶ $ Y=~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.27.9/src; gre… ✓ (7ms)
+  ▶ $ grep -n "fn sse_body" -A30 tests/output_failed_run.rs | head -40; grep -n "emit_… ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  11 tools completed in 42.7s (11 ✓)
+
+Now write the test extension first (so the HEAD binary run is the before-row).
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ grep -n "^const NEW\|^const OLD\|STREAM_JSON:" tests/output_failed_run.rs; sed -… ✓ (5ms)
+  ▶ edit tests/output_failed_run.rs (6 → 26 lines)
+            final_assistant["stopReason"],
+            serde_json::json!("aborted"),
+            "last line: {last}"
+  +     );
+  +     // #1228: the closing event carries the partial reply the deltas streamed,
+  +     // so a script reading only `agentEnd` still gets it.
+  +     let streamed: String = run
+  +         .stdout
+  +         .lines()
+  +         .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+  +         .filter(|v| v["type"] == "messageUpdate")
+  +         .filter_map(|v| v["delta"]["Text"]["delta"].as_str().map(str::to_string))
+  +         .collect();
+  +     assert_eq!(streamed, NEW, "deltas did not stream the partial reply");
+  +     let closing_text: String = final_assistant["content"]
+  +         .as_array()
+  +         .into_iter()
+  +         .flatten()
+  +         .filter_map(|c| c["text"].as_str())
+  +         .collect();
+  ... (5 more lines)
+ ✓ (2m 58s)
+            final_assistant["stopReason"],
+            serde_json::json!("aborted"),
+            "last line: {last}"
+  +     );
+  +     // #1228: the closing event carries the partial reply the deltas streamed,
+  +     // so a script reading only `agentEnd` still gets it.
+  +     let streamed: String = run
+  +         .stdout
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cargo test --test output_failed_run stream_json_sigterm 2>&1 | grep -v "^\s*$" |… ✓ (1.7s)
+  ▶ $ Y=~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.27.9/src; sed… ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 3m 16s (4 ✓)
+
+Delta is {"type":"text","delta":...} internally tagged.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -i 's|        .filter_map(\|v\| v\["delta"\]\["Text"\]\["delta"\].as_str().m… ✓ (1.9s)
+
+Before-row reproduced at the built binary against the local stub. Posting it now.
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cat > /tmp/before.md <<'EOF' (11 lines) ✓ (1.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cat > /tmp/up.md <<'EOF' (10 lines) ✓ (1.5s)
+  ▶ write src/prompt/stream_aborted_text.rs (213 lines) ✓ (1m 56s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 2m 33s (3 ✓)
+
+Now wire it in prompt.rs.
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ sed -n 30,36p src/prompt.rs; sed -n 2000,2008p src/prompt.rs ✓ (4ms)
+  ▶ $ python3 - <<'EOF' (10 lines) ✓ (18ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ python3 - <<'EOF' (8 lines) ✓ (17ms)
+  ▶ $ python3 - <<'EOF' (11 lines) ✓ (25.7s)
+  ▶ $ cargo build 2>&1 | grep -A8 E0638 | head -15 ✓ (5.5s)
+  ▶ $ python3 - <<'EOF' (28 lines) ✓ (12.7s)
+  ▶ $ cargo test --bin yoyo stream_aborted_text 2>&1 | grep -E "^test |test result|^er… ✓ (19.2s)
+  ▶ $ grep -n '^name\|\[\[bin\]\]' -A2 Cargo.toml | head; cargo test --bins stream_abo… ✓ (20.0s)
+  ▶ $ Y=~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.27.9/src; gre… ✓ (6ms)
+  ▶ $ Y=~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.27.9/src; sed… ✓ (4ms)
+  ▶ $ python3 - <<'EOF' (21 lines) ✓ (32.4s)
+  ▶ $ cargo test --test output_failed_run stream_json 2>&1 | grep -E "^test |test resu… ✓ (12.0s)
+  ▶ $ cat > /tmp/after.md <<'EOF' (4 lines) ✓ (1.0s)
+
+────────────────────────────────────────────────────────────────────────────────
+  13 tools completed in 3m 0s (13 ✓)
+
+Recall control, one atomic command: neuter the fill, count the marker, run red, restore, run green, then status.
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ F=src/prompt/stream_aborted_text.rs; cp $F /tmp/saved.rs; py… (8 lines) ✓ (22.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ gh issue comment 1228 --body "**Recall control (Day 269):** fill neutered (marke… ✓ (2.0s)
+  ▶ $ Y=~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.27.9/src/prov… ✓ (67ms)
+  ▶ $ Y=~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.27.9/src/prov… ✓ (5ms)
+  ▶ $ cat > /tmp/res.md <<'EOF' (8 lines) ✓ (1.2s)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 58.8s (5 ✓)
+
+Now docs.
+  ╭─ Turn 37 ────────────────────────────────────────────────────────────╮
+  ▶ $ python3 - <<'EOF' (12 lines) ✓ (26ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cargo fmt -- --check && cargo clippy --all-targets -- -D warnings 2>&1 | tail -3 ✓ (18.8s)
+  ▶ $ cat > /tmp/msg.txt <<'EOF' (49 lines) ✓ (26ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 36.1s (3 ✓)
+
+Committed with full body. Now the full gate.
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ $ cargo build 2>&1 | tail -1; cargo test 2>&1 | grep -E "^test result|FAILED|panic… ✓ (4m 27s)
+  ▶ $ cargo test 2>&1 | grep -E "^test result" | grep -vc " 0 failed"; cargo test 2>&1… ✓ (7m 42s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 12m 27s (2 ✓)
+
+An aborted stream-json run's closing event now carries the partial reply. Before this, if a --output-format stream-json -p run was stopped by a signal, the reply text only appeared in the earlier messageUpdate deltas. The full gate is green: fmt, clippy with -D warnings, build, and every cargo test suite. The tree is clean and the commit has its full body.
+
+What I found first (local stub only, posted on #1228 before any code edit): the deltas streamed NEW ANSWER, but the agentEnd aborted message had "". Reading yoagent 0.27.9's source explains it. When a run is cancelled, it builds the closing message with an empty text block, and the cancel error carries no partial text, so the text is dropped upstream. I filed #1237 (label upstream) asking yoagent to keep it.
+
+What changed:
+• New `src/prompt/stream_aborted_text.rs`: it collects the current message's text deltas and starts over at every messageStart, so a retried attempt's text is thrown away. It fills only an assistant message that is aborted and has no text, in its messageEnd and in agentEnd. It uses the existing text field; there is no new event type. The saved session (agent.messages()) still holds the empty message; only #1237 can fix that.
+• Unit tests (5): an aborted empty message gets the partial; a normal end is byte-identical; an aborted message that already has text is byte-identical; a retry drops the first attempt's text; with nothing streamed the message stays empty.
+• `src/prompt.rs`: three lines of wiring, so it goes from 3993 to 3996 lines. I updated its limit in tests/module_size.rs with the reason.
+• Binary tests: the SIGTERM, SIGHUP and SIGINT tests in tests/output_failed_run.rs now also check that the agentEnd text equals the streamed deltas.
+• Recall control (one command): I disabled the fill (marker counted 1), and the SIGTERM test failed by name with "" against "NEW ANSWER". After restoring it (marker 0) the test passed, and git status showed only this task's files.
+• Docs: docs/src/usage/piped-mode.md now says what the closing event carries.
+
+The other case #1228 mentioned (a run that doesn't stop within about 2 s ends with no agentEnd at all): I didn't test it. No local stub can make yoyo's built-in providers ignore the cancel, because the Anthropic provider checks for it on every stream read. It could still happen some other way, for example a tool still running when the signal lands. It's tracked in a new issue, #1238, and the docs line now points there.
+
+The before-row, after-row and control result are all posted on #1228, which closes when this is pushed.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 0/1 changed files were in top-10 predictions (0.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/1 (0.0%) — reactive was 0.0%
+     Surprises (not predicted): src/prompt/stream_aborted_text.rs
