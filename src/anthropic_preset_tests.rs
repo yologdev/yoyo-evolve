@@ -13,6 +13,9 @@ use yoagent::provider::{CostConfig, ModelConfig};
 /// row in the test below. Dated/suffixed ids are near-misses for the
 /// most-specific-first ordering: each must still land on its own arm.
 fn preset_table() -> Vec<(&'static str, ModelConfig)> {
+    // The constructors below are priced only once bundled prices are on; run
+    // alone (or first), this test used to read every owner as unpriced.
+    crate::agent_builder::ensure_bundled_prices();
     vec![
         ("claude-fable-5", ModelConfig::claude_fable_5()),
         ("claude-fable-5-20260801", ModelConfig::claude_fable_5()),
@@ -661,4 +664,56 @@ fn claude_ids_yoagent_does_not_know_get_the_default_window_not_1m() {
     let bedrock = "anthropic.claude-opus-4-7";
     let built = u64::from(create_model_config("bedrock", bedrock, None).context_window);
     assert_eq!(model_context_window(bedrock), Some(built));
+}
+
+/// #1186: `claude-fable-5-2` has no yoagent preset or price row (0.27.9) and
+/// used to bill as Fable 5 ($10/$50, cache hit $1.00). Expected rates are
+/// typed from https://platform.claude.com/docs/en/about-claude/pricing
+/// (fetched 2026-11-24): $8 in, $40 out, 5-minute cache write $10, cache hit
+/// $0.20. Asserted through `cost_breakdown_with` on 1M tokens of each kind, so
+/// each column reads as its per-MTok rate, and through `estimate_cost_with`.
+#[test]
+fn fable_5_2_bills_the_vendor_page_rates() {
+    use crate::config::ModelPricingOverrides;
+    use crate::format::{cost_breakdown_with, estimate_cost_with};
+    let none = ModelPricingOverrides::default();
+    let usage = yoagent::Usage {
+        input: 1_000_000,
+        output: 1_000_000,
+        cache_read: 1_000_000,
+        cache_write: 1_000_000,
+        total_tokens: 4_000_000,
+    };
+    for id in [
+        "claude-fable-5-2",
+        "claude-fable-5-2-20261101",
+        "anthropic/claude-fable-5-2",
+    ] {
+        assert_eq!(
+            cost_breakdown_with(&none, &usage, id),
+            Some((8.0, 10.0, 0.20, 40.0)),
+            "{id}: (input, cache write, cache read, output)"
+        );
+        assert_eq!(estimate_cost_with(&none, &usage, id), Some(58.2), "{id}");
+    }
+    // The run keeps the user's exact id and the vendor's limits: 1M window,
+    // and the preset's 64K default request inside the 128K output max
+    // (https://platform.claude.com/docs/en/about-claude/models/overview).
+    let preset = anthropic_preset("claude-fable-5-2").expect("fable 5.2 has a preset");
+    assert_eq!(preset.id, "claude-fable-5-2");
+    assert_eq!(preset.context_window, 1_000_000);
+    assert_eq!(preset.max_tokens, 64_000);
+    // Near misses: the older Fable ids keep their own (yoagent) rates.
+    assert_eq!(
+        cost_breakdown_with(&none, &usage, "claude-fable-5-1"),
+        Some((10.0, 12.5, 0.25, 50.0))
+    );
+    // Fable 5's dated ids start with `claude-fable-5-2` too (2026...).
+    for id in ["claude-fable-5", "claude-fable-5-20260801"] {
+        assert_eq!(
+            cost_breakdown_with(&none, &usage, id),
+            Some((10.0, 12.5, 1.0, 50.0)),
+            "{id}"
+        );
+    }
 }

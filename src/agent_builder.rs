@@ -780,7 +780,18 @@ pub fn anthropic_preset(model: &str) -> Option<ModelConfig> {
     ensure_bundled_prices();
     // Most-specific first (#1003): `claude-opus-5-5` also starts with
     // `claude-opus-5`, and `cost` is priced from the constructor's own id.
-    let mut config = if model.starts_with("claude-fable-5-1") {
+    // `claude-fable-5-2` or its `-YYYYMMDD` form; a bare prefix would take Fable 5's
+    // own dated ids (`claude-fable-5-20260801`).
+    let mut config = if model == "claude-fable-5-2" || model.starts_with("claude-fable-5-2-") {
+        // #1186: yoagent 0.27.9 has no Fable 5.2 preset or price row. Rates from
+        // platform.claude.com/docs/en/about-claude/pricing (fetched 2026-11-24);
+        // limits (1M window, 128K max out) match Fable 5's preset per models/overview.
+        // Delete this arm when yoagent ships claude_fable_5_2() (yoagent#456).
+        let mut c = ModelConfig::claude_fable_5();
+        let rates = yoagent::provider::CostConfig::new(8.0, 40.0).with_cache_read(0.20);
+        c.cost = Some(rates.with_cache_write(10.0));
+        c
+    } else if model.starts_with("claude-fable-5-1") {
         ModelConfig::claude_fable_5_1()
     } else if model.starts_with("claude-fable-5") {
         ModelConfig::claude_fable_5()
