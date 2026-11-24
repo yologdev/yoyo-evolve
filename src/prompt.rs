@@ -29,6 +29,7 @@ pub use interrupt::{
 };
 pub use output_limit::{incomplete_forces_failure, incomplete_json, Incomplete};
 pub use sigterm::mark_json_envelope;
+mod stream_aborted_text;
 mod stream_external_servers;
 #[cfg(test)]
 mod stream_json_retry_tests;
@@ -1997,14 +1998,16 @@ async fn handle_stream_json_events(
     let mut audit_inflight: HashMap<String, (String, serde_json::Value, Instant)> = HashMap::new();
     // #1221: SIGTERM/SIGHUP/SIGQUIT or Ctrl+C aborts, then drains to yoagent's `agentEnd`.
     let mut drain = sigterm::Drain::for_stream_json();
+    let mut aborted_text = stream_aborted_text::AbortedTextFill::default(); // #1228
     loop {
         tokio::select! {
             event = rx.recv() => {
                 let Some(event) = event else { break };
-                // Emit the raw yoagent AgentEvent as NDJSON, full-fidelity — this is
+                // Emit the AgentEvent as NDJSON (#1228: an aborted empty message is filled) — this is
                 // the wire contract. Serialize a reference so we keep ownership for the
                 // bookkeeping match below (AgentEvent's serde shape is the source of truth).
-                emit_agent_event(&event);
+                aborted_text.observe(&event);
+                emit_agent_event(&aborted_text.fill(&event));
                 match &event {
                     AgentEvent::ToolExecutionStart { tool_call_id, tool_name, args } => {
                         // #786: record write_file / edit_file through the same

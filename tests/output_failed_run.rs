@@ -666,6 +666,27 @@ fn assert_interrupted_stream_json(signal: &str, code: i32) {
         serde_json::json!("aborted"),
         "last line: {last}"
     );
+    // #1228: the closing event carries the partial reply the deltas streamed,
+    // so a script reading only `agentEnd` still gets it.
+    let streamed: String = run
+        .stdout
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .filter(|v| v["type"] == "messageUpdate")
+        .filter(|v| v["delta"]["type"] == "text")
+        .filter_map(|v| v["delta"]["delta"].as_str().map(str::to_string))
+        .collect();
+    assert_eq!(streamed, NEW, "deltas did not stream the partial reply");
+    let closing_text: String = final_assistant["content"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|c| c["text"].as_str())
+        .collect();
+    assert_eq!(
+        closing_text, streamed,
+        "aborted agentEnd text differs from the streamed partial (#1228); last line: {last}"
+    );
     assert!(err.contains("(interrupted)"), "no interrupt note:\n{err}");
     assert!(
         err.contains(
