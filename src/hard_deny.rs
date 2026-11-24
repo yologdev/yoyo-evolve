@@ -37,7 +37,8 @@
 //!   `sudo -u root rm …` and `xargs rm …` are covered), followed by a
 //!   recursive flag (`-r`, `-R`, combined like `-fR`, or `--recursive`) and a
 //!   target that is root or home: `/`, `/*`, `/.`, `//`, `~`, `~/`, `~/*`,
-//!   `$HOME`, `${HOME}` (with or without a trailing `/` or `/*`).
+//!   `$HOME`, `${HOME}` (with or without a trailing `/` or `/*`), judged
+//!   after `..` is resolved lexically (#1235: `/tmp/../*` is `/*`).
 //!   `--no-preserve-root` alone also matches. `-f` is NOT required.
 //! - **mkfs** (`mkfs`): a word that is `mkfs` or `mkfs.<fs>` in command
 //!   position (after `sudo`/`env`/`nice`/… wrappers, flags and `VAR=x`
@@ -758,12 +759,17 @@ fn rm_root(args: &[String]) -> Option<&'static str> {
             recursive |= a == "--recursive";
         } else if !options_done && a.starts_with('-') && a.len() > 1 {
             recursive |= a.contains('r') || a.contains('R');
-        } else if root_target.is_none() && is_root_or_home(a) {
-            root_target = Some(if a == "/*" {
-                RULE_RM_ROOT_GLOB
-            } else {
-                RULE_RM_ROOT
-            });
+        } else if root_target.is_none() {
+            // #1235: an operand is judged by its normal form (`/tmp/../*` is `/*`).
+            let normal = crate::safety::safety_rm_parent::normalise_anchored(a);
+            let t = normal.as_deref().unwrap_or(a);
+            if is_root_or_home(t) {
+                root_target = Some(if t == "/*" {
+                    RULE_RM_ROOT_GLOB
+                } else {
+                    RULE_RM_ROOT
+                });
+            }
         }
     }
     root_target.filter(|_| recursive)

@@ -538,7 +538,9 @@ fn rm_wide_target(token: &str) -> Option<&'static str> {
         .chars()
         .filter(|c| !matches!(c, '"' | '\'' | ';'))
         .collect();
-    if let Some(what) = safety_rm_parent::rm_parent_target(&t) {
+    let rel_or_anchored =
+        safety_rm_parent::rm_parent_target(&t).or_else(|| safety_rm_parent::rm_anchored_target(&t)); // #1235: `/tmp/../*`, `~/x/..`
+    if let Some(what) = rel_or_anchored {
         return Some(what); // #1232: `..` however spelled, `../*`, `build/..`
     }
     let t = t
@@ -4893,7 +4895,7 @@ mod read_guard_delete_tests;
 mod safety_git_glued_tests;
 
 #[path = "safety_rm_parent.rs"]
-mod safety_rm_parent;
+pub(crate) mod safety_rm_parent;
 #[cfg(test)]
 #[path = "safety_rm_target_tests.rs"]
 mod safety_rm_target_tests;

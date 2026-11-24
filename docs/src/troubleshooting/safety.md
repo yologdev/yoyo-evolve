@@ -174,6 +174,14 @@ at face value), and a real name left after the `..`s (`../sibling`,
 spelled as its absolute path (`rm -rf /home/me/proj` run from that
 folder) is not recognised, because the check doesn't know the working
 folder (#1229).
+Since Day 269 `..` is resolved the same way on **absolute and home
+paths** (`~`, `$HOME`, `${HOME}`): `rm -rf /tmp/../*` is `rm -rf /*` and
+is hard-blocked like it, `rm -rf /tmp/..` is `/`, `rm -rf ~/x/..` is
+`~`, `rm -rf /tmp/x/../../home` asks as the top-level folder `/home`, and
+`rm -rf ~/../*` or `$HOME/../*` asks as every home folder. A path that
+stays below a top-level folder (`/tmp/x/../y`, `~/proj/../proj2/target`)
+still doesn't ask. This is read as text too, so a symlink before the `..`
+is not followed (#1236).
 Like every warning on this page, it is a confirmation prompt, and what
 happens where nobody can answer one depends on how the run was started
 (see the table below). Only the hard block on `/`, `~` and `$HOME`
