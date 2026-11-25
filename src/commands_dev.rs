@@ -603,8 +603,11 @@ pub fn handle_doctor(
     model: &str,
     restrictions: &crate::config::DirectoryRestrictions,
     surface: DoctorSurface,
+    api: &crate::doctor_api::ApiTarget,
 ) {
-    let checks = run_doctor_checks(provider, model, restrictions, surface);
+    let mut checks = run_doctor_checks(provider, model, restrictions, surface);
+    // #1242: the one row that touches the network, kept out of the pure checks.
+    checks.push(crate::doctor_api::run_api_check(api));
     print_doctor_report(&checks);
     // Contextual guidance beats reference guidance: after the report, take the
     // last step Claude Code takes — offer to apply the one safe, well-defined

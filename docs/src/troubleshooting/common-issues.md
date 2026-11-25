@@ -111,7 +111,11 @@ The same check covers two other readers. At startup, a project instruction file 
   error: [API error message]
 ```
 
-This appears when the Anthropic API returns an error. Common causes:
+This appears when the Anthropic API returns an error. To check a setup before you prompt,
+run `yoyo doctor` (or `/doctor`): its **API** row sends one minimal request and says whether
+the key was rejected, the model or endpoint was not found, or the host can't be reached.
+Google's and xAI's bad-key `400`s show there as `answered with an error (HTTP 400)` with the
+vendor's error text, not as `rejected the API key`. Common causes:
 
 - **Invalid API key** — check your key is correct and active
   (Google reports a bad key as `400` with `API_KEY_INVALID` / "API key not valid" rather

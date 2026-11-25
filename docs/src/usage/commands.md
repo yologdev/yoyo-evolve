@@ -13,7 +13,7 @@ All commands start with `/`. Type `/help` inside yoyo to see the full list.
 > | `yoyo version` | Show version (same as `--version`) |
 > | `yoyo setup` | Run the interactive setup wizard (requires an interactive terminal: with stdin not a TTY it refuses with exit 2 and writes nothing) |
 > | `yoyo init` | Generate a YOYO.md project context file |
-> | `yoyo doctor` | Diagnose yoyo setup (config file, API key, provider, tool availability) |
+> | `yoyo doctor` | Diagnose yoyo setup (config file, API key, provider, tool availability) and send one minimal request to check the provider answers |
 > | `yoyo health` | Run project health checks (build, test, clippy, fmt — auto-detects project type) |
 > | `yoyo lint` | Run project linter (e.g. `yoyo lint --strict`, `yoyo lint unsafe`) |
 > | `yoyo test` | Run project test suite |
@@ -61,6 +61,21 @@ All commands start with `/`. Type `/help` inside yoyo to see the full list.
 > context spend (roughly bytes ÷ 4 tokens), and warns if the total exceeds ~8k tokens so you
 > can review which skills you actually need. It reports *cost*, not *usage* — with no skills
 > loaded it's a neutral Pass.
+>
+> The last row, **API**, is the only one that touches the network: `doctor` prints
+> `Checking the API: sending one minimal request to <host>...` and sends one tiny request
+> (a one-word prompt, no tools, a 16-token reply cap) to the provider, model, base URL and
+> key a real session would use, without retries, waiting at most 20 seconds. The verdicts:
+> `reached <host> as <model>` (Pass); `<host> rejected the API key (HTTP 401/403)`;
+> `<host> answered 404: model <model> not found, or the base URL is not the API's`;
+> `cannot reach <host> (connection refused / host name did not resolve / TLS handshake failed)`,
+> which for a local server such as ollama usually means it isn't running;
+> `no answer from <host> within 20 s`; a rate-limited or overloaded answer is a Warn (the host
+> answered, but the key and model are not confirmed); anything else shows the HTTP status and
+> the start of the error text on one line (up to 200 bytes), with secrets masked. With no key for a provider that needs one,
+> no request is sent and the row says `not tested: no API key`. The row shows the host only,
+> never the key. `yoyo doctor` reads `--api-key` and `--base-url` like a session does, and a
+> base URL from a project `.yoyo.toml` is used only when the project is trusted.
 
 ## Navigation
 

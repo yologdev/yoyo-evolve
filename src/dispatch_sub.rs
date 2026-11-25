@@ -477,7 +477,21 @@ pub(crate) fn try_dispatch_subcommand_in(
                 // refused instruction file is reported as refused.
                 let fence = crate::cli::startup_dir_restrictions(args, &raw_config);
                 let shell = crate::commands_dev::DoctorSurface::Shell;
-                crate::commands_dev::handle_doctor(&provider, &model, &fence, shell);
+                // #1242: the key and URL a run would use; a project file's URL
+                // needs trust here as on every early door (#1179).
+                let trusted = crate::project_base_url::early_door_trusted(args);
+                let api = crate::doctor_api::ApiTarget {
+                    base_url: crate::project_base_url::resolve_base_url(
+                        args,
+                        &file_config,
+                        &provider,
+                        trusted,
+                    ),
+                    api_key: resolve_api_key(args, &provider).unwrap_or_default(),
+                    provider: provider.clone(),
+                    model: model.clone(),
+                };
+                crate::commands_dev::handle_doctor(&provider, &model, &fence, shell, &api);
                 return Some(None);
             }
             "health" => {

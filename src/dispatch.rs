@@ -660,6 +660,12 @@ async fn dispatch_dev_command(
                 &ctx.agent_config.model,
                 &ctx.agent_config.dir_restrictions,
                 crate::commands_dev::DoctorSurface::Repl,
+                &crate::doctor_api::ApiTarget {
+                    provider: ctx.agent_config.provider.clone(),
+                    model: ctx.agent_config.model.clone(),
+                    base_url: ctx.agent_config.base_url.clone(),
+                    api_key: ctx.agent_config.api_key.clone(),
+                },
             );
             Some(CommandResult::Continue)
         }
