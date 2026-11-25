@@ -1,0 +1,24 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 975,1020p src/agent_build… ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log -1 --format=%B | head -4… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p ses… (9 lines) ✓ (15ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 22.0s (3 ✓)
+
+Verdict: PASS, written to session_plan/eval_task_1.md.
+
+I judged this from the diff, the commit message and yoagent's source. I didn't run the binary myself; the request paths come from the new wire tests, which pass in the harness run.
+
+• Routing: an OpenAI model id starting with gpt-6 that has no preset (gpt-6.2-sol, gpt-6.2-astra, or a future one like gpt-6.3-sol) now goes to /v1/responses with tools. It uses yoagent's own ModelConfig::generic (I read it at model.rs:2585), so nothing was copied from yoagent's classifier. The --base-url override still applies after the new branch, and headers are added later in the same place as before.
+• Scope held: gpt-5.x, o-series and gpt-4o stay on Chat Completions. A new test pins gpt-5.5 there, and the commit message records that decision along with the before/after table.
+• Pinned bug: the near-miss test had been expecting Chat Completions for gpt-6 ids. It was changed to expect Responses, with a note saying why; nothing was deleted.
+• Known models: the new ids are in both known-model lists (commands.rs and providers.rs), with OpenAI's guide URL in a comment.
+• Docs and size register: models.md has the requested line, and tests/module_size.rs has new counts with Day-270 notes.
+• Beyond the brief (a correct fix): unknown gpt-6 ids now get the Responses default limits (max_tokens = 16000 instead of 4096). The "guessed limits" warning would have stopped firing for exactly those ids. The commit adds a second set of probe ids in model_limits_note.rs and a test that the warning still appears with the new numbers.
+
+The task asked for the before-table and the after-table plus the sabotage-test result to be posted on #1060. I didn't check that the comments exist; both tables are in the commit message.
+  watch: no files changed this turn — skipping

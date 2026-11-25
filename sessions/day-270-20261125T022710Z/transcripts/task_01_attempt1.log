@@ -1,0 +1,299 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | head && git… ✓ (24ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 800,1010p src/agent_build… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 960,1010p src/agent_build…  ▶ $ cd ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.27.9 && sed … ✓ (8ms)
+ ✓ (10ms)
+  ▶ $ cd ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.27.9 && grep… ✓ (13ms)
+  ▶ read src/agent_builder.rs:824..836  ▶ read src/agent_builder.rs:974..994  ▶ $ cd ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.27.9 && sed … ✓ (3ms)
+ ✓ (4ms)
+ ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls -la target/debug/yoyo 2>/dev/… ✓ (145ms)
+  ▶ $ mkdir -p /tmp/probe1060 && cat > /tmp/probe1060/stub.py <<'E… (29 lines) ✓ (883ms)
+  ▶ $ cat -A /tmp/probe1060/before.md | sed 's/\$$//' ✓ (5ms)
+  ▶ $ awk '{print NR": "$0}' /tmp/probe1060/before.md | tr '\n' ' ; ' ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  12 tools completed in 43.6s (12 ✓)
+
+Before-table confirms the bug. Posting on #1060 before any code edit.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && { echo "**This slice (Day 270 Ta… ✓ (1.3s)
+
+Now failing tests first.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> tests… (50 lines) ✓ (748ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "near_misses_keep_the_b… ✓ (21ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "gpt-6\.[2-9]\|gpt-6-[a… ✓ (16ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 25,50p src/openai_preset_… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 110,140p src/providers.rs… ✓ (219ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "GPT-6.2\|gpt-6.2\|opena… ✓ (6ms)
+  ▶ web search 'OpenAI "Using GPT-6.2" guide tool calling requires Responses' ✓ (2.7s)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 34.9s (7 ✓)
+
+Source confirmed: https://developers.openai.com/api/docs/guides/latest-model. Now the fix.
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/agent_builder.rs (8 → 17 lines)
+                    config.api = preset.api;
+  +             } else if is_gpt_6_family(model) {
+  +                 // #1060: a GPT-6 id with no preset (gpt-6.2-sol, Codex's
+  +                 // default; future releases) still needs Responses: "tool
+  +                 // calling requires Responses" (OpenAI, Using GPT-6.2). yoagent's
+  +                 // `generic` picks the wire; gpt-5.x / o-series stay on Chat
+  +                 // Completions until their docs are checked (#1060 row 1).
+  +                 if let Some(generic) = ModelConfig::generic("openai", model) {
+  +                     config = generic;
+  +                 }
+                }
+                if let Some(url) = base_url {
+                    config.base_url = url.to_string();
+  ▶ edit src/agent_builder.rs (1 → 8 lines)
+  + /// A `gpt-6…` id (case-insensitive, after any `vendor/` prefix): the family
+  + /// OpenAI documents as needing Responses for tool calling (#1060).
+  + fn is_gpt_6_family(model: &str) -> bool {
+  +     let id = model.rsplit('/').next().unwrap_or(model);
+  +     id.to_ascii_lowercase().starts_with("gpt-6")
+  + }
+  + 
+    /// `ModelConfig::preset` for the [`VENDOR_PRESET_PROVIDERS`] arms (#1021, #1037),
+ ✓ (22.4s)
+                    config.api = preset.api;
+  +             } else if is_gpt_6_family(model) {
+  +                 // #1060: a GPT-6 id with no preset (gpt-6.2-sol, Codex's
+  +                 // default; future releases) still needs Responses: "tool
+  +                 // calling requires Responses" (OpenAI, Using GPT-6.2). yoagent's
+  +                 // `generic` picks the wire; gpt-5.x / o-series stay on Chat
+  +                 // Completions until their docs are checked (#1060 row 1).
+  +                 if let Some(generic) = ModelConfig::generic("openai", model) {
+  ... (5 more lines)
+ ✓ (4m 6s)
+  + /// A `gpt-6…` id (case-insensitive, after any `vendor/` prefix): the family
+  + /// OpenAI documents as needing Responses for tool calling (#1060).
+  + fn is_gpt_6_family(model: &str) -> bool {
+  +     let id = model.rsplit('/').next().unwrap_or(model);
+  +     id.to_ascii_lowercase().starts_with("gpt-6")
+  + }
+  + 
+    /// `ModelConfig::preset` for the [`VENDOR_PRESET_PROVIDERS`] arms (#1021, #1037),
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4m 14s (2 ✓)
+
+Now the near-miss pin: its gpt-6 ids asserted the Chat Completions wire, which encoded the bug. Keep their preset/price guard, change the expected wire for the gpt-6 ones.
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/openai_preset_tests.rs (2 → 17 lines)
+            assert!(openai_preset(id).is_none(), "{id} must not match a preset");
+  +         if id.to_ascii_lowercase().starts_with("gpt-6") {
+  +             // #1060 (Day 270): this loop used to expect Chat Completions for
+  +             // these too, which pinned the bug (no tool calls on gpt-6.2-sol).
+  +             // They still get no preset (the #1003 misbill guard above); the
+  +             // wire is now yoagent's `generic`, i.e. Responses.
+  +             let generic = ModelConfig::generic("openai", id).expect("openai is generic");
+  +             let got = create_model_config("openai", id, None);
+  +             assert_eq!(got.api, ApiProtocol::OpenAiResponses, "{id}");
+  +             assert_eq!(
+  +                 (got.context_window, got.max_tokens, got.cost.is_some()),
+  +                 (generic.context_window, generic.max_tokens, generic.cost.is_some()),
+  +                 "{id}"
+  +             );
+  +             continue;
+  +         }
+            let bare = ModelConfig::openai(*id, *id);
+ ✓ (3m 46s)
+            assert!(openai_preset(id).is_none(), "{id} must not match a preset");
+  +         if id.to_ascii_lowercase().starts_with("gpt-6") {
+  +             // #1060 (Day 270): this loop used to expect Chat Completions for
+  +             // these too, which pinned the bug (no tool calls on gpt-6.2-sol).
+  +             // They still get no preset (the #1003 misbill guard above); the
+  +             // wire is now yoagent's `generic`, i.e. Responses.
+  +             let generic = ModelConfig::generic("openai", id).expect("openai is generic");
+  +             let got = create_model_config("openai", id, None);
+  ... (9 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn known_model_ids_with… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "Known models: gpt\|gpt… ✓ (29ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 575,640p src/providers.rs… ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 4m 5s (4 ✓)
+
+Now add the ids to both lists, sourced.
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (36 lines) ✓ (32ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 1200 cargo test --test o… ✓ (52.5s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 1m 6s (2 ✓)
+
+Green. Now the positive control as one atomic command.
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/agent… (11 lines) ✓ (6ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff --s… (7 lines) ✓ (26.8s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 37.7s (2 ✓)
+
+Control red by name (3 new tests), restored, green. After-table with the rebuilt binary:
+  ╭─ Turn 27 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -1 && /t… ✓ (8.7s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Post the after-table now, before the gate. Quick check first of what reasoning field 6.2-sol carries at default thinking (OpenAI says none is rejected for 6.2):
+  ╭─ Turn 28 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp/probe1060 && sed 's/f.write(f"{self.path} tools={t}\\n")/f.write(f"{self… ✓ (571ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && { echo "**After (this slice, unc… ✓ (1.7s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 14.4s (2 ✓)
+
+Docs line:
+  ╭─ Turn 30 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -i "responses\|gpt-6\|op… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 134,145p docs/src/configu… ✓ (3ms)
+  ▶ edit docs/src/configuration/models.md (1 → 8 lines)
+    price, not `gpt-6-sol`'s). Other ids keep the generic OpenAI defaults.
+  + 
+  + Every `gpt-6*` id on `provider = "openai"` (preset or not, such as `gpt-6.2-sol` and
+  + `gpt-6.2-astra`) is sent to OpenAI's Responses API (`/v1/responses`), because OpenAI documents that
+  + tool calling on GPT-6.2 requires it. An id with no preset gets yoagent's generic Responses limits
+  + and the guessed-limits warning. Other OpenAI ids (gpt-5.x, o-series, gpt-4o) still use Chat
+  + Completions. If your `--base-url` proxy only serves `/chat/completions`, use `--provider custom`
+  + for it instead (#1060).
+ ✓ (2ms)
+    price, not `gpt-6-sol`'s). Other ids keep the generic OpenAI defaults.
+  + 
+  + Every `gpt-6*` id on `provider = "openai"` (preset or not, such as `gpt-6.2-sol` and
+  + `gpt-6.2-astra`) is sent to OpenAI's Responses API (`/v1/responses`), because OpenAI documents that
+  + tool calling on GPT-6.2 requires it. An id with no preset gets yoagent's generic Responses limits
+  + and the guessed-limits warning. Other OpenAI ids (gpt-5.x, o-series, gpt-4o) still use Chat
+  + Completions. If your `--base-url` proxy only serves `/chat/completions`, use `--provider custom`
+  + for it instead (#1060).
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 10.9s (3 ✓)
+
+Verify the "guessed-limits warning" claim before keeping it:
+  ╭─ Turn 33 ────────────────────────────────────────────────────────────╮
+  ▶ $ cat /tmp/probe1060/err2.txt | cut -c1-250 | head; cd /home/runner/work/yoyo-evol… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 100,206p src/model_limits… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 40,99p src/model_limits_n… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,39p src/model_limits_no… ✓ (12ms)
+  ▶ $ cd ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yoagent-0.27.9 && sed … ✓ (7ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 29.1s (5 ✓)
+
+Not public in yoagent. Minimal fix in yoyo: also compare against the guess for a made-up gpt-6 id, so the family's own guessed limits still count as a guess.
+  ╭─ Turn 38 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "PROBE_IDS" src/*.rs ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "PROBE_IDS" src/model_li… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (22 lines) ✓ (19ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 195,224p src/model_limits… ✓ (3ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 1200 cargo test --bin yo… ✓ (39.0s)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 1m 4s (5 ✓)
+
+Only that test fails, and it pinned gpt-6.9-test on Chat Completions limits — the bug. Move its id to a non-gpt-6 unknown and add a gpt-6 row against yoagent's own Responses guess:
+  ╭─ Turn 43 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (41 lines) ✓ (38.9s)
+
+Recall control for the probe fix, atomic:
+  ╭─ Turn 44 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/p… (7 lines) ✓ (1m 19s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control red by name (4), restored, green. Check the built binary now warns, then post the addendum:
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -1; stat… ✓ (20.1s)
+  ▶ $ cd /tmp && H=$(mktemp -d); P=$(mktemp -d); cd $P && env -u OPENAI_API_KEY -u API… ✓ (7.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 40.3s (2 ✓)
+
+Warns as the docs say. Post the addendum before the gate:
+  ╭─ Turn 47 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/p… (10 lines) ✓ (1.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (10 lines) ✓ (575ms)
+  2 tools completed in 23.7s (2 ✓)
+
+Targeted tests green; commit with full body now, before the slow gate.
+  ╭─ Turn 49 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt &&… (79 lines) ✓ (2.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Committed (8 files, only the task's). Now the full gate:
+  ╭─ Turn 50 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo FMT…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 2400 cargo test 2>&1 | g… ✓ (1m 17s)
+ ✓ (6m 19s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 2400 cargo test 2>&1 | g… ✓ (5m 11s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log -1 --format='%h %s' && g… ✓ (8ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 11m 52s (4 ✓)
+
+GPT-6.2 Sol (Codex's default) and GPT-6.2 Astra now send tool calls through OpenAI's Responses API instead of Chat Completions, so tools work with them again. Full gate is green: fmt, clippy with -D warnings, and cargo test (48 suites, 7695 passed, 0 failed). The working tree is clean.
+
+The change is in commit 2da2af4a (Part of #1060). In the openai provider branch, any gpt-6* id without a yoagent preset is now built from yoagent's ModelConfig::generic("openai", id), and yoagent's own code picks Responses. I didn't copy that logic into yoyo, and the base-URL handling is unchanged.
+
+First request each id sent to a local stub on 127.0.0.1 (no real OpenAI host), tools on:
+
+| id | before | after |
+|---|---|---|
+| gpt-6-sol, gpt-6.1-sol | /responses | /responses |
+| gpt-6.2-sol, gpt-6.2-astra | /chat/completions | /responses |
+| gpt-6.3-sol (made up) | /chat/completions | /responses |
+| gpt-5.5, o3, gpt-4o | /chat/completions | /chat/completions |
+
+The made-up gpt-6.3-sol row means the next GPT-6 release won't need a list edit. gpt-5.x and the o-series are deliberately unchanged: I didn't check OpenAI's docs for those families, so row 1 of #1060 stays open.
+
+A problem I found and fixed in the same commit: the "no preset known, using guessed limits" warning compares a model's limits with Chat Completions defaults. After this change, models without a preset get the Responses defaults (128000 / 16000), so the warning would have gone quiet for exactly the models now running on guessed limits. I added a second comparison against made-up gpt-6 ids, and the built binary now prints the warning for gpt-6.2-sol. The real GPT-6.2 limits aren't wired in because yoagent 0.27.9 has no GPT-6.2 preset.
+
+Two tests expected the old Chat Completions route for gpt-6 ids. I changed them rather than deleting them:
+• near_misses_keep_the_bare_openai_config still checks these ids don't match a preset (the misbilling guard), but now expects Responses.
+• The guessed-limits wording test now uses gpt-5.9-test, and a new test checks gpt-6 ids against yoagent's own Responses defaults.
+
+Other changes:
+• gpt-6.2-sol and gpt-6.2-astra are on the known openai models list, so the "Unknown model" warning no longer fires for them. They're also offered in /model completion, with gpt-6-sol and gpt-6.1-sol. The 6.2 ids come from OpenAI's GPT-6.2 guide, cited in the code.
+• models.md says gpt-6 ids use Responses, and that a --base-url proxy serving only /chat/completions should use --provider custom.
+• tests/module_size.rs has new line counts for agent_builder.rs and commands.rs.
+
+Checks: I broke each fix on purpose and confirmed the tests catch it. Disabling the new route made 3 tests fail by name, and disabling the warning fix made 4 fail. Both were restored, with the marker count back to 0. The before table, after table and both results are posted on #1060 (three comments) and in the commit body.
+
+One related check: at default thinking, gpt-6.2-sol's request carries no reasoning field, so yoyo doesn't send the none effort OpenAI says 6.2 rejects. I didn't test the other --thinking levels. Rows 1, 2 and 4 of #1060 remain open.
+
+  (interrupted)

@@ -1,0 +1,158 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | head && git…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "rm_anchored\|normalise_… ✓ (22ms)
+ ✓ (41ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 100,175p src/safety_rm_pa… ✓ (18ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/s… (10 lines) ✓ (38.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git checkout… (8 lines) ✓ (1.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "safety_rm\|hard_deny\|\… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 174,190p docs/src/trouble… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 2m 3s (7 ✓)
+
+Now the implementation.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (87 lines) ✓ (22ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ edit src/hard_deny.rs (3 → 8 lines)
+                let normal = crate::safety::safety_rm_parent::normalise_anchored(a);
+  -             let t = normal.as_deref().unwrap_or(a);
+  -             if is_root_or_home(t) {
+  +             // #1236: and by the path the kernel deletes (symlinked prefix, real HOME).
+  +             let resolved = crate::safety::safety_rm_parent::resolved_anchored(a);
+  +             let t = [normal.as_deref().unwrap_or(a)]
+  +                 .into_iter()
+  +                 .chain(resolved.as_deref())
+  +                 .find(|t| is_root_or_home(t));
+  +             if let Some(t) = t {
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | grep -E "^(er… ✓ (6m 32s)
+                let normal = crate::safety::safety_rm_parent::normalise_anchored(a);
+  -             let t = normal.as_deref().unwrap_or(a);
+  -             if is_root_or_home(t) {
+  +             // #1236: and by the path the kernel deletes (symlinked prefix, real HOME).
+  +             let resolved = crate::safety::safety_rm_parent::resolved_anchored(a);
+  +             let t = [normal.as_deref().unwrap_or(a)]
+  +                 .into_iter()
+  +                 .chain(resolved.as_deref())
+  +                 .find(|t| is_root_or_home(t));
+  +             if let Some(t) = t {
+ ✗ (6m 32s)
+    │ Command timed out after 120s
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/s… (105 lines) ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (7 lines) ✓ (154ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 590 cargo test --bin yoy… ✓ (17ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 590 cargo test --bin yoy… ✓ (39.6s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (18 lines) ✓ (19ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (10 lines) ✓ (17ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  9 tools completed in 8m 6s (8 ✓, 1 ✗)
+
+Now the positive control, as one atomic command.
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && F=src/safety… (10 lines) ✓ (1m 19s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue com… (5 lines) ✓ (1.4s)
+  ▶ edit docs/src/troubleshooting/safety.md (2 → 6 lines)
+  - still doesn't ask. This is read as text too, so a symlink before the `..`
+  - is not followed (#1236).
+  + still doesn't ask. Since Day 270 a `..` after a symlink is judged on
+  + where the symlink points, so `rm -rf /tmp/link/../*` with `link -> /` is
+  + hard-blocked like `rm -rf /*`, and `~/..` uses your real `$HOME`, so for
+  + root (`HOME=/root`) `rm -rf ~/../*` counts as `/*`. The link is looked up
+  + when yoyo checks the command; one that changes between the check and the
+  + run is not caught.
+ ✓ (2ms)
+  - still doesn't ask. This is read as text too, so a symlink before the `..`
+  - is not followed (#1236).
+  + still doesn't ask. Since Day 270 a `..` after a symlink is judged on
+  + where the symlink points, so `rm -rf /tmp/link/../*` with `link -> /` is
+  + hard-blocked like `rm -rf /*`, and `~/..` uses your real `$HOME`, so for
+  + root (`HOME=/root`) `rm -rf ~/../*` counts as `/*`. The link is looked up
+  + when yoyo checks the command; one that changes between the check and the
+  + run is not caught.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"src/hard_deny.rs"\|saf… ✓ (2.0s)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 1m 49s (4 ✓)
+
+Commit now with full body, before the slow gate.
+  ╭─ Turn 19 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (47 lines) ✗ (1ms)
+    │ Command blocked by safety policy: `rm -rf /*` reads as a recursive delete of everything under the filesystem root (/*). This is denied for safety.
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+My own hard-deny refuses the commit message because the text quotes rm -rf /*. I'll write the body to a file and commit from that.
+  ╭─ Turn 20 ────────────────────────────────────────────────────────────╮
+  ▶ write /tmp/msg1236.txt (49 lines)  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A && git commit -q -F /… ✓ (2ms)
+ ✓ (20ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.7s (2 ✓)
+
+Committed with the full body. Now the slow gate:
+  ╭─ Turn 21 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 1196 --json state,… ✓ (25.1s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Clippy is clean. My commit body cites #1196, and that ticket is closed, so I'll look for an open ticket on the heredoc case:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue list --state open --sea… ✓ (1.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+#1202 (deciding safety on the parse tree instead of on text) is the open ticket for this case. I'll post the specimen there and repoint the commit body from #1196 to #1202:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue com… (10 lines) ✓ (1.3s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo fmt… ✓ (6m 2s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 6m 13s (2 ✓)
+
+The summary output got truncated, so I'll check whether the run finished and whether anything failed:
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 590 cargo test 2>&1 > /t… ✓ (5m 15s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+#1236 is fixed and committed as 8b60515, amended once to correct the body. fmt, clippy with -D warnings and cargo test all pass: 7147 tests, exit 0, and the working tree is clean.
+
+What changed: rm operands containing .. are now judged on the path the kernel would actually delete.
+• Symlinked prefix: the part before the first .. is resolved through the filesystem. rm -rf /tmp/link/../*, where link points to /, is now hard-blocked like rm -rf /*.
+• Real home: ~, $HOME and ${HOME} are replaced with the real $HOME value. For root (HOME=/root), ~/../* now counts as /*. Users with a normal home (/home/me) still get the "every home folder" question, as before.
+• The common case is untouched: an operand with no .. never touches the filesystem, and a test proves it. If a prefix can't be resolved, the old text-only reading is used.
+• Resolution can only add strictness. It never turns a question into a silent pass. The hard block fires if either reading is the root or home.
+
+A correction to the plan: its table said /tmp/link/../* passed before. I ran the checkers at HEAD and it already asked for confirmation, but labelled as a "top-level folder". The real hole was that it wasn't hard-blocked, so an allow rule or -p auto-approve would let it run. I posted the before-table on #1236 before editing.
+
+Verification:
+• There are 8 new tests. They only call the checking functions and never run rm. One uses a real symlink to / in a temp folder.
+• For the check that the tests can fail, I disabled the symlink lookup in a single command (marker counted 1 before the run). The two tests that depend on it failed by name. After restoring it (marker count 0), all 8 passed. That result is on #1236.
+• One existing test from #1235 reads the machine's real HOME, so it would fail when run as root. It now skips its three "every home folder" rows in that case, and the new tests cover it.
+
+Limit: the symlink is checked when yoyo inspects the command. If it changes before the shell runs rm, it won't be caught. This narrows the hole but doesn't seal it; the commit body and #1236 both say so.
+
+Found on the way: my first commit attempt was refused by yoyo's own hard block. The message went through a bash heredoc and quoted the root delete as text. I committed from a file instead and posted the example on the open #1202, which covers this kind of text-pattern misfire. My first body pointed at #1196, which I then found was closed, so I amended it.
+
+The change touches src/safety_rm_parent.rs, src/hard_deny.rs (a few lines, so the hard block uses the resolved path), src/safety_rm_target_tests.rs and docs/src/troubleshooting/safety.md. safety.rs didn't change, so its size entry in tests/module_size.rs didn't need updating.
+
+  (interrupted)
