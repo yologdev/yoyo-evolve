@@ -97,8 +97,81 @@ pub(crate) fn normalise_anchored(t: &str) -> Option<String> {
 /// #1235: what a recursive rm of `t` wipes when [`normalise_anchored`]'s
 /// spelling of it is the root, everything in it, a top-level folder, the
 /// home folder, or every home folder (`~/../*`, `$HOME/../*`).
+/// #1236: also judged on [`resolved_anchored`]'s reading, which wins when it
+/// is the root (`/tmp/link/../*` with `link -> /`, root's `~/../*`).
 pub(super) fn rm_anchored_target(t: &str) -> Option<&'static str> {
-    let n = normalise_anchored(t)?;
+    rm_anchored_target_with(t, resolved_anchored(t))
+}
+
+/// [`rm_anchored_target`] with the resolved reading passed in, so tests never
+/// touch `HOME` or the filesystem. The stricter reading wins: the lexical
+/// label unless the resolved path is the root, and never a pass where the
+/// lexical reading asks.
+pub(crate) fn rm_anchored_target_with(t: &str, resolved: Option<String>) -> Option<&'static str> {
+    let lexical = normalise_anchored(t).and_then(|n| anchored_label(&n));
+    let resolved = resolved.and_then(|n| anchored_label(&n));
+    let is_root = |l: &str| l.ends_with("the filesystem root");
+    match (lexical, resolved) {
+        (Some(l), Some(r)) if is_root(r) && !is_root(l) => Some(r),
+        (l, r) => l.or(r),
+    }
+}
+
+/// #1236: the absolute path the kernel deletes for an anchored operand with a
+/// `..`: the real home put in for `~`/`$HOME`/`${HOME}`, and the part before
+/// the first `..` resolved with `std::fs::canonicalize` (symlinks followed).
+/// The symlink can change between this check and the run, so this narrows
+/// the hole and does not seal it.
+pub(crate) fn resolved_anchored(t: &str) -> Option<String> {
+    let home = std::env::var("HOME").ok();
+    resolved_anchored_with(t, home.as_deref(), |p| std::fs::canonicalize(p).ok())
+}
+
+/// [`resolved_anchored`] with the home value and prefix resolver passed in.
+/// `None` when the operand has no `..` (the resolver is never called), is not
+/// anchored, or is home-anchored with no absolute home. A prefix the resolver
+/// can't read (missing, no permission) keeps its lexical spelling.
+pub(crate) fn resolved_anchored_with(
+    t: &str,
+    home: Option<&str>,
+    resolve: impl Fn(&std::path::Path) -> Option<std::path::PathBuf>,
+) -> Option<String> {
+    let t = t.split(['&', '|', '<', '>']).next().unwrap_or("");
+    let abs = match t.strip_prefix('/') {
+        Some(_) => t.to_string(),
+        None => {
+            let rest = ["${HOME}", "$HOME", "~"]
+                .into_iter()
+                .find_map(|a| t.strip_prefix(a))
+                .filter(|r| r.is_empty() || r.starts_with('/'))?;
+            let home = home.filter(|h| h.starts_with('/'))?;
+            format!("{}{rest}", home.trim_end_matches('/'))
+        }
+    };
+    let abs = abs.trim_end_matches([')', '`']);
+    let parts: Vec<&str> = abs.split('/').filter(|p| !matches!(*p, "" | ".")).collect();
+    let first_up = parts.iter().position(|p| *p == "..")?;
+    let prefix = format!("/{}", parts[..first_up].join("/"));
+    let base = match first_up {
+        0 => None,
+        _ => resolve(std::path::Path::new(&prefix)).and_then(|p| p.to_str().map(str::to_string)),
+    }
+    .filter(|b| b.starts_with('/'))
+    .unwrap_or(prefix);
+    let mut out: Vec<&str> = Vec::new();
+    for p in base.split('/').chain(parts[first_up..].iter().copied()) {
+        match p {
+            "" | "." => {}
+            ".." => drop(out.pop()), // `/..` is `/`
+            _ => out.push(p),
+        }
+    }
+    Some(format!("/{}", out.join("/")))
+}
+
+/// The label for a normal form from [`normalise_anchored`] or
+/// [`resolved_anchored`].
+fn anchored_label(n: &str) -> Option<&'static str> {
     let home = !n.starts_with('/');
     let mut parts: Vec<&str> = n
         .split('/')
@@ -248,7 +321,13 @@ mod anchored_tests {
 
     #[test]
     fn a_dotdot_spelling_of_root_top_level_or_home_asks_like_its_normal_form() {
+        // #1236: these rows read the real HOME; where its parent is `/` (root's
+        // `/root`) `~/../*` is the root and is pinned by the pure rows instead.
+        let root_home = super::resolved_anchored("~/..").as_deref() == Some("/");
         for (cmd, literal, reason, hard) in ROWS {
+            if root_home && reason.starts_with("every home folder") {
+                continue;
+            }
             let got = analyze_bash_command(cmd);
             assert_eq!(got, Some(format!("{ASK} {reason}")), "{cmd}");
             assert!(analyze_bash_command(literal).is_some(), "{literal}");

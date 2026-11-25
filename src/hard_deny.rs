@@ -762,8 +762,13 @@ fn rm_root(args: &[String]) -> Option<&'static str> {
         } else if root_target.is_none() {
             // #1235: an operand is judged by its normal form (`/tmp/../*` is `/*`).
             let normal = crate::safety::safety_rm_parent::normalise_anchored(a);
-            let t = normal.as_deref().unwrap_or(a);
-            if is_root_or_home(t) {
+            // #1236: and by the path the kernel deletes (symlinked prefix, real HOME).
+            let resolved = crate::safety::safety_rm_parent::resolved_anchored(a);
+            let t = [normal.as_deref().unwrap_or(a)]
+                .into_iter()
+                .chain(resolved.as_deref())
+                .find(|t| is_root_or_home(t));
+            if let Some(t) = t {
                 root_target = Some(if t == "/*" {
                     RULE_RM_ROOT_GLOB
                 } else {

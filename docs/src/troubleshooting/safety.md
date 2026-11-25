@@ -180,8 +180,12 @@ is hard-blocked like it, `rm -rf /tmp/..` is `/`, `rm -rf ~/x/..` is
 `~`, `rm -rf /tmp/x/../../home` asks as the top-level folder `/home`, and
 `rm -rf ~/../*` or `$HOME/../*` asks as every home folder. A path that
 stays below a top-level folder (`/tmp/x/../y`, `~/proj/../proj2/target`)
-still doesn't ask. This is read as text too, so a symlink before the `..`
-is not followed (#1236).
+still doesn't ask. Since Day 270 a `..` after a symlink is judged on
+where the symlink points, so `rm -rf /tmp/link/../*` with `link -> /` is
+hard-blocked like `rm -rf /*`, and `~/..` uses your real `$HOME`, so for
+root (`HOME=/root`) `rm -rf ~/../*` counts as `/*`. The link is looked up
+when yoyo checks the command; one that changes between the check and the
+run is not caught.
 Like every warning on this page, it is a confirmation prompt, and what
 happens where nobody can answer one depends on how the run was started
 (see the table below). Only the hard block on `/`, `~` and `$HOME`

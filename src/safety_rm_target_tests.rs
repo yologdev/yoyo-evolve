@@ -214,3 +214,110 @@ fn a_recursive_delete_of_the_parent_asks_however_it_is_spelled() {
     }
     assert!(wrong.is_empty(), "rows off:\n{}", wrong.join("\n"));
 }
+
+/// #1236: an rm operand with `..` judged on the path the kernel deletes.
+/// Pure rows: the home value and the prefix resolver are passed in, so nothing
+/// here reads `HOME`, touches the filesystem (except the one tempdir row) or
+/// runs rm.
+mod resolved_dotdot {
+    use super::super::safety_rm_parent::{
+        resolved_anchored, resolved_anchored_with, rm_anchored_target_with,
+    };
+    use std::path::{Path, PathBuf};
+
+    const ROOT_GLOB: &str = "everything in the filesystem root";
+
+    fn link_to(from: &'static str, to: &'static str) -> impl Fn(&Path) -> Option<PathBuf> {
+        move |p| (p == Path::new(from)).then(|| PathBuf::from(to))
+    }
+
+    fn verdict(
+        t: &str,
+        home: Option<&str>,
+        resolve: impl Fn(&Path) -> Option<PathBuf>,
+    ) -> (Option<String>, Option<&'static str>) {
+        let r = resolved_anchored_with(t, home, resolve);
+        (r.clone(), rm_anchored_target_with(t, r))
+    }
+
+    #[test]
+    fn a_dotdot_after_a_symlink_to_root_is_judged_as_root() {
+        let (path, label) = verdict("/tmp/link/../*", None, link_to("/tmp/link", "/"));
+        assert_eq!(path.as_deref(), Some("/*"));
+        assert_eq!(label, Some(ROOT_GLOB));
+        let (path, _) = verdict("/tmp/link/..", None, link_to("/tmp/link", "/"));
+        assert_eq!(path.as_deref(), Some("/"));
+    }
+
+    #[test]
+    fn an_unresolvable_prefix_keeps_the_lexical_verdict() {
+        let (path, label) = verdict("/tmp/link/../*", None, |_| None);
+        assert_eq!(path.as_deref(), Some("/tmp/*"));
+        assert_eq!(
+            label,
+            Some("top-level folder"),
+            "today's verdict, unchanged"
+        );
+    }
+
+    #[test]
+    fn roots_home_dotdot_is_the_root() {
+        for t in ["~/../*", "$HOME/../*", "${HOME}/../*"] {
+            let (path, label) = verdict(t, Some("/root"), |_| None);
+            assert_eq!(path.as_deref(), Some("/*"), "{t}");
+            assert_eq!(label, Some(ROOT_GLOB), "{t}");
+        }
+    }
+
+    #[test]
+    fn an_ordinary_homes_dotdot_still_asks_as_every_home_folder() {
+        let (path, label) = verdict("~/../*", Some("/home/me"), |_| None);
+        assert_eq!(path.as_deref(), Some("/home/*"));
+        assert_eq!(label, Some("every home folder"));
+    }
+
+    #[test]
+    fn no_home_keeps_todays_reading() {
+        for home in [None, Some(""), Some("relative")] {
+            let (path, label) = verdict("~/../*", home, |_| None);
+            assert_eq!(path, None, "{home:?}");
+            assert_eq!(label, Some("every home folder"), "{home:?}");
+        }
+    }
+
+    #[test]
+    fn a_resolved_path_below_a_top_level_folder_still_passes() {
+        let (path, label) = verdict("/tmp/a/../b", None, link_to("/tmp/a", "/tmp/x"));
+        assert_eq!(path.as_deref(), Some("/tmp/b"));
+        assert_eq!(label, None);
+    }
+
+    #[test]
+    fn an_operand_without_dotdot_never_calls_the_resolver() {
+        let panics = |p: &Path| -> Option<PathBuf> { panic!("resolved {p:?}") };
+        for t in ["/tmp/build", "/tmp/a/./b", "~/proj", "/"] {
+            let (path, label) = verdict(t, Some("/root"), panics);
+            assert_eq!((path, label), (None, None), "{t}");
+        }
+    }
+
+    /// The production resolver on a real symlink to `/`: only the checkers
+    /// are called, nothing is deleted.
+    #[cfg(unix)]
+    #[test]
+    fn the_production_resolver_follows_a_real_symlink_to_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink("/", &link).unwrap();
+        let op = format!("{}/../*", link.display());
+        assert_eq!(resolved_anchored(&op).as_deref(), Some("/*"), "{op}");
+        let cmd = format!("rm -rf {op}");
+        assert_eq!(
+            crate::hard_deny::hard_deny_match(&cmd).map(|h| h.label),
+            Some("rm -rf /*"),
+            "{cmd}"
+        );
+        assert!(super::analyze_bash_command(&cmd)
+            .is_some_and(|w| w.contains(&format!("{ROOT_GLOB} '{op}'"))));
+    }
+}
