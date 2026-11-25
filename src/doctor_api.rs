@@ -102,11 +102,8 @@ pub async fn check_api(config: ModelConfig, api_key: &str, timeout: Duration) ->
     let cancel = tokio_util::sync::CancellationToken::new();
     let outcome = tokio::time::timeout(timeout, provider.stream(request, tx, cancel.clone())).await;
     cancel.cancel();
-    let outcome = match outcome {
-        Ok(result) => Some(result),
-        Err(_) => None,
-    };
-    classify(&host, &model, outcome, timeout)
+    // Err here is the timeout elapsing, which classify reports as such.
+    classify(&host, &model, outcome.ok(), timeout)
 }
 
 fn api_row(status: DoctorStatus, detail: String) -> DoctorCheck {
