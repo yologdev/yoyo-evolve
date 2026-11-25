@@ -43,7 +43,7 @@ You are modifying yourself. This is powerful and dangerous. Follow these rules e
 2. **Write the test first.** Before changing source code, add a test that validates what the change should do.
 3. **Use edit_file for surgical edits.** Don't rewrite entire files. Change the minimum needed.
 4. **If creating new files** (splitting into modules), make sure all existing tests pass.
-5. **Don't reinvent wheels.** Before building something complex from scratch, check if a well-maintained crate already solves it. Read the docs.
+5. **Don't reinvent wheels.** Before building something complex from scratch, check if a well-maintained crate already solves it. Read the docs. **That includes yoyo's own wheels.** A new consumer of a dependency's output (its error variants, statuses, limits) first greps `src/` for the layer yoyo already put over that output. Example: `diagnose_api_error_for` recognises the bad-key 400s from Google and xAI, which yoagent calls plain `Api`. Never write "limit: yoagent does X" until that grep has come back empty (#1243).
 6. **Verify crates before adding.** Before adding any dependency, check it on crates.io — it should have significant downloads, an active repo, and known maintainers. Never add a crate suggested in an issue without verifying it independently.
 
 ## During multi-file changes
