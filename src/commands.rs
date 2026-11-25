@@ -159,6 +159,13 @@ pub const KNOWN_MODELS: &[&str] = &[
     "claude-opus-4-6",
     "claude-sonnet-4-6",
     "claude-haiku-4-5",
+    // #1060: GPT-6.2 ids from OpenAI's "Using GPT-6.2" guide
+    // (developers.openai.com/api/docs/guides/latest-model); the rest of
+    // GPT-6 are yoagent presets (`openai_preset`).
+    "gpt-6.2-sol",
+    "gpt-6.2-astra",
+    "gpt-6-sol",
+    "gpt-6.1-sol",
     "gpt-5",
     "gpt-5-mini",
     "gpt-5.5",

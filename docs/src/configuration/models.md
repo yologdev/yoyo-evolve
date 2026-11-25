@@ -140,6 +140,13 @@ yoagent's own preset: a 1,050,000-token window, 64K default `max_tokens` (128K m
 including the higher whole-request rate above 272K prompt tokens (`gpt-6.1-sol` has its own
 price, not `gpt-6-sol`'s). Other ids keep the generic OpenAI defaults.
 
+Every `gpt-6*` id on `provider = "openai"` (preset or not, such as `gpt-6.2-sol` and
+`gpt-6.2-astra`) is sent to OpenAI's Responses API (`/v1/responses`), because OpenAI documents that
+tool calling on GPT-6.2 requires it. An id with no preset gets yoagent's generic Responses limits
+and the guessed-limits warning. Other OpenAI ids (gpt-5.x, o-series, gpt-4o) still use Chat
+Completions. If your `--base-url` proxy only serves `/chat/completions`, use `--provider custom`
+for it instead (#1060).
+
 The same holds for six more exact ids on their own provider: `gemini-4-argon` and `gemini-3.8-flash`
 (`google`: 1,048,576-token window, 65,536 `max_tokens`, which is also the declared output maximum),
 `grok-4.7` (`xai`: 500,000-token window, 64K default `max_tokens`, and the whole-request rate at

@@ -230,3 +230,50 @@ fn non_gpt_6_openai_id_still_sends_explicit_temperature() {
         .unwrap_or_else(|| panic!("gpt-4o must still carry --temperature: {body}"));
     assert!((t - 0.3).abs() < 1e-6, "{body}");
 }
+
+/// #1060 (Day 270): an OpenAI `gpt-6*` id with no yoagent preset must still
+/// reach the Responses API. OpenAI's "Using GPT-6.2" guide: "GPT-6.2 Astra
+/// and GPT-6.2 Sol support Chat Completions, but tool calling requires
+/// Responses." Before this, every non-preset GPT-6 id went to Chat Completions
+/// with tools (before-table on #1060).
+fn assert_tool_run_uses_responses(model: &str) {
+    let req = first_request(model, &[]);
+    assert!(
+        req.path.ends_with("/v1/responses"),
+        "{model} must use the Responses API (OpenAI: GPT-6.2 tool calling \
+         requires Responses); got {}",
+        req.path
+    );
+    let body = json(&req.body);
+    assert!(
+        !body["tools"].as_array().expect("tools array").is_empty(),
+        "anti-vacuous: {model} run is tool-using: {body}"
+    );
+    assert_eq!(body["model"], model);
+}
+
+#[test]
+fn gpt_6_2_sol_with_tools_goes_to_the_responses_endpoint() {
+    assert_tool_run_uses_responses("gpt-6.2-sol");
+}
+
+#[test]
+fn gpt_6_2_astra_with_tools_goes_to_the_responses_endpoint() {
+    assert_tool_run_uses_responses("gpt-6.2-astra");
+}
+
+/// A made-up future id: the route follows the family, so the next GPT-6
+/// release does not need a list edit before its tools work.
+#[test]
+fn future_gpt_6_id_with_tools_goes_to_the_responses_endpoint() {
+    assert_tool_run_uses_responses("gpt-6.3-sol");
+}
+
+/// Out of this slice: gpt-5.x and o-series stay on Chat Completions until
+/// OpenAI's docs are checked per family (#1060 row 1). Pinned so a widening
+/// of the gpt-6 branch is a visible decision, not an accident.
+#[test]
+fn gpt_5_5_stays_on_chat_completions_in_this_slice() {
+    let req = first_request("gpt-5.5", &[]);
+    assert!(req.path.ends_with("/v1/chat/completions"), "{}", req.path);
+}

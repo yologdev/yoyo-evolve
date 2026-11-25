@@ -19,6 +19,9 @@ pub(crate) const USER_RUN_SERVER_PROVIDERS: &[&str] = &["ollama", "custom"];
 /// Two ids no provider has a preset for. Whatever a provider resolves them to
 /// is, by construction, its guess for an id it does not know.
 const PROBE_IDS: [&str; 2] = ["zz-unknown-a", "zz-unknown-b"];
+/// The same for the GPT-6 family, which the openai arm sends to Responses
+/// with that wire's own guessed limits (#1060); elsewhere it equals the above.
+const GPT_6_PROBE_IDS: [&str; 2] = ["gpt-6-zz-unknown-a", "gpt-6-zz-unknown-b"];
 
 /// `true` when `model` on `provider` runs on that provider's guess (#1021,
 /// Day 238). Membership is provenance, not value (Day 224): the id resolves
@@ -47,8 +50,11 @@ pub(crate) fn runs_on_guessed_limits(provider: &str, model: &str) -> bool {
     {
         return false;
     }
-    let guess = limits(PROBE_IDS[0]);
-    guess == limits(PROBE_IDS[1]) && mine == guess
+    let is_guess = |[a, b]: [&str; 2]| {
+        let guess = limits(a);
+        guess == limits(b) && mine == guess
+    };
+    is_guess(PROBE_IDS) || is_guess(GPT_6_PROBE_IDS)
 }
 
 /// Bytes of a model id shown in [`unknown_model_limits_note`] before the cut.
@@ -229,15 +235,32 @@ mod tests {
         let (window, max) = base();
         // Premise, so a yoagent change to the base guess is noticed here.
         assert_eq!((window, max), (128_000, 4096), "base guess changed");
-        let out = note_for("openai", "gpt-6.9-test", true).expect("gpt-6.9-test must warn");
+        // #1060 (Day 270): was `gpt-6.9-test`, which now runs on the Responses
+        // guess (row below); a non-gpt-6 unknown id keeps the base guess.
+        let out = note_for("openai", "gpt-5.9-test", true).expect("gpt-5.9-test must warn");
         assert_eq!(
             out,
             format!(
-                "warning: no preset is known for openai model 'gpt-6.9-test', so yoyo is using \
+                "warning: no preset is known for openai model 'gpt-5.9-test', so yoyo is using \
 guessed limits: a {window}-token context window and max_tokens = {max}. Every reply (reasoning \
 included) is capped at {max} output tokens. If the model allows more, set max_tokens and \
 context_window in .yoyo.toml (or pass --max-tokens / --context-window)."
             )
+        );
+    }
+
+    /// #1060: an unknown gpt-6 id runs on Responses' guessed limits, read from
+    /// yoagent, and must still warn with those numbers.
+    #[test]
+    fn unknown_gpt_6_id_warns_with_the_responses_guess() {
+        let r = yoagent::provider::ModelConfig::openai_responses("x", "x");
+        let out = note_for("openai", "gpt-6.2-sol", true).expect("gpt-6.2-sol must warn");
+        assert!(
+            out.contains(&format!(
+                "a {}-token context window and max_tokens = {}.",
+                r.context_window, r.max_tokens
+            )),
+            "{out}"
         );
     }
 

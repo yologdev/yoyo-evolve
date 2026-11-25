@@ -121,6 +121,11 @@ pub fn known_models_for_provider(provider: &str) -> &'static [&'static str] {
             "claude-haiku-4-5-20251001",
         ],
         "openai" => &[
+            // #1060: named on OpenAI's "Using GPT-6.2" guide
+            // (developers.openai.com/api/docs/guides/latest-model); no yoagent
+            // preset yet, so limits are generic and `model_limits_note` warns.
+            "gpt-6.2-sol",
+            "gpt-6.2-astra",
             "gpt-5",
             "gpt-5-mini",
             "gpt-5.5",

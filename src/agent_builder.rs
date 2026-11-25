@@ -841,6 +841,13 @@ pub fn openai_preset(model: &str) -> Option<ModelConfig> {
     }
 }
 
+/// A `gpt-6…` id (case-insensitive, after any `vendor/` prefix): the family
+/// OpenAI documents as needing Responses for tool calling (#1060).
+fn is_gpt_6_family(model: &str) -> bool {
+    let id = model.rsplit('/').next().unwrap_or(model);
+    id.to_ascii_lowercase().starts_with("gpt-6")
+}
+
 /// `ModelConfig::preset` for the [`VENDOR_PRESET_PROVIDERS`] arms (#1021, #1037),
 /// EXACT `(provider, id)`: `gemini-3.8-flash-lite` must not get Flash's price
 /// (#1003), and a `grok-4.7` on OpenRouter is not xAI's endpoint.
@@ -986,6 +993,15 @@ pub fn create_model_config(provider: &str, model: &str, base_url: Option<&str>) 
                 config.cost = preset.cost;
                 config.reasoning = preset.reasoning;
                 config.api = preset.api;
+            } else if is_gpt_6_family(model) {
+                // #1060: a GPT-6 id with no preset (gpt-6.2-sol, Codex's
+                // default; future releases) still needs Responses: "tool
+                // calling requires Responses" (OpenAI, Using GPT-6.2). yoagent's
+                // `generic` picks the wire; gpt-5.x / o-series stay on Chat
+                // Completions until their docs are checked (#1060 row 1).
+                if let Some(generic) = ModelConfig::generic("openai", model) {
+                    config = generic;
+                }
             }
             if let Some(url) = base_url {
                 config.base_url = url.to_string();

@@ -97,6 +97,25 @@ fn openai_arm_takes_window_max_tokens_cost_reasoning_and_the_responses_wire() {
 fn near_misses_keep_the_bare_openai_config() {
     for id in NEAR_MISSES {
         assert!(openai_preset(id).is_none(), "{id} must not match a preset");
+        if id.to_ascii_lowercase().starts_with("gpt-6") {
+            // #1060 (Day 270): this loop used to expect Chat Completions for
+            // these too, which pinned the bug (no tool calls on gpt-6.2-sol).
+            // They still get no preset (the #1003 misbill guard above); the
+            // wire is now yoagent's `generic`, i.e. Responses.
+            let generic = ModelConfig::generic("openai", id).expect("openai is generic");
+            let got = create_model_config("openai", id, None);
+            assert_eq!(got.api, ApiProtocol::OpenAiResponses, "{id}");
+            assert_eq!(
+                (got.context_window, got.max_tokens, got.cost.is_some()),
+                (
+                    generic.context_window,
+                    generic.max_tokens,
+                    generic.cost.is_some()
+                ),
+                "{id}"
+            );
+            continue;
+        }
         let bare = ModelConfig::openai(*id, *id);
         let got = create_model_config("openai", id, None);
         assert_eq!(
