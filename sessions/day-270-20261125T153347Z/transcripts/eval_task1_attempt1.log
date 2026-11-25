@@ -1,0 +1,39 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "handle_doctor\|run_api_c… ✓ (36ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn '"doctor"' src/*tests*.rs… ✓ (138ms)
+  ▶ $ cd /tmp/dtest; Y=/home/runner/work/yoyo-evolve/yoyo-evolve/target/debug/yoyo; ls… ✓ (123ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "fn yoyo_plain_in" -A25 te… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "fn yoyo_cmd" -A20 tests/i… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; mkdir -p sessi… (9 lines) ✓ (16ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 29.1s (6 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_1.md.
+
+What the diff does:
+• Uses yoagent, as the task asked. doctor_api.rs builds the same model config a real run uses (via create_model_config) and sends one request through yoagent's provider. It sorts failures by yoagent's own error types, not by parsing strings, and the whole request is capped by a timeout.
+• Wired in the right place. The check is added in handle_doctor, not inside run_doctor_checks, so the existing unit tests of the pure checks make no network calls. Both callers were updated: the REPL in dispatch.rs and yoyo doctor in dispatch_sub.rs.
+• Size gate met. commands_dev.rs is now 1978 lines, under the 2000 cap.
+
+Running the binary:
+
+| Setup | API row |
+|---|---|
+| No key | ⚠ API: not tested: no API key (nothing sent) |
+| Fake key, --base-url http://127.0.0.1:9 | ✗ API: cannot reach 127.0.0.1:9 (connection refused); … |
+| --provider ollama | ✗ API: cannot reach localhost:11434 (connection refused); … |
+
+The two runs that sent a request printed the "Checking the API: sending one minimal request to <host>..." line first.
+
+Real-host risk: the integration tests that run yoyo doctor go through yoyo_cmd, which removes every *_API_KEY variable. So they get the no-key result and never contact a real vendor. The ollama test only touches localhost.
+
+Tests: all against a stub on 127.0.0.1. They cover 200, 401, 403, 404, 500, a closed port, a server that never answers, and a check that the key goes only in its header and only to the stub's host. Each asserts the full message text.
+
+Docs: commands.md and common-issues.md both describe the new API row, and the messages they quote match the code.
+
+Not checked: the recall control (step 4) and the post on #1242 happen during the session, so I couldn't confirm them from the diff.
+  watch: no files changed this turn — skipping
