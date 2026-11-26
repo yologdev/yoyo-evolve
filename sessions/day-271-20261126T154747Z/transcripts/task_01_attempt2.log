@@ -1,0 +1,47 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git log --oneline -3; git … ✓ (28ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+The task commit has its full body, and the before/after tables and control are already posted on #1202. What's left is the full gate. I'll run fmt and clippy first:
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; gh api repos/yologdev/yoyo-evolve… ✓ (3.3s)
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; cargo test 2>&1 | grep -E "^test … ✓ (5m 24s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; cargo test 2>&1 > /tmp/t.log; ech… ✓ (5m 21s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 11m 5s (3 ✓)
+
+My redirect order sent the noise to the terminal and the output got truncated. Rerunning with a clean capture:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; cargo test > /tmp/t.log 2>&1; ech… ✓ (5m 27s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd ~/work/yoyo-evolve/yoyo-evolve 2>/dev/null; git status --porcelain; grep -c N… ✓ (8ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 5m 56s (2 ✓)
+
+Step 2's first three clauses are in and pass the full check: tests passed (7727, 0 failed), clippy found no warnings, and the format check is clean. All of it is in commit 4c85a2ae, titled "Part of #1202"; the session before mine wrote it and was cut off before its final check, which I ran here.
+
+What changed for users: an allow rule now auto-approves a compound command only if it covers each command in it on its own. Anything else asks: redirections, substitutions, subshells, loops, or a command no rule covers.
+
+• Now asks (auto before): cargo test 2>&1 under cargo * 2>&1, and git status && ls under git * && ls. More generally, an allow pattern that spelled out a redirect, heredoc, substitution, subshell or chain no longer approves that shape.
+• Now auto (asked before): chains, pipelines and newline-separated runs of plain commands that are each covered, such as cargo build && cargo test under cargo *. The task file said that command "must stay auto", but it actually asked before this change, so this is a new approval.
+• Unchanged: session "always" approvals, --yes/-p runs, deny rules (still win), and step 1's "ask on an unreadable command". A command the safety check warns about is approved only if both the old whole-text rule and the new per-command rule approve it, so nothing it warns about becomes newly auto-approved.
+
+Record:
+• The commit body has the clause table, each newly asking or newly auto-approved command, and one limit: a command written with quotes, like git "status", asks under an exact git status rule.
+• The before-table and the after-table with the recall control were posted on #1202 before the full check (comments 7194056601 and 7194270169). Each comment names the deferral in its first 200 characters.
+• Recall control: forcing the new check to always approve turned 3 tests red by name; once restored, all 31 passed. No NEUTERED marker is left in the tree.
+• Docs: docs/src/configuration/permissions.md now says an allow rule must cover every command, lists the changes, and drops the two sentences that told users to spell the chain or redirect into the pattern.
+
+Still open: clause (d), making the /read and /plan guard judge writes from the parsed commands (#1192), is deferred and stated on #1202. It changes which commands /read allows, so it needs its own before/after table. This is part of step 2, not all of it.
+
+One thing to watch: src/tools.rs is now 41 lines over its recorded size (5327 vs 5286). The size check warns but doesn't fail, since that's within its 100-line grace.
+  watch: no files changed this turn — skipping
