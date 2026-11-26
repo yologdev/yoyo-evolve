@@ -66,7 +66,7 @@ All commands start with `/`. Type `/help` inside yoyo to see the full list.
 > `Checking the API: sending one minimal request to <host>...` and sends one tiny request
 > (a one-word prompt, no tools, a 16-token reply cap) to the provider, model, base URL and
 > key a real session would use, without retries, waiting at most 20 seconds. The verdicts:
-> `reached <host> as <model>` (Pass); `<host> rejected the API key (HTTP 401/403)`;
+> `reached <host> as <model>` (Pass); `<host> rejected the API key (HTTP 401/403, or a Google/xAI bad-key 400)`;
 > `<host> answered 404: model <model> not found, or the base URL is not the API's`;
 > `cannot reach <host> (connection refused / host name did not resolve / TLS handshake failed)`,
 > which for a local server such as ollama usually means it isn't running;

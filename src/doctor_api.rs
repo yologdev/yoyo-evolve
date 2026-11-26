@@ -140,6 +140,18 @@ fn one_line(text: &str) -> String {
     line
 }
 
+/// Whether an already-lowercased error body says the API key was rejected,
+/// for the vendors that answer a bad key with a 400 rather than a 401/403:
+/// Google (#1163) and xAI (#1165), bodies seen on the wire Day 254. yoagent
+/// classifies those as `Api`, not `Auth`. One predicate for both readers:
+/// the run path's `prompt_retry::diagnose_api_error_for` and this row (#1243).
+/// Never bare `400`/`invalid_argument`: those cover bad fields.
+pub(crate) fn body_says_key_rejected(lower: &str) -> bool {
+    lower.contains("api_key_invalid")
+        || lower.contains("api key not valid")
+        || lower.contains("incorrect api key")
+}
+
 fn with_status(status: Option<u16>) -> String {
     status.map(|s| format!(" (HTTP {s})")).unwrap_or_default()
 }
@@ -168,6 +180,13 @@ fn classify(
         Some(Err(e)) => e,
     };
     match err {
+        ProviderError::Api(text) if body_says_key_rejected(&text.to_lowercase()) => api_row(
+            Fail,
+            format!(
+                "{host} rejected the API key{}",
+                with_status(status_in(&text))
+            ),
+        ),
         ProviderError::Auth(text) => api_row(
             Fail,
             format!(
@@ -246,6 +265,15 @@ mod tests {
     /// gets a valid Anthropic stream) and records each request's head.
     /// `silent` accepts and never answers.
     async fn stub(status: u16, silent: bool) -> (String, Arc<Mutex<Vec<String>>>) {
+        stub_with(status, silent, None).await
+    }
+
+    /// `stub`, answering a non-200 with `body` (JSON) instead of its own.
+    async fn stub_with(
+        status: u16,
+        silent: bool,
+        body: Option<String>,
+    ) -> (String, Arc<Mutex<Vec<String>>>) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let seen = Arc::new(Mutex::new(Vec::new()));
@@ -264,6 +292,8 @@ mod tests {
                 }
                 let (ctype, body) = if status == 200 {
                     ("text/event-stream", sse_ok())
+                } else if let Some(b) = &body {
+                    ("application/json", b.clone())
                 } else {
                     (
                         "application/json",
@@ -338,6 +368,57 @@ mod tests {
             )
         );
         assert_eq!(status, DoctorStatus::Fail);
+    }
+
+    /// The row for `provider`/`model` when the stub answers 400 with the
+    /// body of `wire`: yoagent's error text as the run path's tests pin it
+    /// (src/prompt_retry_auth_tests.rs), minus yoagent's own `... 400 Bad
+    /// Request: ` head, which the provider re-adds.
+    async fn row_for_bad_key_400(provider: &str, model: &str, wire: &str) -> (DoctorCheck, String) {
+        let body = wire.split_once(": ").expect("yoagent head").1.to_string();
+        let (url, seen) = stub_with(400, false, Some(body)).await;
+        let config = crate::agent_builder::create_model_config(provider, model, Some(&url));
+        let row = check_api(config, KEY, Duration::from_secs(10)).await;
+        assert_eq!(seen.lock().unwrap().len(), 1, "one request to the stub");
+        (row, api_host(&url))
+    }
+
+    #[tokio::test]
+    async fn a_google_bad_key_400_says_the_key_was_rejected() {
+        use crate::prompt_retry::prompt_retry_auth_tests::GOOGLE_BAD_KEY;
+        let (row, host) = row_for_bad_key_400("google", "gemini-2.5-flash", GOOGLE_BAD_KEY).await;
+        assert_eq!(
+            row.detail,
+            format!("{host} rejected the API key (HTTP 400)")
+        );
+        assert_eq!(row.status, DoctorStatus::Fail);
+    }
+
+    #[tokio::test]
+    async fn an_xai_bad_key_400_says_the_key_was_rejected() {
+        use crate::prompt_retry::prompt_retry_auth_tests::XAI_BAD_KEY;
+        let (row, host) = row_for_bad_key_400("xai", "grok-4", XAI_BAD_KEY).await;
+        assert_eq!(
+            row.detail,
+            format!("{host} rejected the API key (HTTP 400)")
+        );
+        assert_eq!(row.status, DoctorStatus::Fail);
+    }
+
+    #[tokio::test]
+    async fn a_google_400_about_another_field_still_answers_with_an_error() {
+        // Near miss: same status, same INVALID_ARGUMENT, a bad field, not a bad key.
+        let wire = r#"Google API error 400 Bad Request: {"error":{"code":400,"message":"Invalid value at 'generation_config.max_output_tokens'","status":"INVALID_ARGUMENT"}}"#;
+        let (row, host) = row_for_bad_key_400("google", "gemini-2.5-flash", wire).await;
+        assert_eq!(
+            row.detail,
+            format!(
+                "{host} answered with an error (HTTP 400): Google API error 400 Bad Request: \
+                 {{\"error\":{{\"code\":400,\"message\":\"Invalid value at \
+                 'generation_config.max_output_tokens'\",\"status\":\"INVALID_ARGUMENT\"}}}}"
+            )
+        );
+        assert_eq!(row.status, DoctorStatus::Fail);
     }
 
     #[tokio::test]

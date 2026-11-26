@@ -108,7 +108,7 @@ fn generic_fallback_without_provider_vars_does_not_invent_a_right_one() {
 /// Wrapped the way yoagent 0.27.5's google provider builds it
 /// (`"Google API error {status}: {body}"`, classified as `Api`, not `Auth`,
 /// because yoagent's classifier maps only 401/403 to `Auth`).
-const GOOGLE_BAD_KEY: &str = r#"Google API error 400 Bad Request: {
+pub(crate) const GOOGLE_BAD_KEY: &str = r#"Google API error 400 Bad Request: {
   "error": {
     "code": 400,
     "message": "API key not valid. Please pass a valid API key.",
@@ -205,7 +205,7 @@ fn google_cross_provider_fallback_names_both_unset_google_vars() {
 /// xAI's real reply to a bad key, captured from the built binary on Day 254
 /// (`yoyo --provider xai` with a junk key): a 400, not a 401, and its
 /// `invalid-argument` code is the same one xAI uses for any bad field (#1165).
-const XAI_BAD_KEY: &str = r#"HTTP 400 Bad Request: {"code":"invalid-argument","error":"Incorrect API key provided. You can obtain an API key from https://console.x.ai."}"#;
+pub(crate) const XAI_BAD_KEY: &str = r#"HTTP 400 Bad Request: {"code":"invalid-argument","error":"Incorrect API key provided. You can obtain an API key from https://console.x.ai."}"#;
 
 #[test]
 fn xai_400_incorrect_api_key_reaches_the_auth_hint() {

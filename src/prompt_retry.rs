@@ -564,7 +564,7 @@ pub fn auth_failure_message(provider: &str, env_var: &str, source: &KeySource) -
 
 #[cfg(test)]
 #[path = "prompt_retry_auth_tests.rs"]
-mod prompt_retry_auth_tests;
+pub(crate) mod prompt_retry_auth_tests;
 #[cfg(test)]
 #[path = "prompt_retry_dns_tests.rs"]
 mod prompt_retry_dns_tests;
@@ -595,11 +595,8 @@ pub(crate) fn diagnose_api_error_for(error: &str, model: &str, oneshot: bool) ->
         || lower.contains("invalid api key")
         || lower.contains("invalid_api_key")
         || lower.contains("authentication")
-        // Google (#1163) and xAI (#1165) reject a bad key with a 400, not 401 (bodies
-        // seen on the wire). Never bare `400`/`invalid_argument`: those cover bad fields.
-        || lower.contains("api_key_invalid")
-        || lower.contains("api key not valid")
-        || lower.contains("incorrect api key")
+        // Google (#1163) and xAI (#1165) bad-key 400s; shared with /doctor (#1243).
+        || crate::doctor_api::body_says_key_rejected(&lower)
     {
         let env_var = crate::cli::provider_api_key_env(&provider).unwrap_or("API_KEY");
         // The source cli.rs recorded when it resolved the key (#1062); with none
