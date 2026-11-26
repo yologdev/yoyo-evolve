@@ -89,3 +89,95 @@ fn run_usage_repl_is_byte_identical_and_shell_drops_the_bang_form() {
         "usage: yoyo run <command>"
     );
 }
+
+// ── #1244: `yoyo doctor`'s exit code and the rows that can fail it ──
+
+use crate::commands_dev::{api_key_check, doctor_exit_code, DoctorCheck};
+
+fn row(status: DoctorStatus) -> DoctorCheck {
+    DoctorCheck {
+        name: "x".into(),
+        status,
+        detail: String::new(),
+    }
+}
+
+#[test]
+fn doctor_exits_0_when_every_row_passed() {
+    assert_eq!(
+        doctor_exit_code(&[row(DoctorStatus::Pass), row(DoctorStatus::Pass)]),
+        0
+    );
+}
+
+#[test]
+fn doctor_exits_0_when_rows_only_warn() {
+    let checks = [row(DoctorStatus::Pass), row(DoctorStatus::Warn)];
+    assert_eq!(
+        doctor_exit_code(&checks),
+        0,
+        "a warning must not fail a CI script"
+    );
+}
+
+#[test]
+fn doctor_exits_1_when_any_row_failed() {
+    let checks = [
+        row(DoctorStatus::Pass),
+        row(DoctorStatus::Warn),
+        row(DoctorStatus::Fail),
+    ];
+    assert_eq!(doctor_exit_code(&checks), 1);
+}
+
+/// Census row 2 on #1244: the key a run would use, not one variable's name.
+#[test]
+fn api_key_row_reads_the_key_a_run_would_use() {
+    use DoctorStatus::*;
+    let none = |_: &str| None;
+    let gemini = |v: &str| (v == "GEMINI_API_KEY").then(|| "k".to_string());
+    let empty = |_: &str| Some(String::new());
+    type Env<'a> = &'a dyn Fn(&str) -> Option<String>;
+    let cases: &[(&str, bool, Env, DoctorStatus, &str)] = &[
+        ("google", false, &gemini, Pass, "set (GEMINI_API_KEY)"),
+        (
+            "google",
+            false,
+            &none,
+            Fail,
+            "GEMINI_API_KEY or GOOGLE_API_KEY not set",
+        ),
+        ("anthropic", false, &none, Fail, "ANTHROPIC_API_KEY not set"),
+        (
+            "anthropic",
+            false,
+            &empty,
+            Fail,
+            "ANTHROPIC_API_KEY not set",
+        ),
+        (
+            "anthropic",
+            true,
+            &none,
+            Pass,
+            "set (from --api-key, API_KEY or the config file)",
+        ),
+        ("ollama", false, &none, Pass, "not required (ollama)"),
+        (
+            "custom",
+            false,
+            &none,
+            Warn,
+            "unknown env var for provider 'custom'",
+        ),
+    ];
+    for (provider, resolved, env, status, detail) in cases {
+        let got = api_key_check(provider, *resolved, env);
+        assert_eq!(got.name, "API key");
+        assert_eq!(
+            (&got.status, got.detail.as_str()),
+            (status, *detail),
+            "{provider} {resolved}"
+        );
+    }
+}

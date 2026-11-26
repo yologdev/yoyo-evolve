@@ -57,6 +57,7 @@ pub fn run_doctor_checks(
     model: &str,
     restrictions: &crate::config::DirectoryRestrictions,
     surface: DoctorSurface,
+    resolved_key: bool,
 ) -> Vec<DoctorCheck> {
     let mut checks = Vec::new();
 
@@ -80,7 +81,7 @@ pub fn run_doctor_checks(
         _ => {
             checks.push(DoctorCheck {
                 name: "Git".to_string(),
-                status: DoctorStatus::Fail,
+                status: DoctorStatus::Warn, // optional for yoyo (#1244)
                 detail: "not found".to_string(),
             });
         }
@@ -112,41 +113,10 @@ pub fn run_doctor_checks(
         detail: provider.to_string(),
     });
 
-    // 5. API key
-    let env_var = cli::provider_api_key_env(provider);
-    match env_var {
-        Some(var_name) => {
-            if std::env::var(var_name).is_ok() {
-                checks.push(DoctorCheck {
-                    name: "API key".to_string(),
-                    status: DoctorStatus::Pass,
-                    detail: format!("set ({var_name})"),
-                });
-            } else {
-                checks.push(DoctorCheck {
-                    name: "API key".to_string(),
-                    status: DoctorStatus::Fail,
-                    detail: format!("{var_name} not set"),
-                });
-            }
-        }
-        None => {
-            // Unknown provider — can't check env var
-            if provider == "ollama" {
-                checks.push(DoctorCheck {
-                    name: "API key".to_string(),
-                    status: DoctorStatus::Pass,
-                    detail: "not required (ollama)".to_string(),
-                });
-            } else {
-                checks.push(DoctorCheck {
-                    name: "API key".to_string(),
-                    status: DoctorStatus::Warn,
-                    detail: format!("unknown env var for provider '{provider}'"),
-                });
-            }
-        }
-    }
+    // 5. API key: the key a run would use (#1244), not one variable's name.
+    checks.push(api_key_check(provider, resolved_key, |v| {
+        std::env::var(v).ok()
+    }));
 
     // 6. Model
     checks.push(DoctorCheck {
@@ -256,6 +226,37 @@ pub fn run_doctor_checks(
     });
 
     checks
+}
+
+/// The API-key row (#1244): Pass when one of the provider's own variables is
+/// set, or when `resolved_key` says the run would find a key elsewhere
+/// (`--api-key`, `API_KEY`, the config file). Fail only when there is none.
+pub(crate) fn api_key_check(
+    provider: &str,
+    resolved_key: bool,
+    env: impl Fn(&str) -> Option<String>,
+) -> DoctorCheck {
+    let row = |status, detail: String| DoctorCheck {
+        name: "API key".into(),
+        status,
+        detail,
+    };
+    let vars = crate::providers::provider_api_key_vars(provider);
+    if let Some(var) = vars.iter().find(|v| env(v).is_some_and(|k| !k.is_empty())) {
+        return row(DoctorStatus::Pass, format!("set ({var})"));
+    }
+    if resolved_key {
+        let from = "set (from --api-key, API_KEY or the config file)";
+        return row(DoctorStatus::Pass, from.into());
+    }
+    match (provider, vars.is_empty()) {
+        ("ollama", _) => row(DoctorStatus::Pass, "not required (ollama)".into()),
+        (_, true) => row(
+            DoctorStatus::Warn,
+            format!("unknown env var for provider '{provider}'"),
+        ),
+        (_, false) => row(DoctorStatus::Fail, format!("{} not set", vars.join(" or "))),
+    }
 }
 
 /// The project-context row (#1045): a file the directory fence refuses is
@@ -461,9 +462,11 @@ pub fn toolchain_checks_for_project(project_type: &ProjectType) -> Vec<DoctorChe
                     },
                 }
             }
+            // Warn, not Fail (#1244): a guess from a marker file (`./gradlew`,
+            // Ninja), and `yoyo health` already exits 1 on a real build failure.
             _ => DoctorCheck {
                 name: name.to_string(),
-                status: DoctorStatus::Fail,
+                status: DoctorStatus::Warn,
                 detail: "not found".to_string(),
             },
         }
@@ -503,7 +506,7 @@ pub fn toolchain_checks_for_project(project_type: &ProjectType) -> Vec<DoctorChe
             checks.push(check_tool("Make", "make", &["--version"]));
             // Try cc first, fall back to g++
             let cc = check_tool("C compiler", "cc", &["--version"]);
-            if cc.status == DoctorStatus::Fail {
+            if cc.status != DoctorStatus::Pass {
                 checks.push(check_tool("C++ compiler", "g++", &["--version"]));
             } else {
                 checks.push(cc);
@@ -604,8 +607,14 @@ pub fn handle_doctor(
     restrictions: &crate::config::DirectoryRestrictions,
     surface: DoctorSurface,
     api: &crate::doctor_api::ApiTarget,
-) {
-    let mut checks = run_doctor_checks(provider, model, restrictions, surface);
+) -> i32 {
+    let mut checks = run_doctor_checks(
+        provider,
+        model,
+        restrictions,
+        surface,
+        !api.api_key.is_empty(),
+    );
     // #1242: the one row that touches the network, kept out of the pure checks.
     checks.push(crate::doctor_api::run_api_check(api));
     print_doctor_report(&checks);
@@ -614,6 +623,13 @@ pub fn handle_doctor(
     // fix when one exists. Interactive-only
     // (TTY-gated) so piped/harness mode stays report-only and never blocks.
     maybe_offer_fix(&checks);
+    doctor_exit_code(&checks)
+}
+
+/// Exit status for `yoyo doctor` (#1244): 1 when any row failed (✗), 0 when
+/// every row passed or only warned, so `yoyo doctor && ...` can fail a script.
+pub(crate) fn doctor_exit_code(checks: &[DoctorCheck]) -> i32 {
+    i32::from(checks.iter().any(|c| c.status == DoctorStatus::Fail))
 }
 
 /// A concrete, safe fix action `/doctor` can offer to run for the user.
@@ -1247,6 +1263,7 @@ mod tests {
             "test-model",
             &Default::default(),
             DoctorSurface::Repl,
+            false,
         );
         assert!(
             checks.iter().any(|c| c.name == "RTK"),
@@ -1579,6 +1596,7 @@ mod tests {
             "test-model",
             &Default::default(),
             DoctorSurface::Repl,
+            false,
         );
         // Should always have Version, Git, Git repo, Provider, API key, Model at minimum
         let names: Vec<&str> = checks.iter().map(|c| c.name.as_str()).collect();

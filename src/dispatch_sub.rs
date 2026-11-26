@@ -491,7 +491,9 @@ pub(crate) fn try_dispatch_subcommand_in(
                     provider: provider.clone(),
                     model: model.clone(),
                 };
-                crate::commands_dev::handle_doctor(&provider, &model, &fence, shell, &api);
+                exit_if_nonzero(crate::commands_dev::handle_doctor(
+                    &provider, &model, &fence, shell, &api,
+                )); // #1244
                 return Some(None);
             }
             "health" => {

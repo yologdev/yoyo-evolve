@@ -4138,15 +4138,21 @@ fn init_doctor_update_and_help_refuse_what_they_do_not_accept() {
     let (code, stdout, stderr) = yoyo_plain_in(dir.path(), &["help", "status"]);
     assert_eq!(code, Some(0), "help status: stderr={stderr}");
     assert!(stdout.contains("/status"), "help status: {stdout}");
-    // Near-misses: bare help and doctor (and doctor's flags) still exit 0 —
-    // measured, both 0 before this change — and bare init still writes.
-    for args in [
-        &["help"][..],
-        &["doctor"][..],
-        &["doctor", "--provider", "ollama", "--model", "m"][..],
+    // Near-misses: bare help and doctor (and doctor's flags) are not refused,
+    // and bare init still writes. Help exits 0; doctor runs its report and,
+    // since #1244, exits 1 here because a row fails: no key for anthropic
+    // (yoyo_cmd scrubs them), and no ollama server for the second row.
+    for (args, want) in [
+        (&["help"][..], 0),
+        (&["doctor"][..], 1),
+        (&["doctor", "--provider", "ollama", "--model", "m"][..], 1),
     ] {
         let (code, stdout, stderr) = yoyo_plain_in(dir.path(), args);
-        assert_eq!(code, Some(0), "{args:?}: stdout={stdout} stderr={stderr}");
+        assert_eq!(
+            code,
+            Some(want),
+            "{args:?}: stdout={stdout} stderr={stderr}"
+        );
         assert!(!stdout.is_empty(), "{args:?} printed nothing on stdout");
     }
     let (code, _, stderr) = yoyo_plain_in(dir.path(), &["init"]);
@@ -4164,7 +4170,8 @@ fn shell_doctor_rows_advise_commands_the_shell_can_run() {
     // WIRING: the shell arm passes the Shell surface to the row builders.
     let dir = tempfile::tempdir().expect("tempdir");
     let (code, stdout, stderr) = yoyo_plain_in(dir.path(), &["doctor"]);
-    assert_eq!(code, Some(0), "stdout={stdout} stderr={stderr}");
+    // #1244: 1, because the scrubbed env has no API key (a ✗ row).
+    assert_eq!(code, Some(1), "stdout={stdout} stderr={stderr}");
     assert!(
         stdout.contains("no context file (create YOYO.md or run yoyo init)"),
         "{stdout}"
@@ -4188,7 +4195,8 @@ fn shell_doctor_names_an_instruction_file_the_config_fence_refuses() {
     let toml = format!("[directories]\ndeny = [\"{}\"]\n", root.display());
     std::fs::write(root.join(".yoyo.toml"), toml).unwrap();
     let (code, stdout, stderr) = yoyo_plain_in(&root, &["doctor"]);
-    assert_eq!(code, Some(0), "stdout={stdout} stderr={stderr}");
+    // #1244: 1, because the scrubbed env has no API key (a ✗ row).
+    assert_eq!(code, Some(1), "stdout={stdout} stderr={stderr}");
     assert!(
         stdout.contains("CLAUDE.md (refused by the directory fence:"),
         "{stdout}"
@@ -4201,7 +4209,7 @@ fn shell_doctor_names_an_instruction_file_the_config_fence_refuses() {
     // The `--deny-dir` flag builds the same fence as the config.
     let flag = root.display().to_string();
     let (code, stdout, _) = yoyo_plain_in(&root, &["doctor", "--deny-dir", &flag]);
-    assert_eq!(code, Some(0), "{stdout}");
+    assert_eq!(code, Some(1), "{stdout}"); // #1244: no API key, a ✗ row
     assert!(
         stdout.contains("CLAUDE.md (refused by the directory fence:"),
         "{stdout}"
@@ -5030,5 +5038,7 @@ fn subcommand_first_still_dispatches() {
         !err.contains("prompt mode") && !err.contains("is a subcommand"),
         "{err}"
     );
-    assert_eq!(code, Some(0), "doctor exit; stderr:\n{err}");
+    // #1244: the report ran and its API row failed against the closed port
+    // run_until_prompt_banner passes, so 1; a refusal would be 2.
+    assert_eq!(code, Some(1), "doctor exit; stderr:\n{err}");
 }
