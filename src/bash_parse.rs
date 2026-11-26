@@ -268,6 +268,17 @@ pub(crate) fn is_single_word_only_command(cmd: &str) -> bool {
 /// `literal_words: false` is the pattern side of the wildcard rule: an allow
 /// pattern is full of `*` by design, so only its structure is read.
 fn word_only(cmd: &str, literal_words: bool) -> bool {
+    matches!(word_only_shape(cmd, literal_words, false), Ok(1))
+}
+
+/// The walk behind [`word_only`] and [`tree_allow`]: `Ok(n)` with the number
+/// of `command` nodes when every node is word-only, else why not, in user
+/// terms. `sequence: false` is one plain command (a single top-level node,
+/// no operator); `sequence: true` is Codex's whole contract
+/// (`try_parse_word_only_commands_sequence`): also `list` and `pipeline`
+/// nodes and the `&&` `||` `;` `|` operators, plus whitespace tokens (a
+/// newline between commands).
+fn word_only_shape(cmd: &str, literal_words: bool, sequence: bool) -> Result<usize, String> {
     const WORD_ONLY: &[&str] = &[
         "program",
         "command",
@@ -279,37 +290,44 @@ fn word_only(cmd: &str, literal_words: bool) -> bool {
         "concatenation",
         "number",
     ];
+    const SEQUENCE_KINDS: &[&str] = &["list", "pipeline"];
+    const SEQUENCE_TOKENS: &[&str] = &["&&", "||", ";", "|", "'"];
+    let unreadable = || "yoyo cannot parse it".to_string();
     let mut parser = tree_sitter::Parser::new();
     let language: tree_sitter::Language = tree_sitter_bash::LANGUAGE.into();
-    if parser.set_language(&language).is_err() {
-        return false;
-    }
-    let Some(tree) = parser.parse(cmd, None) else {
-        return false;
-    };
+    parser.set_language(&language).map_err(|_| unreadable())?;
+    let tree = parser.parse(cmd, None).ok_or_else(unreadable)?;
     let root = tree.root_node();
-    if root.has_error() || root.named_child_count() != 1 {
-        return false;
+    if root.has_error() {
+        return Err(unreadable());
+    }
+    if !sequence && root.named_child_count() != 1 {
+        return Err("it is more than one command".to_string());
     }
     let mut commands = 0;
     let mut cursor = root.walk();
     loop {
         let node = cursor.node();
         if node.is_missing() || node.is_error() {
-            return false;
+            return Err(unreadable());
         }
+        let kind = node.kind();
         if node.is_named() {
-            if !WORD_ONLY.contains(&node.kind()) {
-                return false;
+            if !WORD_ONLY.contains(&kind) && !(sequence && SEQUENCE_KINDS.contains(&kind)) {
+                return Err(shape_reason(kind));
             }
-            commands += usize::from(node.kind() == "command");
+            commands += usize::from(kind == "command");
             let is_word = node.parent().is_some_and(|p| p.kind() == "command");
             if literal_words && is_word && word_is_dynamic(node.utf8_text(cmd.as_bytes())) {
-                return false;
+                return Err("it has a word bash rewrites before running it (a glob, \
+                            brace list, backslash or `~`)"
+                    .to_string());
             }
-        } else if node.kind() != "\"" {
+        } else if kind != "\""
+            && !(sequence && (SEQUENCE_TOKENS.contains(&kind) || kind.trim().is_empty()))
+        {
             // The only anonymous token a plain command has is a string's quote.
-            return false;
+            return Err(shape_reason(kind));
         }
         if cursor.goto_first_child() {
             continue;
@@ -319,10 +337,50 @@ fn word_only(cmd: &str, literal_words: bool) -> bool {
                 break;
             }
             if !cursor.goto_parent() {
-                return commands == 1;
+                return Ok(commands);
             }
         }
     }
+}
+
+/// Why a node kind outside the word-only set sends a command to the prompt.
+fn shape_reason(kind: &str) -> String {
+    let what = match kind {
+        "file_redirect"
+        | "heredoc_redirect"
+        | "herestring_redirect"
+        | "redirected_statement"
+        | ">"
+        | ">>"
+        | "<"
+        | "&>"
+        | "&>>"
+        | ">&"
+        | "<&"
+        | "<<"
+        | "<<-"
+        | "<<<"
+        | ">|" => "a redirection",
+        "command_substitution" | "process_substitution" | "$(" | "`" | "<(" | ">(" => {
+            "a command substitution"
+        }
+        "subshell" | "compound_statement" | "(" | ")" | "{" | "}" => "a subshell or group",
+        "for_statement"
+        | "c_style_for_statement"
+        | "while_statement"
+        | "if_statement"
+        | "case_statement"
+        | "function_definition"
+        | "test_command"
+        | "negated_command" => "control flow",
+        "variable_assignment" | "variable_assignments" => "a variable assignment",
+        "simple_expansion" | "expansion" | "arithmetic_expansion" | "$" => "a variable expansion",
+        "&" => "a background `&`",
+        "comment" => "a comment",
+        "ansi_c_string" | "translated_string" => "a `$'…'` string",
+        _ => return format!("it contains `{kind}`, which yoyo does not treat as plain words"),
+    };
+    format!("it contains {what}")
 }
 
 #[cfg(test)]
@@ -529,6 +587,75 @@ pub(crate) fn pre_prompt_route(always: bool, allow: Option<bool>, unanalyzable: 
         _ if unanalyzable => PrePrompt::Ask,
         (_, true) | (Some(true), _) => PrePrompt::Approve,
         (None, false) => PrePrompt::Ask,
+    }
+}
+
+/// #1202 step 2: what the allow rules make of a command read as a tree.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum TreeAllow {
+    /// Every simple command is covered and the tree is word-only: run unasked.
+    Allowed,
+    /// An allow rule covers part of it, but not enough: ask, saying why.
+    Ask(String),
+    /// No allow rule covers any of it: the ordinary prompt.
+    NotCovered,
+}
+
+/// Owner's step 2: an allow rule auto-approves only when **every** simple
+/// command the tree extracts satisfies `allowed` and the whole tree is
+/// word-only in Codex's sense (`try_parse_word_only_commands_sequence`: plain
+/// words joined by `&&` `||` `;` `|` or newlines, so no redirect,
+/// substitution, expansion, assignment, subshell or control flow). Anything
+/// else asks. `allowed` gets each command's source text, the spelling the
+/// user's patterns are written in; a word-only tree has no word bash rewrites
+/// (`word_is_dynamic`), so that text is what runs, less its quotes.
+pub(crate) fn tree_allow(cmd: &str, allowed: &dyn Fn(&str) -> bool) -> TreeAllow {
+    let mut uncovered = None;
+    let mut covered_any = false;
+    let _ = walk_nodes(cmd, &["command"], &mut |text, _| {
+        if allowed(text) {
+            covered_any = true;
+        } else if uncovered.is_none() {
+            uncovered = Some(text.replace('\n', " "));
+        }
+    });
+    let shape = word_only_shape(cmd, true, true);
+    match (shape, uncovered) {
+        (Ok(n), None) if n > 0 => TreeAllow::Allowed,
+        _ if !covered_any => TreeAllow::NotCovered,
+        (Err(why), _) => TreeAllow::Ask(why),
+        (Ok(_), Some(text)) => {
+            let shown = crate::format::truncate_with_ellipsis(&text, 60);
+            TreeAllow::Ask(format!("`{shown}` is not covered by an allow rule"))
+        }
+        (Ok(_), None) => TreeAllow::NotCovered, // no command at all
+    }
+}
+
+/// The confirm closure's allow verdict under step 2, and the reason to print
+/// when an allow rule matched but the command still asks. `cmd` is the text
+/// the closure got, `inner` its command (`warned_command`), `check` the allow
+/// list's verdict on a text. Deny wins. A command the safety analysis warned
+/// about is approved only if the old whole-text rule already approved it AND
+/// the tree does: step 2 never approves a warned command it did not before.
+pub(crate) fn tree_allow_verdict(
+    cmd: &str,
+    inner: &str,
+    check: &dyn Fn(&str) -> Option<bool>,
+) -> (Option<bool>, Option<String>) {
+    let whole = check(cmd);
+    if whole == Some(false) {
+        return (whole, None);
+    }
+    let warned = inner.len() != cmd.len();
+    match tree_allow(inner, &|unit| check(unit) == Some(true)) {
+        TreeAllow::Allowed if !warned || whole == Some(true) => (Some(true), None),
+        TreeAllow::Ask(why) => (None, Some(why)),
+        _ if whole == Some(true) => (
+            None,
+            Some("an allow rule matches the whole text, but not each command in it".into()),
+        ),
+        _ => (None, None),
     }
 }
 

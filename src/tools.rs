@@ -1276,9 +1276,11 @@ pub(crate) fn build_bash_tool(
     base_bash.with_confirm(move |cmd: &str| {
             // "always", then the allow list, approve without asking, except a
             // command yoyo cannot read (#1202 step 1: fails closed to a prompt).
-            use crate::bash_parse::{pre_prompt_route, unanalyzable_reason, PrePrompt};
+            // #1202 step 2: an allow rule approves only a word-only tree whose
+            // every command it covers (`tree_allow_verdict`).
+            use crate::bash_parse::{pre_prompt_route, tree_allow_verdict, unanalyzable_reason, PrePrompt};
             let always = flag.load(Ordering::Relaxed);
-            let allow = perms.check(cmd);
+            let (allow, tree_ask) = tree_allow_verdict(cmd, warned_command(cmd), &|c| perms.check(c));
             let unreadable = unanalyzable_reason(warned_command(cmd));
             match pre_prompt_route(always, allow, unreadable.is_some()) {
                 PrePrompt::Approve => {
@@ -1294,10 +1296,14 @@ pub(crate) fn build_bash_tool(
                 }
                 PrePrompt::Ask => {}
             }
+            let unread = unreadable.is_some();
             if let Some(reason) = unreadable.filter(|r| !cmd.contains(r.as_str())) {
                 eprintln!("{YELLOW}  ⚠ {reason}{RESET}");
             }
-            if always || allow == Some(true) {
+            if let Some(why) = tree_ask.as_ref().filter(|_| !unread) {
+                eprintln!("{YELLOW}  ⚠ Asking: {why}{RESET}");
+            }
+            if always || allow == Some(true) || tree_ask.is_some() {
                 eprintln!("{DIM}  (asking even though \"always\" or an allow rule matched){RESET}");
             }
             use std::io::BufRead;

