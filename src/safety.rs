@@ -106,7 +106,13 @@ pub(crate) const COMMAND_SEPARATORS: &[&str] = &[";", "&&", "||", "|"];
 
 /// Analyze a bash command for potentially dangerous patterns.
 /// Returns `Some(reason)` if the command looks destructive.
+/// #1229: judged against the process's working folder; [`analyze_bash_command_in`] takes it.
 pub fn analyze_bash_command(command: &str) -> Option<String> {
+    analyze_bash_command_in(command, std::env::current_dir().ok().as_deref())
+}
+
+/// [`analyze_bash_command`] for a command that runs in `cwd` (`None`: unknown).
+pub fn analyze_bash_command_in(command: &str, cwd: Option<&std::path::Path>) -> Option<String> {
     let cmd = command.trim();
     let check = |c: &str| {
         let lower = c.to_lowercase();
@@ -126,6 +132,7 @@ pub fn analyze_bash_command(command: &str) -> Option<String> {
         // included. Only adds refusals; a parse issue keeps the text checks.
         // #1205: and each unit re-spelt as the argv bash runs.
         .or_else(|| crate::bash_parse::tree_refusal(cmd, &check))
+        .or_else(|| safety_rm_parent::rm_targets_cwd_or_ancestor(cmd, cwd?)) // #1229
 }
 
 /// Check if a character position is at a word boundary (start of a command/token).

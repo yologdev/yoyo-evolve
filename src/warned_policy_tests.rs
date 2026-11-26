@@ -142,3 +142,23 @@ fn a_child_refuses_with_the_parents_text() {
     assert_eq!(child_unattended_refusal(false, WARNED), None);
     assert_eq!(child_unattended_refusal(true, "touch OK"), None);
 }
+
+/// #1229: the working folder is the one the bash tool runs in (its pinned
+/// `with_cwd`, as spawn workers set it), not the process's. If this ever fails
+/// the command runs, and what it deletes is a folder inside this temp dir.
+#[tokio::test]
+async fn the_pinned_working_folder_by_its_absolute_path_is_refused_unattended() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let proj = std::fs::canonicalize(dir.path()).unwrap().join("proj");
+    std::fs::create_dir(&proj).unwrap();
+    let cmd = format!("rm -rf {}", proj.display());
+    let err = run(&bash_in(&proj, true), &cmd).await.expect_err("refused");
+    assert!(
+        err.contains(&format!(
+            "recursive delete targeting the working folder '{}'",
+            proj.display()
+        )),
+        "{err}"
+    );
+    assert!(proj.exists(), "the refused delete ran");
+}

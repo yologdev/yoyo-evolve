@@ -170,10 +170,18 @@ BusyBox `rm` refuse an operand ending in `..` themselves, but they do run
 `../*`, which deletes the working folder along with its siblings. The
 path is read as text, not resolved on disk (a symlinked `build` is taken
 at face value), and a real name left after the `..`s (`../sibling`,
-`build/../dist`, `../*.log`) doesn't ask. One limit: the working folder
-spelled as its absolute path (`rm -rf /home/me/proj` run from that
-folder) is not recognised, because the check doesn't know the working
-folder (#1229).
+`build/../dist`, `../*.log`) doesn't ask. Since Day 271 the working
+folder spelled as its **absolute path** asks too: run from
+`/home/me/proj`, `rm -rf /home/me/proj` (or `/home/me/proj/`,
+`/home/me/proj/*`) asks as the working folder, and `rm -rf /home/me` asks
+as a folder holding it. Paths are compared part by part, so
+`rm -rf /home/me/proj/target`, `/home/me/other` and `/home/me/proj-old`
+don't ask. A symlink on the way is followed (`rm -rf /tmp/link/` with
+`link -> /home/me/proj` asks), but a bare `rm -rf /tmp/link` doesn't,
+because that removes the link and not the folder. The working folder is
+the one the command runs in (a `/spawn` worker's own folder for its
+commands), not one a `cd` earlier in the same command moves to:
+`cd /x && rm -rf /home/me/proj` still asks.
 Since Day 269 `..` is resolved the same way on **absolute and home
 paths** (`~`, `$HOME`, `${HOME}`): `rm -rf /tmp/../*` is `rm -rf /*` and
 is hard-blocked like it, `rm -rf /tmp/..` is `/`, `rm -rf ~/x/..` is

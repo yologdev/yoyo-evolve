@@ -55,8 +55,8 @@ const ROWS: &[(&str, Option<(&str, &str)>)] = &[
     ("rm -f /home/me/notes.txt", None), // not recursive
     ("rm -rf build && cd /app", None),  // `/app` belongs to `cd`
     ("rm -rf build > /out.log", None),  // a redirect target, not an rm target
-    // The cwd spelt as an absolute path needs the cwd, which this check
-    // does not take (#1229).
+    // Not the test process's working folder, so not judged as one; the
+    // absolute-path working-folder rows live in safety_rm_parent.rs (#1229).
     ("rm -rf /home/me/proj", None),
 ];
 

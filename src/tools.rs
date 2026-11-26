@@ -18,7 +18,7 @@ use crate::commands_todo;
 use crate::commands_web;
 use crate::format::*;
 use crate::hooks::{self, maybe_hook, AuditHook, HookRegistry};
-use crate::safety::analyze_bash_command;
+use crate::safety::{analyze_bash_command, analyze_bash_command_in};
 use crate::smart_edit::with_smart_edit;
 use crate::tool_wrappers::{
     maybe_confirm, maybe_guard, maybe_guard_arc, sub_agent_model_label, with_auto_check,
@@ -386,7 +386,10 @@ impl AgentTool for StreamingBashTool {
         }
 
         // Safety analysis — soft warning that routes through confirmation
-        if let Some(warning) = analyze_bash_command(command) {
+        // #1229: judged in the folder the command runs in (`cmd.current_dir` below).
+        let runs_in = self.cwd.as_ref().map(std::path::PathBuf::from);
+        let runs_in = runs_in.or_else(|| std::env::current_dir().ok());
+        if let Some(warning) = analyze_bash_command_in(command, runs_in.as_deref()) {
             if self.refuse_warned {
                 return Err(ToolError::Failed(crate::warned_policy::unattended_refusal(
                     &warning,

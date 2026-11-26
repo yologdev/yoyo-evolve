@@ -352,3 +352,242 @@ mod anchored_tests {
         }
     }
 }
+
+/// #1229: a recursive rm whose operand is an absolute path naming the working
+/// folder `cwd`, a folder holding it, or everything in one of those
+/// (`/home/me/proj`, `/home/me/proj/`, `/home/me`, `/home/me/proj/*`). The rm
+/// itself is read by the same scan that judges `$PWD` (`check_rm_destruction`),
+/// run on the raw-pass text with each hit put back as `$PWD`, so flags,
+/// separators, redirects and wrappers mean what they mean there. Not judged:
+/// a `cd` before the rm (the folder is the one yoyo knows, so `cd /x && rm -rf
+/// <cwd>` still asks, erring toward asking) and relative spellings (those are
+/// `rm_parent_target`'s).
+pub(crate) fn rm_targets_cwd_or_ancestor(command: &str, cwd: &std::path::Path) -> Option<String> {
+    let cwd = std::fs::canonicalize(cwd).unwrap_or_else(|_| lexical(&cwd.to_string_lossy()));
+    let text = crate::bash_parse::raw_pass_text(command, &super::strip_quoted_regions(command));
+    let pieces: Vec<&str> = text.split_inclusive(char::is_whitespace).collect();
+    pieces.iter().enumerate().find_map(|(i, piece)| {
+        let token = piece.trim_end();
+        let (what, marked) = cwd_operand(token, &cwd)?;
+        let mut probe: Vec<&str> = pieces.clone();
+        let blank = &piece[token.len()..];
+        let swapped = format!("{marked}{blank}");
+        probe[i] = &swapped;
+        let probe = probe.concat();
+        let msg = super::check_rm_destruction(&probe, &probe.to_lowercase())?;
+        let severity = if msg.contains("force-recursive") {
+            "force-"
+        } else {
+            ""
+        };
+        Some(format!(
+            "Destructive command: {severity}recursive delete targeting {what} '{token}'"
+        ))
+    })
+}
+
+/// What `token` names relative to `cwd` (already canonical), and the token
+/// re-spelt with `$PWD` in its place; `None` unless it is an absolute path
+/// equal to `cwd` or one of its ancestors, compared by component (so
+/// `/home/me/proj-old` is not an ancestor of `/home/me/proj`). Judged both
+/// lexically and, when it exists, on disk (symlinks followed, as #1236);
+/// either reading hitting is a hit.
+///
+/// The lexical reading needs no file to exist; the on-disk one is [`on_disk`].
+fn cwd_operand(token: &str, cwd: &std::path::Path) -> Option<(&'static str, String)> {
+    let cut = token.find(['&', '|', '<', '>']).unwrap_or(token.len());
+    let (head, tail) = token.split_at(cut);
+    let unquoted: String = head.chars().filter(|c| !matches!(c, '"' | '\'')).collect();
+    let path = unquoted.trim_end_matches([';', ')', '`', '}']);
+    let closers = &unquoted[path.len()..];
+    let (path, glob) = match path.strip_suffix("/*") {
+        Some(p) => (p, true),
+        None => (path, false),
+    };
+    if !path.starts_with('/') {
+        return None;
+    }
+    let readings = [Some(lexical(path)), on_disk(path, glob)];
+    let what = readings.into_iter().flatten().find_map(|p| {
+        let here = p == cwd;
+        (here || cwd.starts_with(&p)).then_some((here, glob))
+    })?;
+    let what = match what {
+        (true, false) => "the working folder",
+        (true, true) => "everything in the working folder",
+        (false, false) => "a folder holding the working folder",
+        (false, true) => "everything in a folder holding the working folder",
+    };
+    let glob = if glob { "/*" } else { "" };
+    Some((what, format!("$PWD{glob}{closers}{tail}")))
+}
+
+/// Where the kernel lands for a recursive rm of `path`: every part but the
+/// last resolved (symlinks followed), and the last too when it is `.`, `..`,
+/// ends in `/` or is globbed into. A bare `rm -rf link` unlinks the symlink
+/// itself, so its last part is kept as written. `None` when the folder holding
+/// it can't be read. Looked up at check time, so a link swapped before the run
+/// is not caught.
+fn on_disk(path: &str, glob: bool) -> Option<std::path::PathBuf> {
+    let trimmed = path.trim_end_matches('/');
+    let last = trimmed.rsplit('/').next().unwrap_or("");
+    if glob || trimmed.len() != path.len() || matches!(last, "" | "." | "..") {
+        return std::fs::canonicalize(path).ok();
+    }
+    let parent = &trimmed[..trimmed.len() - last.len()];
+    let base = std::fs::canonicalize(if parent.is_empty() { "/" } else { parent }).ok()?;
+    Some(base.join(last))
+}
+
+/// `p` (absolute) with empty and `.` parts dropped and each `..` taking off
+/// the part before it, as the kernel reads it when no symlink is involved.
+fn lexical(p: &str) -> std::path::PathBuf {
+    let mut out = std::path::PathBuf::from("/");
+    for part in p.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => drop(out.pop()),
+            part => out.push(part),
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod cwd_tests {
+    use super::super::analyze_bash_command_in;
+    use super::rm_targets_cwd_or_ancestor;
+
+    /// A real temp dir as the working folder (`<tmp>/home/me/proj`), canonical
+    /// so `/tmp` symlinks (macOS) don't split the readings. Nothing is deleted:
+    /// these are pure checks on strings plus `canonicalize`.
+    fn dirs() -> (tempfile::TempDir, String, String) {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(tmp.path()).unwrap();
+        let cwd = root.join("home/me/proj");
+        std::fs::create_dir_all(&cwd).unwrap();
+        std::fs::create_dir_all(root.join("home/me/other")).unwrap();
+        let cwd = cwd.to_str().unwrap().to_string();
+        let parent = root.join("home/me").to_str().unwrap().to_string();
+        (tmp, cwd, parent)
+    }
+
+    const ASK: &str = "Destructive command: force-recursive delete targeting";
+
+    #[test]
+    fn the_working_folder_or_a_folder_holding_it_asks_by_its_absolute_path() {
+        let (_tmp, cwd, parent) = dirs();
+        let here = std::path::Path::new(&cwd);
+        let rows = [
+            (
+                format!("rm -rf {cwd}"),
+                format!("{ASK} the working folder '{cwd}'"),
+            ),
+            (
+                format!("rm -rf {cwd}/"),
+                format!("{ASK} the working folder '{cwd}/'"),
+            ),
+            (
+                format!("rm -rf \"{cwd}\""),
+                format!("{ASK} the working folder '\"{cwd}\"'"),
+            ),
+            (
+                format!("rm -rf {parent}"),
+                format!("{ASK} a folder holding the working folder '{parent}'"),
+            ),
+            (
+                format!("rm -r -f {cwd}"),
+                format!("{ASK} the working folder '{cwd}'"),
+            ),
+            (
+                format!("cd /x && rm -rf {cwd}"),
+                format!("{ASK} the working folder '{cwd}'"),
+            ),
+            (
+                format!("rm -rf {cwd}/*"),
+                format!("{ASK} everything in the working folder '{cwd}/*'"),
+            ),
+            (
+                format!("rm -rf {cwd}/../proj"),
+                format!("{ASK} the working folder '{cwd}/../proj'"),
+            ),
+            (
+                format!("rm -r {cwd}"),
+                format!(
+                    "Destructive command: recursive delete targeting the working folder '{cwd}'"
+                ),
+            ),
+        ];
+        for (cmd, want) in rows {
+            assert_eq!(
+                rm_targets_cwd_or_ancestor(&cmd, here),
+                Some(want.clone()),
+                "{cmd}"
+            );
+            assert_eq!(
+                analyze_bash_command_in(&cmd, Some(here)),
+                Some(want),
+                "{cmd}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_child_sibling_lookalike_or_non_recursive_path_still_passes() {
+        let (_tmp, cwd, parent) = dirs();
+        let here = std::path::Path::new(&cwd);
+        for cmd in [
+            format!("rm -rf {cwd}/target"), // #1229's own near-miss row
+            format!("rm -rf {parent}/other"),
+            format!("rm -rf {cwd}-old"),
+            format!("rm {cwd}/file"),
+            format!("rm -f {cwd}"),
+            format!("ls {cwd}"),
+            format!("ls -r {cwd}"),
+            format!("rm -rf build && ls {cwd}"),
+            format!("git commit -m \"rm -rf {cwd}\""),
+        ] {
+            assert_eq!(rm_targets_cwd_or_ancestor(&cmd, here), None, "{cmd}");
+            assert_eq!(analyze_bash_command_in(&cmd, Some(here)), None, "{cmd}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_to_the_working_folder_asks_when_deleted_recursively() {
+        let (tmp, cwd, _) = dirs();
+        let link = std::fs::canonicalize(tmp.path()).unwrap().join("link");
+        std::os::unix::fs::symlink(&cwd, &link).unwrap();
+        let here = std::path::Path::new(&cwd);
+        for tail in ["/", "/*", "/."] {
+            let cmd = format!("rm -rf {}{tail}", link.display());
+            let what = match tail {
+                "/*" => "everything in the working folder",
+                _ => "the working folder",
+            };
+            let want = format!("{ASK} {what} '{}{tail}'", link.display());
+            assert_eq!(rm_targets_cwd_or_ancestor(&cmd, here), Some(want), "{cmd}");
+        }
+        // A bare `rm -rf link` unlinks the symlink and leaves the folder.
+        let cmd = format!("rm -rf {}", link.display());
+        assert_eq!(rm_targets_cwd_or_ancestor(&cmd, here), None, "{cmd}");
+        // A symlinked folder on the way is followed: `<link>/../proj` is the
+        // cwd's parent's `proj`, i.e. the cwd, read on disk.
+        let up = std::fs::canonicalize(tmp.path()).unwrap().join("up");
+        std::os::unix::fs::symlink(std::path::Path::new(&cwd).join(".."), &up).unwrap();
+        let cmd = format!("rm -rf {}/proj", up.display());
+        let want = format!("{ASK} the working folder '{}/proj'", up.display());
+        assert_eq!(rm_targets_cwd_or_ancestor(&cmd, here), Some(want), "{cmd}");
+    }
+
+    #[test]
+    fn with_no_working_folder_the_absolute_path_is_not_judged() {
+        let (_tmp, cwd, _) = dirs();
+        assert_eq!(
+            analyze_bash_command_in(&format!("rm -rf {cwd}"), None),
+            None
+        );
+        // The rules that never needed the folder still ask.
+        assert!(analyze_bash_command_in("rm -rf $PWD", None).is_some());
+    }
+}
