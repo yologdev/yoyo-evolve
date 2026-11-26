@@ -1,0 +1,73 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | head; gh is…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat src/doctor_api.rs; sed -n 57… ✓ (36ms)
+ ✓ (719ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 100,445p src/doctor_api.r… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 200,280p src/doctor_api.r… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 264,345p src/doctor_api.r… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && ls src/lib.rs 2>&1; grep -n "mod… ✓ (23ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  6 tools completed in 31.6s (6 ✓)
+
+Now the edits. First the shared predicate and its use in classify.
+  ╭─ Turn 6 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (54 lines) ✓ (27ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 255,295p src/doctor_api.r… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 268,275p src/doctor_api.r… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (82 lines) ✓ (41.2s)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 1m 7s (4 ✓)
+
+Targeted tests green. Now the recall control, as one atomic command:
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/doctor_api.rs /tmp/doctor… ✓ (1m 22s)
+
+Control red by name, restored green. Posting it on #1243 before anything else:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/c… (14 lines) ✓ (1.1s)
+
+Now the docs line that carries the old Limits claim:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 108,125p docs/src/trouble… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (13 lines) ✓ (19ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "rejected the API key" d… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i '69s|`<host> rejected the… ✓ (2.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git diff src/prompt_retry.rs; wc… ✓ (40.2s)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 1m 3s (5 ✓)
+
+Targeted tests are green, so I'll commit with the full body now and run the slow gate after.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat > /tmp/m… (39 lines) ✓ (28ms)
+
+Now the full gate.
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo FMT…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (1m 17s)
+ ✓ (6m 0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -cE "FAIL… ✓ (5m 0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 11m 13s (3 ✓)
+
+Fixed: /doctor's API row now says <host> rejected the API key (HTTP 400) for a bad Google or xAI key. Before, it said "answered with an error (HTTP 400)" and printed the vendor's error text. The fix is in commit b99d435, and fmt, clippy (-D warnings) and the full cargo test all pass afterwards.
+
+What changed
+• One shared check. The three bad-key phrases (api_key_invalid, api key not valid, incorrect api key) now live in one function, body_says_key_rejected, in src/doctor_api.rs. The run's error diagnosis (diagnose_api_error_for) calls it instead of its own copy of the three lines, and /doctor calls it too, so they can't drift apart. A plain 400 or INVALID_ARGUMENT doesn't count as a bad key, because those also cover bad fields.
+• File size. src/prompt_retry.rs went from 2796 to 2793 lines, under its 2800 cap.
+• Tests. A local stub returns the real Google and xAI bad-key replies recorded on Day 254, through yoagent's actual google and xai providers. I reused the existing constants (now pub(crate)) rather than retyping them. Each test checks the row's whole text. A near-miss test checks that a Google 400 about a bad max_output_tokens still says "answered with an error". The 13 existing bad-key diagnosis tests passed without changes.
+• Recall check. With the new check disabled, the Google and xAI tests failed and printed the old "answered with an error" text. With it restored, all 15 /doctor API tests pass. I posted this result on #1243 before running the full checks.
+• Docs. common-issues.md no longer says these keys show up as "answered with an error", which was the "Limits" claim from the #1242 commit. commands.md now lists the Google/xAI 400 under "rejected the API key".
+
+The commit says Fixes #1243, so the issue closes when this is pushed.
+  watch: no files changed this turn — skipping

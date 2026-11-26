@@ -1,0 +1,22 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn "not as .rejected the API… ✓ (22ms)
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 15.2s (2 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_1.md.
+
+With a bad Google or xAI key, /doctor's API row now says <host> rejected the API key (HTTP 400), the same verdict a run gives. I judged this from the diff and the harness's passing build and tests. I didn't run the binary or re-run the tests myself.
+
+• One check, two readers: the three bad-key markers now live in one function, body_says_key_rejected, in src/doctor_api.rs. Both the run path (diagnose_api_error_for) and doctor's row logic (classify) call it, and it keeps the "Never bare 400/invalid_argument" comment. src/prompt_retry.rs went down to 2793 lines, under its 2800 limit.
+• Tests: the new tests send the saved real Google and xAI bad-key replies to a local stub server. They check the row's whole text, not a substring. A third test covers a near miss: a Google 400 about a bad max_output_tokens still shows answered with an error.
+• Nothing left unused: every new function, the stub helper included, has callers in this diff. The two saved replies were made pub(crate) rather than copied.
+• Docs: common-issues.md no longer says these 400s show as "answered with an error", and the verdict list in commands.md now mentions them. A grep found no other old copy.
+• Product surface: only the wording of a failing /doctor row changed; no defaults, flags or startup behaviour.
+
+The diff doesn't show whether the recall control (break the check, watch the two tests fail, restore it) was run or posted on #1243.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

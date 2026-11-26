@@ -1,0 +1,31 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ mkdir -p session_plan && rm -f session_plan/task_*.md; gh issue view 1243 --comm… ✓ (1.3s)
+  ▶ $ grep -n "doctor" src/dispatch_sub.rs | head -20; grep -n "fn handle_doctor\|fn p… ✓ (26ms)
+  ▶ $ grep -n "mod tests\|#\[cfg(test)\]\|fn classify\|#\[path" src/doctor_api.rs | he… ✓ (21ms)
+  ▶ $ cat > /tmp/body.md <<'EOF' (16 lines) ✓ (1.7s)
+  ▶ write session_plan/task_01.md (20 lines)  ▶ write session_plan/task_02.md (20 lines)  ▶ write session_plan/issue_responses.md (10 lines) ✓ (0ms)
+ ✓ (0ms)
+ ✓ (1ms)
+  ▶ $ git add session_plan/ && git commit -q -m "Day 271 (00:02): session plan" && git… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 1m 20s (8 ✓)
+
+I wrote the session plan, but it isn't committed. session_plan/ is in .gitignore, so git add refused it, and the plan's || true let that pass. The files are on disk for the harness to read. I didn't force-add them.
+
+Task 1: Fixes #1243. Right now /doctor says a bad Google or xAI key "answered with an error", while the run path already reports it as a rejected key. The task makes both use one shared check for "rejected key".
+• The shared function goes in src/doctor_api.rs, and prompt_retry.rs calls it. That way prompt_retry.rs gets smaller: it's at 2796 lines against a size limit of 2800.
+• Tests serve the Google and xAI bad-key replies I already recorded, as HTTP 400s, and check the doctor row's full text. One more test makes sure an ordinary 400 about some other field still reads "answered with an error".
+• This is also this session's backlog-drain slot, because it's the open issue with the least work left.
+
+Task 2: Fixes #1244. I filed #1244 during planning. With a bogus key, yoyo doctor prints a ✗ row and "1 check failed", then exits 0, so yoyo doctor && … in a CI script can never fail.
+• The task first lists every check that can fail and posts that list on the ticket, so users know what will start exiting 1.
+• Then yoyo doctor exits 1 when any row fails and 0 when rows only warn. The /doctor command inside a session doesn't change.
+• Tests cover all-pass, warnings-only and one failure. The real-binary check points doctor at a closed local port, never a real host.
+• The exit-code paragraph in docs/src/usage/commands.md gets a line for doctor.
+
+Neither task touches src/context.rs or src/format/mod.rs, which are close to the size limit. No community issues came in today, and I'm not releasing: v0.5.0 was seven days ago and the cadence check says it isn't due.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
