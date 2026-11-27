@@ -13,16 +13,18 @@ keywords: ["skills/inspect-machine", "system_profiler", "nvidia-smi", "lsusb", "
 
 - You are about to plan or test something whose feasibility depends on hardware: a local model or GPU work, vision or audio features, a USB or serial device, heavy parallel builds.
 - A task says "on this machine", "use the camera / mic / GPU", or a test fails in a way that smells like missing hardware.
-- Once per session at most. Re-run only if the user plugs something in or asks.
+- You woke up somewhere and want to know it better than the short `=== WHERE YOU ARE ===` block your loops start with (that block comes from `scripts/machine_profile.sh`: system, GPU, tools, the keys you were given, network). This skill is the closer look: cameras, audio, USB, accelerators.
+- Once per session is enough. Re-run only if the user plugs something in or asks.
 
-Don't use it for ordinary coding work. Most tasks don't care what the machine is.
+Most ordinary coding work doesn't care what the machine is. Whether a given plan does is your call.
 
 ## Rules
 
 1. **List, never use.** These commands only read the system's device lists. Never open a camera or microphone, capture anything, write to a device, or start a Bluetooth scan.
 2. **Ask before using a device.** Knowing a camera exists is not permission to use it. Ask the user (`ask_user`) before any step that opens a device, and say what for. The operating system may ask too. **When there is no one to ask** (CI, piped or `-p` mode, any run where `ask_user` is unavailable or unanswered), never use a device: report what you found and stop there.
 3. **Nothing identifying in what you keep.** Drop serial numbers, MAC and Bluetooth addresses, UUIDs and unique ids, device and host names (e.g. "Alex's AirPods"), and user names. Keep class, model, vendor, capability and counts.
-4. **Don't commit it.** The profile describes one machine at one moment. Keep it in this session's context. Never write it to `memory/`, the journal, an issue or a commit.
+4. **What you may keep.** The raw output stays in this session's context and is never written anywhere. The stripped summary (class, model, capability, counts: Rule 3) is yours to keep if you find it useful, for example a learning about what this kind of machine is good for. It describes one machine at one moment, so date it, and never read an old note as a fact about the machine you are on now.
+5. **Keys: the ones you were given, by name.** You may note which model-provider key variables are set (the name, never the value). Don't look for credentials anywhere else: not in files, shell history, keychains or other programs' configuration. On someone else's machine those belong to them, and using one would be taking it.
 
 ## Quick reference
 
@@ -94,7 +96,7 @@ rm -f "$hw"
 ## Procedure
 
 1. Run the commands for this OS (one batch).
-2. Summarize in at most ten lines, in your context only:
+2. Summarize in at most ten lines:
    ```
    MACHINE: macOS 15 · Apple M3 (8 cores, Neural Engine) · 16 GB · 120 GB free
    GPU: Apple M3 (Metal) · Cameras: 1 built-in · Audio in: 1 · USB: 1 serial board (CH340)
@@ -115,4 +117,4 @@ rm -f "$hw"
 
 - The summary names the CPU, memory, and each device class that was found (or "not found").
 - It contains no serial number, address, UUID, or personal device or host name.
-- No device was opened, and nothing about the machine was written to the repository.
+- No device was opened. Nothing raw or identifying was written to the repository, and no key value appears anywhere.

@@ -11,6 +11,7 @@
 #   ... your task-specific instructions ...
 #   EOF
 #
+# Runs: scripts/machine_profile.sh (the WHERE YOU ARE block)
 # Reads: IDENTITY.md, PERSONALITY.md, LINEAGE.md, ECONOMICS.md, sponsors/active.json, memory/active_learnings.md, memory/active_social_learnings.md
 # These are yoyo's stable identity files — who it is, how it speaks,
 # where it sits in the family tree, what it's learned about itself, and what it's learned from humans.
@@ -143,6 +144,16 @@ if [ -f "$_YOYO_REPO/ECONOMICS.md" ]; then
     _ECONOMICS=$(cat "$_YOYO_REPO/ECONOMICS.md") || _ECONOMICS=""
 fi
 
+# Where this session is running — a few non-identifying facts about the host
+# (scripts/machine_profile.sh: read-only, key NAMES only, always exits 0).
+# Computed when this file is sourced, so every loop sees the machine it woke up
+# on. The block states facts and gives no instruction: what follows from a GPU,
+# a missing tool or a small disk is yoyo's to decide. Never written to the repo.
+_MACHINE=""
+if [ -f "$_YOYO_REPO/scripts/machine_profile.sh" ]; then
+    _MACHINE=$(bash "$_YOYO_REPO/scripts/machine_profile.sh" 2>/dev/null) || _MACHINE=""
+fi
+
 # One template, rendered twice: $1 is the SELF-WISDOM text.
 _yoyo_context_render() {
     printf '%s' "=== WHO YOU ARE ===
@@ -175,7 +186,11 @@ ${_ECONOMICS:-Read ECONOMICS.md for what money and sponsorship mean to you.}
 
 === YOUR SPONSORS ===
 
-${_SPONSORS:-No sponsors yet. You are community-supported and free.}"
+${_SPONSORS:-No sponsors yet. You are community-supported and free.}
+
+=== WHERE YOU ARE ===
+
+${_MACHINE:-Not scanned this session. The inspect-machine skill can look.}"
 }
 YOYO_CONTEXT=$(_yoyo_context_render "$_LEARNINGS")
 # For phases that act on one task and do not choose work. Same identity, voice,

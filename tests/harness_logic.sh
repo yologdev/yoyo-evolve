@@ -1455,6 +1455,28 @@ check "learnings: the lean context has the Wisdom tier and none of the recent le
     "$(ctx_case "$SMALL" 'printf "%s" "$YOYO_CONTEXT_LEAN" | grep -c "old truth"; printf "%s" "$YOYO_CONTEXT_LEAN" | grep -c "body a"; printf "%s" "$YOYO_CONTEXT_LEAN" | grep -c "=== YOUR VOICE ==="' | tr '\n' ' ')" "1 0 1 "
 check "learnings: no file at all still yields both contexts" \
     "$( ( d=$(mktemp -d); YOYO_REPO="$d"; source "$CTX" 2>/dev/null; printf '%s' "$YOYO_CONTEXT$YOYO_CONTEXT_LEAN" | grep -c 'No learnings yet.'; rm -rf "$d" ) 2>&1)" "2"
+
+# Where yoyo woke up: a machine block in every loop's context (2026-11-27).
+MP="$ROOT/scripts/machine_profile.sh"
+mp_run() { env -i PATH="$PATH" HOME="$HOME" "$@" bash "$MP" 2>&1; }
+check "machine profile: always exits 0 and prints its six lines, even with an empty PATH" \
+    "$(env -i PATH=/nonexistent /bin/bash "$MP" >/dev/null 2>&1; echo $?) $(env -i PATH=/nonexistent /bin/bash "$MP" 2>/dev/null | grep -c .)" "0 6"
+check "machine profile: a provider key is reported by name, never by value" \
+    "$(mp_run OPENAI_API_KEY=sk-canary-7f3a | grep -c 'OPENAI_API_KEY') $(mp_run OPENAI_API_KEY=sk-canary-7f3a | grep -c 'sk-canary-7f3a')" "1 0"
+check "machine profile: a key outside the model-provider list is not reported" \
+    "$(mp_run AWS_SECRET_ACCESS_KEY=canary STRIPE_API_KEY=canary | grep -cE 'AWS|STRIPE|canary')" "0"
+check "machine profile: no host name or user name in the output" \
+    "$(mp_run | grep -cF -e "$(hostname 2>/dev/null || echo no-hostname-here)" -e "/$(id -un)")" "0"
+check "machine profile: reads no file outside /proc and looks in no credential store" \
+    "$(grep -vE '^[[:space:]]*#' "$MP" | grep -cE 'history|\.aws|\.ssh|\.netrc|keychain|security find|credentials|\.env\b|(^|[^a-z])cat ')" "0"
+check "context: the machine block is in both contexts, and says so when nothing was scanned" \
+    "$( ( d=$(mktemp -d); YOYO_REPO="$d"; source "$CTX" 2>/dev/null; printf '%s\n' "$YOYO_CONTEXT" | grep -c '^=== WHERE YOU ARE ===$'; printf '%s' "$YOYO_CONTEXT_LEAN" | grep -c 'Not scanned this session'; rm -rf "$d" ) 2>&1 | tr '\n' ' ')" "1 1 "
+check "context: with the script present, the block carries the scan" \
+    "$( ( d=$(mktemp -d); mkdir -p "$d/scripts"; cp "$MP" "$d/scripts/"; YOYO_REPO="$d"; source "$CTX" 2>/dev/null; printf '%s' "$YOYO_CONTEXT" | grep -c '^Running on: '; rm -rf "$d" ) 2>&1)" "1"
+check "context: the machine block states facts and gives no instruction" \
+    "$(bash "$MP" 2>/dev/null | grep -ciE 'you (must|should)|do not|never|always')" "0"
+check "inspect-machine skill: keys by name only, and no search for credentials" \
+    "$(grep -c "Don't look for credentials anywhere else" "$ROOT/skills/inspect-machine/SKILL.md")" "1"
 if [ -f "$SYN" ]; then
     SYN_BIG='python3 -c "import sys; sys.stdout.write(\"# Active Learnings\n\" + \"x\"*int(sys.argv[1]))"'
     check "synthesize output: learnings over the ceiling are refused when the previous file was under it" \
