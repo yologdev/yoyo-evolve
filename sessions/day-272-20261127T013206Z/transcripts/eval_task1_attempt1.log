@@ -1,0 +1,24 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn -i "stderr" docs/src | gr… ✓ (41.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; timeout 200 cargo test --quiet --b… ✓ (223ms)
+  ▶ write session_plan/eval_task_1.md (6 lines) ✓ (1ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 0s (3 ✓)
+
+Verdict: PASS, written to session_plan/eval_task_1.md.
+
+The fix does what #1247 asked: a hook that writes more than ~64 KiB to stderr no longer deadlocks until the 5-second timeout.
+
+• The fix: ShellHook::run_command now reads the hook's stderr on a separate thread while it runs, instead of only after it exits. Memory stays bounded at the same 4096-byte head and 4096-byte tail as before, and the cut is marked in the same words, which both code paths now share.
+• Tests I ran: the 4 new tests in src/hooks_stderr_drain_tests.rs pass in 0.10s with cargo test --bin yoyo hooks_stderr_drain. They cover 200 KB of stderr (finishes fast, capped, head and tail markers kept), a small stderr passed through unchanged, output exactly at the cap, and a multi-byte character crossing the cut.
+• No leftover sabotage: grep -c NEUTERED src/hooks.rs returns 0.
+• One deviation, accepted: after a timeout kill, the code doesn't wait for the reader thread to finish. The comment explains why: a process the hook started in the background can keep the pipe open. After a normal exit, the wait has a time limit.
+• Touchpoints: every new helper and module is used in this diff. The existing check that run_command applies the cap was updated to look for the new call, and the size limit for src/hooks.rs in tests/module_size.rs now matches its 3780 lines and has a dated note.
+• Docs: none needed. docs/src says nothing about limits on hook output.
+
+I didn't check the process steps outside the diff: the before row and red/green result posted on #1247, and the one-command neuter-and-restore check.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

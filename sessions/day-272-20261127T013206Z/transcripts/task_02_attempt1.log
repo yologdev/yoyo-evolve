@@ -1,0 +1,65 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | head; grep … ✓ (23ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 375,400p src/tools.rs; se…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 1245 --json body,c… ✓ (20ms)
+ ✓ (359ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue com… (3 lines) ✓ (1.1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,20p src/tools_child_bas… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'pub(crate) fn rm_target… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'fn pinned_child_bash' -… ✓ (3ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/t… (54 lines) ✓ (15ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 48.8s (8 ✓)
+
+Now the production change.
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (64 lines) ✓ (23ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i '21s/… (3 lines) ✓ (12.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 900 cargo test --bin yoy… ✓ (34.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 900 cargo test --bin yoy… ✓ (112ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/tools… (8 lines) ✓ (1m 5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 258,266p src/tools_child_… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 178,190p docs/src/trouble… ✓ (1.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (11 lines) ✓ (20.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n 'child_confirm_refusal\|… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (35 lines) ✓ (23ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  10 tools completed in 2m 58s (10 ✓)
+
+Committed with the full body. Now the full gate.
+  ╭─ Turn 18 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && timeout … ✓ (4m 34s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 1500 cargo test 2>&1 | g… ✓ (3m 55s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 8m 44s (2 ✓)
+
+Fixed #1245: when a /spawn worker's sub-agent tries to rm -rf its own working folder, the command is now judged against the worker's folder, so it asks or is refused as it should. The full gate passed: fmt check, clippy with -D warnings, and the full cargo test with 0 failures. It's committed as af8cad41 with a full body.
+
+What was wrong: the two sub-agent safety checks (child_confirm_refusal and child_unattended_refusal in src/tools.rs) compared rm targets with the process's folder. In a /spawn worker that folder is the main repo, so rm -rf <repo>/.yoyo/worktrees/<w> (the sub-agent's own working folder) went through without asking.
+
+What changed:
+• Both checks take a new pinned_cwd: Option<&str> argument and go through a small new helper, child_bash_warning. It uses the pinned folder when there is one and the process folder otherwise, the same way the parent's own bash has worked since #1229.
+• The sub-agent's bash wrapper (UserDenyBashTool) passes its pinned folder. Ordinary sessions have no pinned folder, so nothing changes for them.
+• There were 13 calls to update: 2 in production and 11 in tests, which now pass None.
+
+Tests (in src/tools_child_bash_tests.rs):
+• Both checks refuse rm -rf <pinned folder>, and rm -rf <pinned folder>/sub still passes.
+• The sub-agent's bash itself refuses the same command. The pinned folder is a path inside a temp dir that doesn't exist, so even a failing run had nothing real to delete.
+
+Proof the tests catch the bug: I temporarily removed the pinned folder from child_bash_warning, marked NEUTERED, with the change, run and restore done as one command. Both new tests failed by name. After restoring, the marker count was 0, both passed, and git status showed only my edited files.
+
+Also updated:
+• docs/src/troubleshooting/safety.md: the working-folder sentence now mentions a worker's sub-agents.
+• tests/module_size.rs: the recorded size of tools.rs goes from 5330 to 5349 lines.
+
+On #1245: I commented the number of calls to change and the planned signature before editing, and the control result straight after running it.
+  watch: no files changed this turn — skipping
