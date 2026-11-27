@@ -1,0 +1,78 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | head && wc …  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat src/agent_defs_tests.rs | he… ✓ (11ms)
+ ✓ (21ms)
+  ▶ read src/agent_defs.rs:1..17  ▶ read src/agent_defs.rs:120..295  ▶ read src/agent_defs_tests.rs:150.. ✓ (0ms)
+ ✓ (0ms)
+ ✓ (2ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "fn .*\(git_root\|repo_… ✓ (31ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 95,130p src/spawn_worktre… ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 405,440p src/config.rs; g… ✓ (21ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "\.git\b" src/context.r… ✓ (16ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn load_project_context… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn '"\.git"' src/ | grep -… ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (108 lines) ✓ (37ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  12 tools completed in 1m 22s (12 ✓)
+
+Now the tests: update the two pinned strings, then add the walk-up rows.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (136 lines) ✓ (28.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+All 13 green. Positive control, as one atomic mutate→run→restore command:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/agent_defs.rs /tmp/agent_… ✓ (56.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Control (a)/(b) red by name, restored green. The home-exclusion test passed under that mutation (expected: it can't tell that mutation apart), so it gets its own control:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/agent_defs.rs /tmp/agent_… ✓ (56.0s)
+
+Posting the control results to #1250 now, before the final gate:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue com… (11 lines) ✓ (763ms)
+
+Now docs.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -i "agents" docs/src/usa… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (19 lines) ✓ (31ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt && cargo clippy --all-… ✓ (4m 48s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "FAILE… ✓ (4m 6s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (33 lines) ✓ (1.0s)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 9m 37s (5 ✓)
+
+I committed this as 29d669ef: yoyo agents now finds a project's agent files when you run it from a subfolder. I ran the assessment's reproduction against the built binary: from sub/, the repo root's .claude/agents/r.md is now listed as [project]. Before, it said "No named sub-agent files found". cargo fmt, cargo clippy --all-targets -- -D warnings and the full cargo test all pass, and agent_defs.rs is 427 lines.
+
+What changed (`src/agent_defs.rs`)
+• Walk-up: project scope covers the current directory and every parent up to and including the repo root, the nearest one containing .git (file or directory). It checks for .git directly, so git doesn't have to be installed. The only existing repo-root helper (spawn_worktree::repo_root) runs git, so I didn't reuse it.
+• Outside a repo: only the current directory is searched, as before, and the listing now says parent directories were not searched.
+• Precedence on a duplicate name: the closest directory wins, then .yoyo over .claude within one directory, then project over user. A .claude file in a subfolder beats a .yoyo file at the root.
+• Home directory: if your repo root is ~ (a dotfiles repo), the home's agent folders stay user scope and are listed once. Running yoyo with home as the current directory still counts it as project, as before.
+• `:` in a name: milestone 1 already rejected it. Only the message changed, so it now says why: Claude Code reserves : for plugin agents. A near-miss row checks that a name like code-review_bot still loads.
+
+Tests: four new tests, all in temporary directories: a root file found from a/b, the closest copy winning, no .git meaning only the current directory, and the home case. Two existing tests now expect the new text: the listing header changed from "cwd only" to "closest first", and the outside-a-repo note was added.
+
+Positive controls (each run as one command that breaks the code, runs the tests and restores it):
+1. Stopping the walk at the current directory made the two walk-up tests fail by name. The home test still passed, because that change can't break it.
+2. So I disabled the home exclusion separately, and the home test failed by name.
+
+After restoring both, all 13 tests pass. I posted these results to #1250 before the final checks, as the task asked.
+
+Docs: I updated the yoyo agents section in docs/src/usage/commands.md, the module doc, and the ARCHITECTURE.md entry, where the old "cwd only" claim is marked superseded rather than deleted.
+
+I posted a closing comment on #1250 ending with "Next: milestone 2 (delegation)".
+  watch: no files changed this turn — skipping
