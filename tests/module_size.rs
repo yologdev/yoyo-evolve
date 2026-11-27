@@ -600,7 +600,12 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // the SIGPIPE fix (hook stdin write via sigpipe_safe_write, its comment
     // and the source guard now refusing a raw stdin.write_all). The helper
     // and its tests live in their own module to keep this growth small.
-    ("src/hooks.rs", 3732),
+    // Day 272 (#1247): 3732 -> 3780 (+48) -- stderr is drained on a reader
+    // thread while the hook runs (was read only after exit, so >64 KiB
+    // deadlocked to the timeout). The bounded capture lives in
+    // src/hooks_stderr_capture.rs and its tests in hooks_stderr_drain_tests.rs;
+    // what stays here is the thread, the bounded EOF wait and the shared marker.
+    ("src/hooks.rs", 3780),
     // Day 267 (#1217): NEW entry, 1992 -> 2008 (+16) -- the once-per-reason
     // dedup for the 'project memories not loaded' warning (a static set, a pure
     // `first_warning` helper and `warning_key`, which canonicalizes the path so

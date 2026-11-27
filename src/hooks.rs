@@ -50,12 +50,26 @@ fn cap_hook_stderr(raw: &str, head: usize, tail: usize) -> String {
     }
 
     let dropped = tail_start - head_end;
+    hook_stderr_cut(&raw[..head_end], dropped, head, tail, &raw[tail_start..])
+}
+
+/// The one spelling of a capped stderr, shared by [`cap_hook_stderr`] and the
+/// streaming [`StderrCapture`] so both mark the cut in the same words.
+fn hook_stderr_cut(
+    kept_head: &str,
+    dropped: usize,
+    head: usize,
+    tail: usize,
+    kept_tail: &str,
+) -> String {
     format!(
-        "{}\n… [yoyo: {dropped} bytes elided — hook stderr is capped at {head} head + {tail} tail bytes]\n{}",
-        &raw[..head_end],
-        &raw[tail_start..],
+        "{kept_head}\n… [yoyo: {dropped} bytes elided — hook stderr is capped at {head} head + {tail} tail bytes]\n{kept_tail}"
     )
 }
+
+#[path = "hooks_stderr_capture.rs"]
+mod hooks_stderr_capture;
+use hooks_stderr_capture::StderrCapture;
 
 /// The reason a blocking pre-hook is reported with.
 ///
@@ -779,27 +793,50 @@ impl ShellHook {
             );
         }
 
+        // Drain stderr while the hook runs (#1247), bounded at *capture* time so
+        // every consumer of the returned pair inherits the #844 cap. This string
+        // reaches the model's context verbatim via `PostHookResult::with_feedback`.
+        let capture = Arc::new(std::sync::Mutex::new(StderrCapture::default()));
+        let (drained_tx, drained_rx) = std::sync::mpsc::channel::<()>();
+        if let Some(mut pipe) = child.stderr.take() {
+            let capture = Arc::clone(&capture);
+            std::thread::spawn(move || {
+                let mut buf = [0u8; 8192];
+                loop {
+                    match pipe.read(&mut buf) {
+                        Ok(0) => break,
+                        Ok(n) => crate::sync_util::lock_or_recover(&capture).push(
+                            &buf[..n],
+                            HOOK_STDERR_HEAD_BYTES,
+                            HOOK_STDERR_TAIL_BYTES,
+                        ),
+                        Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                        Err(_) => break,
+                    }
+                }
+                let _ = drained_tx.send(());
+            });
+        }
+
         let timeout = Duration::from_secs(5);
         let start = std::time::Instant::now();
 
         loop {
             match child.try_wait() {
                 Ok(Some(status)) => {
-                    // Capture stderr output for feedback
-                    let mut stderr_buf = String::new();
-                    if let Some(mut stderr) = child.stderr.take() {
-                        let _ = stderr.read_to_string(&mut stderr_buf);
-                    }
-                    // Bound at *capture* time, not at each reader, so every consumer
-                    // of the returned pair inherits the cap (#844). This string reaches
-                    // the model's context verbatim via `PostHookResult::with_feedback`,
-                    // and a hook printing megabytes could otherwise overflow the
-                    // conversation and wedge the session.
-                    let stderr_buf = cap_hook_stderr(
-                        &stderr_buf,
-                        HOOK_STDERR_HEAD_BYTES,
-                        HOOK_STDERR_TAIL_BYTES,
-                    );
+                    // The hook has exited, so its own writes are already in the
+                    // pipe; wait for the reader to hit EOF. A process the hook put
+                    // in the background still holds the pipe open, so this wait is
+                    // bounded (the rest of the budget, at least 500 ms) and we keep
+                    // what was drained by then, rather than block as long as it runs.
+                    let grace = timeout
+                        .saturating_sub(start.elapsed())
+                        .max(Duration::from_millis(500));
+                    let _ = drained_rx.recv_timeout(grace);
+                    let captured =
+                        std::mem::take(&mut *crate::sync_util::lock_or_recover(&capture));
+                    let stderr_buf =
+                        captured.finish(HOOK_STDERR_HEAD_BYTES, HOOK_STDERR_TAIL_BYTES);
                     return Ok((status.code().unwrap_or(1), stderr_buf));
                 }
                 Ok(None) => {
@@ -813,6 +850,10 @@ impl ShellHook {
                         // discarded: the error being returned is the TIMEOUT,
                         // not the reap.
                         let _ = child.wait();
+                        // The reader thread is not joined: a process the hook
+                        // backgrounded may still hold the pipe open, and the
+                        // thread ends by itself at EOF. Its output is dropped,
+                        // as a timed-out hook's always was.
                         return Err(format!("Hook '{}' timed out after 5 seconds", self.name));
                     }
                     std::thread::sleep(Duration::from_millis(50));
@@ -1402,6 +1443,10 @@ pub fn maybe_hook(tool: Box<dyn AgentTool>, hooks: &Arc<HookRegistry>) -> Box<dy
 #[cfg(all(test, unix))]
 #[path = "hooks_scrub_tests.rs"]
 mod hooks_scrub_tests;
+
+#[cfg(all(test, unix))]
+#[path = "hooks_stderr_drain_tests.rs"]
+mod hooks_stderr_drain_tests;
 
 #[cfg(test)]
 mod tests {
@@ -2894,7 +2939,10 @@ mod tests {
             .split_once("\nimpl Hook for ShellHook")
             .map(|(before, _)| before)
             .unwrap_or(body);
-        let needle = format!("{}{}", "cap_hook", "_stderr(");
+        // Since #1247 the cap is applied by the streaming capture's `finish`, which
+        // falls through to `cap_hook_stderr` and shares its marker; real spawn
+        // assertions on the cap now live in `hooks_stderr_drain_tests.rs`.
+        let needle = format!("{}{}", "finish(HOOK_STDERR_HEAD", "_BYTES");
         assert!(
             body.contains(&needle),
             "ShellHook::run_command no longer calls `{needle})`. A hook's stderr is \
