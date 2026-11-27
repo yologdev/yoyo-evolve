@@ -16,6 +16,7 @@ use crate::format::{DIM, RED, RESET, YELLOW};
 /// that actually works, and a verb removed from the `match` but left here would make
 /// the guard stay silent on a word that is now a paid prompt.
 pub const ROUTED_SUBCOMMANDS: &[&str] = &[
+    "agents",
     "ast",
     "blame",
     "changelog",

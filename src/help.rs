@@ -441,6 +441,10 @@ pub fn cli_help_text() -> String {
     );
     let _ = writeln!(
         s,
+        "  agents            List named sub-agent files in .yoyo/agents and .claude/agents (preview)"
+    );
+    let _ = writeln!(
+        s,
         "  skill             List, inspect, install, and search for skills (e.g. yoyo skill list --skills ./skills)"
     );
     let _ = writeln!(

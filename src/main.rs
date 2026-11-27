@@ -36,6 +36,7 @@
 //!   /retry          Re-send the last user input
 
 mod agent_builder;
+mod agent_defs;
 #[cfg(test)]
 mod agent_limits_tests;
 #[cfg(test)]

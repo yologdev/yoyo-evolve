@@ -468,6 +468,12 @@ Replay re-launches the same task list as a fresh parallel fan-out (which records
 
 > **Sub-agent results are marked as sub-agent output.** A dispatched sub-agent's text reaches the session's agent under a header naming it as *sub-agent output*, with the sub-agent's own words below it unchanged. A sub-agent reads whatever its subtask requires — CI logs, web pages, foreign repositories — so this boundary means text inside a sub-agent result cannot pass as the session's own instructions; instructions found in that text are data to report, not directives to obey. It is a provenance marker only: it does not sanitize the text, does not confine the sub-agent, and does not change what a sub-agent is allowed to do.
 
+### Named sub-agents (preview)
+
+`yoyo agents` lists named sub-agent definition files in Claude Code's format (a Markdown file starting with a `---` YAML frontmatter block holding `name` and `description`, and optionally `tools`, `disallowedTools`, `model` and `maxTurns`; the body below the block is the agent's prompt). It looks in `.yoyo/agents/` and `.claude/agents/` in the current directory, then `~/.yoyo/agents/` and `~/.claude/agents/`. Only `*.md` files directly in those directories are read (no subdirectories, no walking up to the repository root). When two files share a `name`, the project file beats the user file and `.yoyo` beats `.claude`; the loser is listed as `shadowed by <path>`. A file that cannot be used is listed under `Skipped:` with the reason (no opening `---`, unclosed frontmatter, invalid YAML with the parser's line and column, a missing or invalid `name`, a missing `description`), and frontmatter keys yoyo does not read are shown as `ignored keys:`.
+
+**Definitions are discovered and validated, but not yet used**: nothing in them becomes a prompt, and the model cannot delegate to them yet. That comes in a later release (tracked in #1250).
+
 ## Git
 
 | Command | Description |

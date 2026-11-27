@@ -839,6 +839,7 @@ pub(crate) const FLAGS_NEEDING_VALUES: &[&str] = &[
 // accidentally treats a subcommand name as a prompt token. `misplaced_subcommand`
 // reads it too, so it must name every arm of that match (pinned by a test).
 pub(crate) const KNOWN_SUBCOMMANDS: &[&str] = &[
+    "agents",
     "ast",
     "blame",
     "changelog",

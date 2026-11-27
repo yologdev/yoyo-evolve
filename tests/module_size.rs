@@ -490,7 +490,9 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // Day 252: #1114 flag_value skips value slots via option_position, +7 (doc lines).
     // Day 253 (#1154): 2680 at HEAD (+3 unregistered drift), +3 for the Shell
     // surface passed to config get (rustfmt wraps the call).
-    ("src/dispatch_sub.rs", 2683),
+    // Day 272 (#1250 milestone 1): 2683 -> 2751. +6 is the `yoyo agents` arm (logic and
+    // tests live in agent_defs.rs); the other +62 was drift already inside the grace band.
+    ("src/dispatch_sub.rs", 2751),
     // Day 209: 3439 -> 3455 (+16, within the drift band, pasted rather than left to absorb).
     // #937 option 1: nine lines of doc above `builtin_model_pricing` naming both ignored
     // audit commands (deliverable 4 — an alarm nobody can find is the #745/#767/#769
@@ -580,7 +582,7 @@ const GRANDFATHERED_OVERSIZED_MODULES: &[(&str, usize)] = &[
     // run_git/run_git_in_dir, net +2) and the 3-line `#[path]` wiring of git_porcelain_tests.rs.
     ("src/git.rs", 2037),
     // Day 258 (#1190): 2856 -> 2946, drift paid off; the #1190 fix itself is a line swap (+0).
-    ("src/help.rs", 2946), // Day 196: +71 drift paid off (pasted from what the gate printed).
+    ("src/help.rs", 2953), // Day 272: #1250 — the `agents` line in the subcommand help (+4); the other +3 was drift inside the grace band. Day 196: +71 drift paid off (pasted from what the gate printed).
     // Day 197: the stdin channel (`hook_stdin_payload` + its guards) crossed the
     // cap. Registered rather than split, on the Day-183 `prompt_retry.rs`
     // precedent: registering is this gate's OWN stated remedy, while the better

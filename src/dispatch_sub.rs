@@ -567,6 +567,12 @@ pub(crate) fn try_dispatch_subcommand_in(
                 });
                 return Some(None);
             }
+            "agents" => {
+                // #1250 milestone 1: list named sub-agent files; none is used yet.
+                refuse_stray_arg("agents", positional_after_verb(args).first().copied());
+                crate::agent_defs::handle_agents_command();
+                return Some(None);
+            }
             "lint" => {
                 exit_if_nonzero(lint_shell_status(args));
                 return Some(None);

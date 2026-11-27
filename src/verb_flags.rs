@@ -74,6 +74,7 @@ const GLOBAL: DashPolicy = OwnRefusal(
 /// KNOWN_SUBCOMMANDS by `known_subcommands_names_every_dispatch_arm`.
 /// `tests/unknown_flag_refusal.rs` reads the `Refuse` rows from this source.
 pub(crate) const VERB_DASH_POLICY: &[(&str, DashPolicy)] = &[
+    ("agents", GLOBAL),
     ("ast", Refuse),
     ("blame", Refuse),
     ("changelog", Refuse),

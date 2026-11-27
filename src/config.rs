@@ -1539,7 +1539,7 @@ fn xdg_base_dir(
 }
 
 /// `$HOME` as a usable absolute base dir, or `None`.
-fn home_dir() -> Option<std::path::PathBuf> {
+pub(crate) fn home_dir() -> Option<std::path::PathBuf> {
     let home = std::env::var("HOME").ok()?;
     usable_base_dir(Some(home.as_str())).map(std::path::PathBuf::from)
 }
