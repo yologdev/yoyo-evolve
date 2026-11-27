@@ -58,6 +58,7 @@ pub(crate) const BUILTIN_TOOL_NAMES: &[&str] = &[
     "sub_agent",
     "explore_agent",
     "shared_state",
+    "agent",
 ];
 
 /// Pure helper: return the subset of `mcp_tools` whose names collide with any
@@ -1583,6 +1584,13 @@ impl AgentConfig {
                 &hooks,
             ));
 
+            // #1250: named agent files, only when one is dispatchable (src/agent_dispatch.rs).
+            if let Some(t) = crate::agent_dispatch::build_agent_dispatch_tool(self, &shared_state) {
+                tools.push(maybe_hook(
+                    with_session_cap(t, SESSION_TOOL_CALL_CAP),
+                    &hooks,
+                ));
+            }
             tools.push(maybe_hook(
                 Box::new(SharedStateTool::new(shared_state)),
                 &hooks,
@@ -4872,7 +4880,13 @@ ceiling 128000. The provider may reject the request with a 400. Lower max_tokens
         let tools = crate::tools::build_tools(true, &perms, &dirs, 10_000, false, vec![], None);
         let registered: Vec<&str> = tools.iter().map(|t| t.name()).collect();
 
-        for name in ["ask_user", "sub_agent", "explore_agent", "shared_state"] {
+        for name in [
+            "ask_user",
+            "sub_agent",
+            "explore_agent",
+            "shared_state",
+            "agent",
+        ] {
             assert!(
                 BUILTIN_TOOL_NAMES.contains(&name),
                 "'{name}' must stay in BUILTIN_TOOL_NAMES even though build_tools does \

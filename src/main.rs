@@ -37,6 +37,7 @@
 
 mod agent_builder;
 mod agent_defs;
+mod agent_dispatch;
 #[cfg(test)]
 mod agent_limits_tests;
 mod agent_tool_names;

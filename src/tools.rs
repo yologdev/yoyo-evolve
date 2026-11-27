@@ -2085,9 +2085,9 @@ pub(crate) fn build_explore_agent_tool(
 /// doors, one policy, one deaf" shape this repo has already shipped six times,
 /// so the second tool (#881 slice 2) reuses the first's assembly rather than
 /// copying it.
-struct DispatchFlavor {
-    name: &'static str,
-    description: &'static str,
+pub(crate) struct DispatchFlavor {
+    pub(crate) name: &'static str,
+    pub(crate) description: &'static str,
 }
 
 /// The ordinary dispatcher: whatever the parent was allowed to run, one hop
@@ -2224,7 +2224,7 @@ fn dispatch_tool_with_fallback(
     )))
 }
 
-fn sub_agent_tool_for(
+pub(crate) fn sub_agent_tool_for(
     config: &AgentConfig,
     provider_name: &str,
     model: &str,
