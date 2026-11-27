@@ -58,7 +58,7 @@ fn every_skip_reason_has_its_own_row() {
         ),
         (
             "---\nname: \"a:b\"\ndescription: d\n---\n",
-            "`name` \"a:b\" contains `:`",
+            "`name` \"a:b\" contains `:`, which Claude Code reserves for plugin agents",
         ),
         ("---\nname: a\n---\n", "`name` \"a\" has no `description`"),
         (
@@ -93,6 +93,13 @@ fn every_skip_reason_has_its_own_row() {
     // Near-miss that must pass: exactly 256 characters.
     let ok = format!("---\nname: {}\ndescription: d\n---\n", "n".repeat(256));
     assert!(parse(&ok).is_ok());
+    // Near-miss next to the `:` row: `-` and `_` inside a name still load.
+    assert_eq!(
+        parse("---\nname: code-review_bot\ndescription: d\n---\n")
+            .unwrap()
+            .name,
+        "code-review_bot"
+    );
 }
 
 #[test]
@@ -237,7 +244,7 @@ fn nothing_found_names_all_four_dirs() {
     let home = tempfile::tempdir().unwrap();
     let d = discover_agent_defs(proj.path(), Some(home.path()));
     let want = format!(
-        "No named sub-agent files found.\nLooked in (cwd only, not recursive):\n  {}\n  {}\n  {}\n  {}\n",
+        "No named sub-agent files found.\nLooked in (closest first, not recursive):\n  {}\n  {}\n  {}\n  {}\n  (no `.git` in the cwd or above it: parent directories not searched)\n",
         proj.path().join(".yoyo/agents").display(),
         proj.path().join(".claude/agents").display(),
         home.path().join(".yoyo/agents").display(),
@@ -257,4 +264,122 @@ fn running_from_home_does_not_shadow_a_file_with_itself() {
     assert_eq!(d.agents.len(), 1);
     assert_eq!(d.agents[0].scope, AgentScope::Project);
     assert!(d.shadowed.is_empty());
+}
+
+/// A tempdir with `.git` at its root and `a/b` below it. Asserts the tempdir
+/// itself is not inside some other repo, so "no `.git`" rows mean what they say.
+fn repo_with_subdirs() -> (tempfile::TempDir, PathBuf, PathBuf) {
+    let root = tempfile::tempdir().unwrap();
+    assert!(
+        !root.path().ancestors().any(|a| a.join(".git").exists()),
+        "the temp dir {} is inside a git repo; these rows need one outside",
+        root.path().display()
+    );
+    std::fs::create_dir(root.path().join(".git")).unwrap();
+    let a = root.path().join("a");
+    let b = a.join("b");
+    std::fs::create_dir_all(&b).unwrap();
+    (root, a, b)
+}
+
+#[test]
+fn walk_up_finds_a_repo_root_agent_from_a_subfolder() {
+    let (root, _a, b) = repo_with_subdirs();
+    let home = tempfile::tempdir().unwrap();
+    let file = write(root.path(), ".claude/agents/r.md", &agent("rev", "root"));
+    let d = discover_agent_defs(&b, Some(home.path()));
+    let found: Vec<(&str, &Path, AgentScope)> = d
+        .agents
+        .iter()
+        .map(|x| (x.name.as_str(), x.path.as_path(), x.scope))
+        .collect();
+    assert_eq!(found, vec![("rev", file.as_path(), AgentScope::Project)]);
+    assert_eq!(d.repo_root.as_deref(), Some(root.path()));
+    // b, a, root: two dirs each, closest first; then the two under home.
+    let mut want = Vec::new();
+    for dir in [
+        b.clone(),
+        b.parent().unwrap().to_path_buf(),
+        root.path().into(),
+    ] {
+        want.push(dir.join(".yoyo/agents"));
+        want.push(dir.join(".claude/agents"));
+    }
+    want.push(home.path().join(".yoyo/agents"));
+    want.push(home.path().join(".claude/agents"));
+    assert_eq!(d.searched, want);
+    assert!(!render_agents_listing(&d).contains("parent directories not searched"));
+}
+
+#[test]
+fn walk_up_closest_directory_wins_and_the_root_is_shadowed() {
+    let (root, a, _b) = repo_with_subdirs();
+    let home = tempfile::tempdir().unwrap();
+    // The root's copy is `.yoyo`, which would beat `.claude` inside one
+    // directory: closeness must still win across directories.
+    let far = write(root.path(), ".yoyo/agents/r.md", &agent("rev", "root"));
+    let near = write(&a, ".claude/agents/r.md", &agent("rev", "a"));
+    let d = discover_agent_defs(&a, Some(home.path()));
+    assert_eq!(d.agents.len(), 1);
+    assert_eq!(d.agents[0].path, near);
+    assert_eq!(d.agents[0].description, "a");
+    assert_eq!(
+        d.shadowed
+            .iter()
+            .map(|s| (s.def.path.clone(), s.by.clone()))
+            .collect::<Vec<_>>(),
+        vec![(far.clone(), near.clone())]
+    );
+    assert!(render_agents_listing(&d).contains(&format!(
+        "  rev  {}  shadowed by {}\n",
+        far.display(),
+        near.display()
+    )));
+}
+
+#[test]
+fn without_a_git_dir_only_the_cwd_is_searched() {
+    let parent = tempfile::tempdir().unwrap();
+    assert!(!parent.path().ancestors().any(|a| a.join(".git").exists()));
+    let home = tempfile::tempdir().unwrap();
+    let cwd = parent.path().join("sub");
+    std::fs::create_dir(&cwd).unwrap();
+    write(
+        parent.path(),
+        ".claude/agents/r.md",
+        &agent("rev", "parent"),
+    );
+    let d = discover_agent_defs(&cwd, Some(home.path()));
+    assert!(d.agents.is_empty(), "parent file loaded: {:?}", d.agents);
+    assert_eq!(d.repo_root, None);
+    assert_eq!(
+        d.searched,
+        vec![
+            cwd.join(".yoyo/agents"),
+            cwd.join(".claude/agents"),
+            home.path().join(".yoyo/agents"),
+            home.path().join(".claude/agents"),
+        ]
+    );
+}
+
+#[test]
+fn a_home_inside_the_walk_stays_user_scope_and_is_listed_once() {
+    // The repo root is the home directory (a dotfiles repo at ~).
+    let (home, a, _b) = repo_with_subdirs();
+    let file = write(home.path(), ".claude/agents/r.md", &agent("rev", "home"));
+    let d = discover_agent_defs(&a, Some(home.path()));
+    assert_eq!(d.agents.len(), 1);
+    assert_eq!(d.agents[0].path, file);
+    assert_eq!(d.agents[0].scope, AgentScope::User);
+    assert!(d.shadowed.is_empty());
+    assert_eq!(
+        d.searched,
+        vec![
+            a.join(".yoyo/agents"),
+            a.join(".claude/agents"),
+            home.path().join(".yoyo/agents"),
+            home.path().join(".claude/agents"),
+        ]
+    );
 }

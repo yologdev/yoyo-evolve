@@ -8,10 +8,15 @@
 //! with `serde_yaml_ng` — the YAML crate yoagent already depends on — never by
 //! hand (#1184 is the lesson about hand-parsed config shapes).
 //!
-//! Where it looks: `.yoyo/agents/` and `.claude/agents/` in the given project
-//! root (cwd only, no walk up), then `~/.yoyo/agents/` and `~/.claude/agents/`.
-//! Non-recursive. Precedence on a duplicate `name`: project beats user, and
-//! `.yoyo` beats `.claude` within a scope; the loser is listed as shadowed.
+//! Where it looks: `.yoyo/agents/` and `.claude/agents/` in the cwd and in
+//! every parent up to and including the repo root (the nearest ancestor that
+//! holds `.git`, file or directory), as Claude Code does. With no `.git` above
+//! the cwd only the cwd is searched, so a stray `~/.claude/agents` is never
+//! read as project scope. The home directory is never a project ancestor: its
+//! dirs are user scope, `~/.yoyo/agents/` and `~/.claude/agents/`, searched
+//! last. Non-recursive. Precedence on a duplicate `name`: the closest
+//! directory wins, `.yoyo` beats `.claude` within one directory, and any
+//! project dir beats user; the loser is listed as shadowed.
 
 use std::path::{Path, PathBuf};
 
@@ -79,6 +84,9 @@ pub struct Discovery {
     pub searched: Vec<PathBuf>,
     /// True when no home directory was available, so user dirs were not searched.
     pub home_missing: bool,
+    /// The nearest ancestor of the start dir holding `.git`; `None` means only
+    /// the start dir was searched as project scope.
+    pub repo_root: Option<PathBuf>,
 }
 
 /// Split `text` into (frontmatter, body) without byte indexing: the first
@@ -132,7 +140,9 @@ fn name_problem(name: &str) -> Option<String> {
         return Some(format!("`name` {name:?} starts with `-`"));
     }
     if name.contains(':') {
-        return Some(format!("`name` {name:?} contains `:`"));
+        return Some(format!(
+            "`name` {name:?} contains `:`, which Claude Code reserves for plugin agents"
+        ));
     }
     let chars = name.chars().count();
     if chars > MAX_NAME_CHARS {
@@ -210,12 +220,39 @@ pub fn parse_agent_file(text: &str, path: &Path, scope: AgentScope) -> Result<Ag
     })
 }
 
-/// The four directories, in precedence order.
-fn agent_dirs(project_root: &Path, home: Option<&Path>) -> Vec<(PathBuf, AgentScope)> {
-    let mut dirs = vec![
-        (project_root.join(".yoyo/agents"), AgentScope::Project),
-        (project_root.join(".claude/agents"), AgentScope::Project),
-    ];
+/// The project directories, closest first: `start` and each ancestor up to and
+/// including the nearest one holding `.git` (a file in a worktree or
+/// submodule, a directory otherwise). No `.git` anywhere above → `start` only,
+/// never a walk to `/`. A home directory met as a strict ancestor is left out:
+/// its dirs are user scope and are searched as such. Returns the dirs and the
+/// repo root, if one was found.
+fn project_walk(start: &Path, home: Option<&Path>) -> (Vec<PathBuf>, Option<PathBuf>) {
+    let Some(root) = start.ancestors().find(|a| a.join(".git").exists()) else {
+        return (vec![start.to_path_buf()], None);
+    };
+    let canonical = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    let home = home.map(canonical);
+    let mut dirs = Vec::new();
+    for dir in start.ancestors() {
+        let is_home = home.as_ref().is_some_and(|h| *h == canonical(dir));
+        if dir == start || !is_home {
+            dirs.push(dir.to_path_buf());
+        }
+        if dir == root {
+            break;
+        }
+    }
+    (dirs, Some(root.to_path_buf()))
+}
+
+/// Every agent directory, in precedence order: `.yoyo` then `.claude` for each
+/// project dir (closest first), then the two under home.
+fn agent_dirs(project_dirs: &[PathBuf], home: Option<&Path>) -> Vec<(PathBuf, AgentScope)> {
+    let mut dirs = Vec::new();
+    for dir in project_dirs {
+        dirs.push((dir.join(".yoyo/agents"), AgentScope::Project));
+        dirs.push((dir.join(".claude/agents"), AgentScope::Project));
+    }
     if let Some(home) = home {
         dirs.push((home.join(".yoyo/agents"), AgentScope::User));
         dirs.push((home.join(".claude/agents"), AgentScope::User));
@@ -223,15 +260,18 @@ fn agent_dirs(project_root: &Path, home: Option<&Path>) -> Vec<(PathBuf, AgentSc
     dirs
 }
 
-/// Discover every `*.md` file in the agent dirs (non-recursive). Takes the
-/// dirs' roots as parameters so tests never read the real home.
-pub fn discover_agent_defs(project_root: &Path, home: Option<&Path>) -> Discovery {
+/// Discover every `*.md` file in the agent dirs (non-recursive), walking up
+/// from `start` (see [`project_walk`]). Takes the start dir and home as
+/// parameters so tests never read the real cwd or home.
+pub fn discover_agent_defs(start: &Path, home: Option<&Path>) -> Discovery {
+    let (project_dirs, repo_root) = project_walk(start, home);
     let mut out = Discovery {
         home_missing: home.is_none(),
+        repo_root,
         ..Discovery::default()
     };
     let mut scanned: Vec<PathBuf> = Vec::new();
-    for (dir, scope) in agent_dirs(project_root, home) {
+    for (dir, scope) in agent_dirs(&project_dirs, home) {
         out.searched.push(dir.clone());
         // Running from $HOME makes a project dir and a user dir the same
         // directory; scan it once (as the project scope) instead of having
@@ -326,9 +366,12 @@ pub fn render_skipped(skip: &Skipped) -> String {
 pub fn render_agents_listing(d: &Discovery) -> String {
     let mut s = String::new();
     let looked_in = |s: &mut String| {
-        s.push_str("Looked in (cwd only, not recursive):\n");
+        s.push_str("Looked in (closest first, not recursive):\n");
         for dir in &d.searched {
             s.push_str(&format!("  {}\n", dir.display()));
+        }
+        if d.repo_root.is_none() {
+            s.push_str("  (no `.git` in the cwd or above it: parent directories not searched)\n");
         }
         if d.home_missing {
             s.push_str("  (no home directory: ~/.yoyo/agents and ~/.claude/agents not searched)\n");
@@ -370,7 +413,8 @@ pub fn render_agents_listing(d: &Discovery) -> String {
     s
 }
 
-/// `yoyo agents`: list what was found under the cwd and the home dir.
+/// `yoyo agents`: list what was found from the cwd up to the repo root, and
+/// under the home dir.
 pub fn handle_agents_command() {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let home = crate::config::home_dir();
