@@ -850,11 +850,22 @@ impl ShellHook {
                         // discarded: the error being returned is the TIMEOUT,
                         // not the reap.
                         let _ = child.wait();
-                        // The reader thread is not joined: a process the hook
-                        // backgrounded may still hold the pipe open, and the
-                        // thread ends by itself at EOF. Its output is dropped,
-                        // as a timed-out hook's always was.
-                        return Err(format!("Hook '{}' timed out after 5 seconds", self.name));
+                        // The reader thread is not joined, nor is EOF awaited: a
+                        // process the hook backgrounded may still hold the pipe
+                        // open, and the thread ends by itself at EOF. What it
+                        // drained so far is taken under the lock and shown,
+                        // #844-capped, since it is usually the clue to the hang
+                        // (#1248; before, it was dropped).
+                        let captured =
+                            std::mem::take(&mut *crate::sync_util::lock_or_recover(&capture));
+                        let so_far =
+                            captured.finish(HOOK_STDERR_HEAD_BYTES, HOOK_STDERR_TAIL_BYTES);
+                        let mut msg = format!("Hook '{}' timed out after 5 seconds", self.name);
+                        if !so_far.trim().is_empty() {
+                            msg.push_str(". stderr so far:\n");
+                            msg.push_str(&so_far);
+                        }
+                        return Err(msg);
                     }
                     std::thread::sleep(Duration::from_millis(50));
                 }

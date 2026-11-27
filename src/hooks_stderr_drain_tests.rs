@@ -103,3 +103,54 @@ fn a_multibyte_char_straddling_the_cut_is_not_split() {
     assert!(stderr.starts_with(&"a".repeat(HOOK_STDERR_HEAD_BYTES - 1)));
     assert!(stderr.ends_with("b✓end"));
 }
+
+/// #1248: a hook that hangs is killed at the 5 s timeout, and the error
+/// carries the stderr it had already printed — usually the clue to why it
+/// hung. The `sleep` is not `exec`ed, so a grandchild keeps the pipe open:
+/// the elapsed bound also proves the timeout path does not wait for EOF.
+#[test]
+fn a_timed_out_hook_error_carries_the_stderr_it_printed() {
+    let hook = post_hook("printf 'HOOK-MARKER-1248 waiting on lock\\n' >&2; sleep 30");
+    let start = Instant::now();
+    let err = hook
+        .run_command(&[], "", &[])
+        .expect_err("a hook sleeping 30 s times out");
+    let elapsed = start.elapsed();
+    assert!(
+        elapsed < Duration::from_secs(10),
+        "the timeout path must not wait for the grandchild's EOF; took {elapsed:?}"
+    );
+    assert_eq!(
+        err,
+        "Hook 'drain-probe' timed out after 5 seconds. stderr so far:\n\
+         HOOK-MARKER-1248 waiting on lock\n"
+    );
+}
+
+/// Near-miss: a hook that hangs silently keeps today's message exactly.
+#[test]
+fn a_silent_timed_out_hook_keeps_the_plain_message() {
+    let hook = post_hook("exec sleep 30");
+    let err = hook
+        .run_command(&[], "", &[])
+        .expect_err("a hook sleeping 30 s times out");
+    assert_eq!(err, "Hook 'drain-probe' timed out after 5 seconds");
+}
+
+/// A hung hook that printed a lot is still bounded by the #844 cap on the
+/// timeout path, with the cut marked, head and tail both kept.
+#[test]
+fn a_timed_out_hooks_stderr_is_capped() {
+    let hook = post_hook(
+        "printf 'HEAD-1248\\n' >&2; head -c 50000 /dev/zero | tr '\\000' z >&2; \
+         printf '\\nTAIL-1248\\n' >&2; exec sleep 30",
+    );
+    let err = hook
+        .run_command(&[], "", &[])
+        .expect_err("a hook sleeping 30 s times out");
+    let prefix = "Hook 'drain-probe' timed out after 5 seconds. stderr so far:\nHEAD-1248\n";
+    assert!(err.starts_with(prefix), "got: {:?}", err.get(..120));
+    assert!(err.ends_with("\nTAIL-1248\n"));
+    assert!(err.contains("bytes elided — hook stderr is capped at"));
+    assert!(err.len() <= 80 + HOOK_STDERR_HEAD_BYTES + HOOK_STDERR_TAIL_BYTES + 200);
+}
