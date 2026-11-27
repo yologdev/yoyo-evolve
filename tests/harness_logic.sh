@@ -1459,22 +1459,58 @@ check "learnings: no file at all still yields both contexts" \
 # Where yoyo woke up: a machine block in every loop's context (2026-11-27).
 MP="$ROOT/scripts/machine_profile.sh"
 mp_run() { env -i PATH="$PATH" HOME="$HOME" "$@" bash "$MP" 2>&1; }
-check "machine profile: always exits 0 and prints its six lines, even with an empty PATH" \
-    "$(env -i PATH=/nonexistent /bin/bash "$MP" >/dev/null 2>&1; echo $?) $(env -i PATH=/nonexistent /bin/bash "$MP" 2>/dev/null | grep -c .)" "0 6"
+mp_ctx() { # $1 = shell that fills $d/scripts (may be empty); prints the rendered WHERE YOU ARE block
+    ( d=$(mktemp -d); mkdir -p "$d/scripts"; eval "$1"; YOYO_REPO="$d"; source "$CTX" 2>/dev/null
+      printf '%s\n' "$YOYO_CONTEXT" | sed -n '/^=== WHERE YOU ARE ===$/,$p'; rm -rf "$d" ) 2>&1
+}
+check "machine profile: exits 0 with six lines on an empty PATH, and on this machine's PATH" \
+    "$(env -i PATH=/nonexistent /bin/bash "$MP" >/dev/null 2>&1; echo $?) $(env -i PATH=/nonexistent /bin/bash "$MP" 2>/dev/null | grep -c .) $(mp_run >/dev/null; echo $?) $(mp_run | grep -c .)" "0 6 0 6"
 check "machine profile: a provider key is reported by name, never by value" \
     "$(mp_run OPENAI_API_KEY=sk-canary-7f3a | grep -c 'OPENAI_API_KEY') $(mp_run OPENAI_API_KEY=sk-canary-7f3a | grep -c 'sk-canary-7f3a')" "1 0"
-check "machine profile: a key outside the model-provider list is not reported" \
-    "$(mp_run AWS_SECRET_ACCESS_KEY=canary STRIPE_API_KEY=canary | grep -cE 'AWS|STRIPE|canary')" "0"
-check "machine profile: no host name or user name in the output" \
-    "$(mp_run | grep -cF -e "$(hostname 2>/dev/null || echo no-hostname-here)" -e "/$(id -un)")" "0"
-check "machine profile: reads no file outside /proc and looks in no credential store" \
-    "$(grep -vE '^[[:space:]]*#' "$MP" | grep -cE 'history|\.aws|\.ssh|\.netrc|keychain|security find|credentials|\.env\b|(^|[^a-z])cat ')" "0"
+check "machine profile: a variable outside the model-provider list is not reported" \
+    "$(mp_run AWS_SECRET_ACCESS_KEY=canary STRIPE_API_KEY=canary GH_TOKEN=canary | grep -cE 'AWS|STRIPE|GH_TOKEN|canary')" "0"
+check "machine profile: its key list is exactly the variables src/providers.rs reads, plus API_KEY" \
+    "$(sed -n 's/^PROVIDER_KEYS="\(.*\)"$/\1/p' "$MP" | tr ' ' '\n' | sort | tr '\n' ' ')" \
+    "$( { awk '/^pub fn provider_api_key_vars/,/^}/' "$ROOT/src/providers.rs" | grep -oE '"[A-Z][A-Z_]*"' | tr -d '"'; echo API_KEY; } | sort -u | tr '\n' ' ')"
+MP_HOST=$(hostname 2>/dev/null); [ -n "$MP_HOST" ] || MP_HOST=$(uname -n 2>/dev/null)
+check "machine profile: no host name, user name or home path in the output" \
+    "$(if [ -n "$MP_HOST" ] && [ -n "$(id -un)" ]; then mp_run | grep -cF -e "$MP_HOST" -e "${MP_HOST%%.*}" -e "$HOME"; else echo unverifiable; fi) $(mp_run | grep -cwF -e "$(id -un)")" "0 0"
+# Behavioural, not a source grep: seed a home directory with canaries in the
+# places credentials live and run the script there.
+mp_home_case() {
+    ( h=$(mktemp -d); mkdir -p "$h/.aws" "$h/.ssh" "$h/.config/gh" "$h/.yoyo"
+      for f in .aws/credentials .ssh/id_ed25519 .config/gh/hosts.yml .netrc .gitconfig .bash_history .zsh_history .env .npmrc .yoyo.toml .yoyo/config.toml; do
+          echo "canary-9c1e api_key = canary-9c1e" > "$h/$f"; done
+      cd "$h" && env -i PATH="$PATH" HOME="$h" bash "$MP" 2>&1 | grep -c 'canary-9c1e'; rm -rf "$h" )
+}
+check "machine profile: nothing from a home directory's credential files reaches the output" "$(mp_home_case)" "0"
+check "machine profile: GITHUB_ACTIONS=false and CI=false are not read as CI" \
+    "$(mp_run GITHUB_ACTIONS=false CI=false | grep -cE '^Running on: .*(Actions|CI$)')" "0"
+check "machine profile: a hosted runner, a self-hosted runner and plain CI each get their own line" \
+    "$(mp_run GITHUB_ACTIONS=true RUNNER_ENVIRONMENT=github-hosted | grep -c 'rebuilt each run') $(mp_run GITHUB_ACTIONS=true RUNNER_ENVIRONMENT=self-hosted | grep -c 'persists between runs') $(mp_run GITHUB_ACTIONS=true RUNNER_ENVIRONMENT=self-hosted | grep -c 'rebuilt') $(mp_run CI=true | grep -c '^Running on: CI$')" "1 1 0 1"
+mp_stub_case() { # $1 = body of a fake nvidia-smi; prints the GPU line
+    ( b=$(mktemp -d); printf '#!/bin/sh\n%s\n' "$1" > "$b/nvidia-smi"; chmod +x "$b/nvidia-smi"
+      env -i PATH="$b:$PATH" HOME="$HOME" bash "$MP" 2>&1 | grep '^GPU: '; rm -rf "$b" )
+}
+check "machine profile: a failing nvidia-smi's error text is not printed as the GPU" \
+    "$(mp_stub_case 'echo "NVIDIA-SMI has failed because it could not communicate"; exit 9')" "GPU: nvidia-smi is installed but did not answer"
+check "machine profile: a working nvidia-smi names the GPU" \
+    "$(mp_stub_case 'echo "RTX 4090, 24564 MiB"')" "GPU: RTX 4090, 24564 MiB"
+check "machine profile: an absent probe is not printed as an absent thing" \
+    "$(env -i PATH=/nonexistent /bin/bash "$MP" 2>/dev/null | grep -cE 'only nvidia-smi and Apple silicon are checked|not checked \(no curl\)|no CI or container marker seen|CPU: not read')" "4"
+check "machine profile: under 2 GB is printed in MB, never as 0 GB" \
+    "$(eval "$(grep '^size() ' "$MP")"; echo "$(size 474) / $(size 2047) / $(size 16384)")" "474 MB / 2047 MB / 16 GB"
 check "context: the machine block is in both contexts, and says so when nothing was scanned" \
-    "$( ( d=$(mktemp -d); YOYO_REPO="$d"; source "$CTX" 2>/dev/null; printf '%s\n' "$YOYO_CONTEXT" | grep -c '^=== WHERE YOU ARE ===$'; printf '%s' "$YOYO_CONTEXT_LEAN" | grep -c 'Not scanned this session'; rm -rf "$d" ) 2>&1 | tr '\n' ' ')" "1 1 "
+    "$( ( d=$(mktemp -d); YOYO_REPO="$d"; source "$CTX" 2>/dev/null; for c in "$YOYO_CONTEXT" "$YOYO_CONTEXT_LEAN"; do printf '%s\n' "$c" | grep -c '^=== WHERE YOU ARE ===$'; printf '%s' "$c" | grep -c 'Not scanned this session'; done; rm -rf "$d" ) 2>&1 | tr '\n' ' ')" "1 1 1 1 "
 check "context: with the script present, the block carries the scan" \
-    "$( ( d=$(mktemp -d); mkdir -p "$d/scripts"; cp "$MP" "$d/scripts/"; YOYO_REPO="$d"; source "$CTX" 2>/dev/null; printf '%s' "$YOYO_CONTEXT" | grep -c '^Running on: '; rm -rf "$d" ) 2>&1)" "1"
-check "context: the machine block states facts and gives no instruction" \
-    "$(bash "$MP" 2>/dev/null | grep -ciE 'you (must|should)|do not|never|always')" "0"
+    "$(mp_ctx 'cp "$MP" "$d/scripts/"' | grep -c '^Running on: ')" "1"
+check "context: a scan that crashes, or prints something else, is reported as failed, with none of its output" \
+    "$(mp_ctx 'printf "echo Running on: half; echo leak-4d2; exit 3\n" > "$d/scripts/machine_profile.sh"' | grep -cE 'scan of this machine failed|leak-4d2|Not scanned') $(mp_ctx 'printf "echo leak-4d2\n" > "$d/scripts/machine_profile.sh"' | grep -cE 'scan of this machine failed|leak-4d2|Not scanned')" "1 1"
+# Every string the script can print (all branches, not only this machine's),
+# and the block as rendered in all three states.
+MP_INSTR='you (must|should|need)|do not|don.t|never|always|make sure'
+check "context: the machine block states facts and gives no instruction, in any branch or state" \
+    "$(grep -vE '^[[:space:]]*#' "$MP" | grep -ciE "$MP_INSTR") $( { mp_ctx ''; mp_ctx 'cp "$MP" "$d/scripts/"'; mp_ctx 'printf "exit 3\n" > "$d/scripts/machine_profile.sh"'; } | grep -ciE "$MP_INSTR")" "0 0"
 check "inspect-machine skill: keys by name only, and no search for credentials" \
     "$(grep -c "Don't look for credentials anywhere else" "$ROOT/skills/inspect-machine/SKILL.md")" "1"
 if [ -f "$SYN" ]; then

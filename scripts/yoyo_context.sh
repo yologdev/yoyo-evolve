@@ -152,6 +152,13 @@ fi
 _MACHINE=""
 if [ -f "$_YOYO_REPO/scripts/machine_profile.sh" ]; then
     _MACHINE=$(bash "$_YOYO_REPO/scripts/machine_profile.sh" 2>/dev/null) || _MACHINE=""
+    # A scan that crashed or printed something else is not "not scanned": say so
+    # here and in the log, and put no partial output in the prompt.
+    case "$_MACHINE" in
+        "Running on: "*) ;;
+        *)  echo "WARNING: scripts/machine_profile.sh failed or printed no profile" >&2
+            _MACHINE="The scan of this machine failed this session, so nothing is known about it from here. The inspect-machine skill can look." ;;
+    esac
 fi
 
 # One template, rendered twice: $1 is the SELF-WISDOM text.
