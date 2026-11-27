@@ -142,7 +142,7 @@ fn render_pins_a_whole_valid_entry_and_a_whole_skipped_line() {
     .unwrap();
     assert_eq!(
         render_agent(&def),
-        "  code-reviewer  [project] /proj/.claude/agents/code-reviewer.md\n    Reviews diffs\n    tools: Read, Grep · model: sonnet · maxTurns: 5\n    ignored keys: color\n"
+        "  code-reviewer  [project] /proj/.claude/agents/code-reviewer.md\n    Reviews diffs\n    tools: read_file, search · model: sonnet · maxTurns: 5\n    ignored keys: color\n"
     );
     let skip = Skipped {
         path: p("/proj/.claude/agents/broken.md"),
@@ -381,5 +381,33 @@ fn a_home_inside_the_walk_stays_user_scope_and_is_listed_once() {
             home.path().join(".yoyo/agents"),
             home.path().join(".claude/agents"),
         ]
+    );
+}
+
+#[test]
+fn render_shows_resolved_tools_unresolved_entries_and_whole_tool_removal() {
+    let def = parse_agent_file(
+        "---\nname: r\ndescription: d\ntools: Read, WebFetch, Bash\ndisallowedTools: Bash(git push *)\n---\n",
+        &p("/proj/.claude/agents/r.md"),
+        AgentScope::Project,
+    )
+    .unwrap();
+    assert_eq!(
+        render_agent(&def),
+        "  r  [project] /proj/.claude/agents/r.md\n    d\n    tools: read_file · disallowedTools: Bash(git push *)\n    unresolved: WebFetch (no yoyo tool), Bash (bash removed by disallowedTools)\n    note: disallowedTools Bash(git push *) removes the whole tool (yoyo has no per-command rule for sub-agents)\n"
+    );
+}
+
+#[test]
+fn render_marks_an_agent_whose_tools_resolve_to_nothing_as_not_usable() {
+    let def = parse_agent_file(
+        "---\nname: r\ndescription: d\ntools: WebFetch, Task\n---\n",
+        &p("/proj/.claude/agents/r.md"),
+        AgentScope::Project,
+    )
+    .unwrap();
+    assert_eq!(
+        render_agent(&def),
+        "  r  [project] /proj/.claude/agents/r.md\n    d\n    unresolved: WebFetch (no yoyo tool), Task (nested delegation not supported yet)\n    not usable: none of tools [WebFetch, Task] resolves to a yoyo sub-agent tool\n"
     );
 }

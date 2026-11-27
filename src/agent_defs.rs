@@ -333,11 +333,49 @@ pub fn render_agent(def: &AgentDef) -> String {
         }
     };
     let mut details = Vec::new();
-    if let Some(t) = &def.tools {
-        details.push(format!("tools: {}", join(t)));
-    }
-    if let Some(t) = &def.disallowed_tools {
-        details.push(format!("disallowedTools: {}", join(t)));
+    // The tool fields as yoyo resolves them against a sub-agent child's real
+    // tool set, not the raw strings: `tools: Read` printed verbatim read as if
+    // yoyo understood it.
+    let mut tool_notes = Vec::new();
+    if def.tools.is_some() || def.disallowed_tools.is_some() {
+        let available = crate::agent_tool_names::child_tool_names();
+        let r = crate::agent_tool_names::resolve_agent_tools(
+            def.tools.as_deref(),
+            def.disallowed_tools.as_deref().unwrap_or(&[]),
+            &available,
+        );
+        if r.usable {
+            details.push(format!("tools: {}", join(&r.resolved)));
+        }
+        if let Some(t) = &def.disallowed_tools {
+            details.push(format!("disallowedTools: {}", join(t)));
+        }
+        if !r.unresolved.is_empty() {
+            let entries: Vec<String> = r
+                .unresolved
+                .iter()
+                .map(|u| {
+                    let field = if u.field == "tools" {
+                        String::new()
+                    } else {
+                        format!("{} ", u.field)
+                    };
+                    format!("{field}{} ({})", u.entry, u.reason)
+                })
+                .collect();
+            tool_notes.push(format!("unresolved: {}", entries.join(", ")));
+        }
+        for entry in &r.whole_tool_removals {
+            tool_notes.push(format!(
+                "note: disallowedTools {entry} removes the whole tool (yoyo has no per-command rule for sub-agents)"
+            ));
+        }
+        if !r.usable {
+            tool_notes.push(format!(
+                "not usable: none of tools [{}] resolves to a yoyo sub-agent tool",
+                def.tools.as_deref().unwrap_or(&[]).join(", ")
+            ));
+        }
     }
     if let Some(m) = &def.model {
         details.push(format!("model: {m}"));
@@ -347,6 +385,9 @@ pub fn render_agent(def: &AgentDef) -> String {
     }
     if !details.is_empty() {
         s.push_str(&format!("    {}\n", details.join(" · ")));
+    }
+    for note in &tool_notes {
+        s.push_str(&format!("    {note}\n"));
     }
     if !def.ignored_keys.is_empty() {
         s.push_str(&format!(

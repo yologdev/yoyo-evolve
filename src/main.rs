@@ -39,6 +39,7 @@ mod agent_builder;
 mod agent_defs;
 #[cfg(test)]
 mod agent_limits_tests;
+mod agent_tool_names;
 #[cfg(test)]
 mod anthropic_preset_tests;
 mod auto_check_scope;
