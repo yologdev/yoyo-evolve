@@ -71,14 +71,14 @@ async fn child_refuses_hard_denied_command_in_both_approval_states() {
 fn child_layer_two_refuses_only_when_the_parent_would_have_asked() {
     let warning = analyze_bash_command(FLAGGED).expect("fixture must be flagged");
     assert_eq!(
-        child_confirm_refusal(true, FLAGGED),
+        child_confirm_refusal(true, FLAGGED, None),
         Some(format!(
             "Command needs user confirmation that a sub-agent cannot obtain: {warning} \
              Return this step to the parent agent and let it run the command itself, \
              where the user can confirm it."
         ))
     );
-    assert_eq!(child_confirm_refusal(false, FLAGGED), None);
+    assert_eq!(child_confirm_refusal(false, FLAGGED, None), None);
 }
 
 #[tokio::test]
@@ -88,7 +88,7 @@ async fn child_bash_refuses_flagged_command_when_parent_confirms() {
         let err = run(child_bash(true, explore).as_ref(), FLAGGED)
             .await
             .expect_err("parent would have asked, so the child must refuse");
-        assert_eq!(Some(err), child_confirm_refusal(true, FLAGGED));
+        assert_eq!(Some(err), child_confirm_refusal(true, FLAGGED, None));
     }
 }
 
@@ -113,7 +113,11 @@ async fn near_miss_commands_pass_through_in_both_states() {
         assert_eq!(analyze_bash_command(cmd), None, "anti-vacuous: {cmd}");
         assert_eq!(hard_deny_refusal(HARD_DENY_PATTERNS, cmd), None, "{cmd}");
         for parent_confirms in [false, true] {
-            assert_eq!(child_confirm_refusal(parent_confirms, cmd), None, "{cmd}");
+            assert_eq!(
+                child_confirm_refusal(parent_confirms, cmd, None),
+                None,
+                "{cmd}"
+            );
         }
     }
     // Execute only the cheap one; `cargo test` would recurse into this suite.
@@ -242,4 +246,59 @@ fn both_child_builders_pass_the_parents_pinned_cwd() {
     let src = include_str!("tools.rs");
     let needle = ["config.bash_cwd", ".as_deref(),"].concat();
     assert_eq!(src.matches(needle.as_str()).count(), 2);
+}
+
+/// #1245: a pinned child (a /spawn worker's sub-agent) judges `rm` of its own
+/// working folder against that folder, not the process's. The pinned folder
+/// is a tempdir path that does not exist (the rule reads paths lexically too),
+/// and the helpers are pure, so no red run can delete anything.
+#[test]
+fn a_pinned_child_judges_rm_of_its_working_folder_against_its_pin() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let base = std::fs::canonicalize(dir.path()).unwrap();
+    let pin = base.join("worktree-1245");
+    let pin_str = pin.to_string_lossy().into_owned();
+    let cmd = format!("rm -rf {pin_str}");
+    let want = format!("recursive delete targeting the working folder '{pin_str}'");
+    let confirm = child_confirm_refusal(true, &cmd, Some(&pin_str)).unwrap_or_default();
+    assert!(confirm.contains(&want), "confirm door: {confirm:?}");
+    let unattended =
+        crate::tools::child_unattended_refusal(true, &cmd, Some(&pin_str)).unwrap_or_default();
+    assert!(
+        unattended.contains(&want),
+        "unattended door: {unattended:?}"
+    );
+    // Near-miss: a folder inside the pin is not the working folder.
+    let inside = format!("rm -rf {pin_str}/sub");
+    assert_eq!(child_confirm_refusal(true, &inside, Some(&pin_str)), None);
+    assert_eq!(
+        crate::tools::child_unattended_refusal(true, &inside, Some(&pin_str)),
+        None
+    );
+}
+
+/// #1245, the wrapper half: the child's bash passes its pin to the helpers.
+/// The pin does not exist, so even a red run has no folder to run or delete in.
+#[tokio::test]
+async fn a_pinned_child_bash_asks_before_removing_its_working_folder() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let pin = std::fs::canonicalize(dir.path()).unwrap().join("gone-1245");
+    let pin_str = pin.to_string_lossy().into_owned();
+    let bash = crate::tools::sub_agent_child_tools(
+        &cli::DirectoryRestrictions::default(),
+        &[],
+        &[],
+        true,
+        Some(&pin_str),
+    )
+    .into_iter()
+    .find(|t| t.name() == "bash")
+    .expect("the child must carry a bash tool");
+    let err = run(bash.as_ref(), &format!("rm -rf {pin_str}"))
+        .await
+        .expect_err("the child must refuse to remove its working folder");
+    assert!(
+        err.contains(&format!("the working folder '{pin_str}'")),
+        "{err}"
+    );
 }

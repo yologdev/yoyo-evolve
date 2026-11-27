@@ -72,7 +72,8 @@ fn census() -> Vec<(&'static str, String)> {
         ),
         (
             "child confirm",
-            crate::tools::child_confirm_refusal(true, "git push --force").expect("child confirm"),
+            crate::tools::child_confirm_refusal(true, "git push --force", None)
+                .expect("child confirm"),
         ),
         (
             "git redirection (pinned cwd)",

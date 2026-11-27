@@ -180,7 +180,7 @@ don't ask. A symlink on the way is followed (`rm -rf /tmp/link/` with
 `link -> /home/me/proj` asks), but a bare `rm -rf /tmp/link` doesn't,
 because that removes the link and not the folder. The working folder is
 the one the command runs in (a `/spawn` worker's own folder for its
-commands), not one a `cd` earlier in the same command moves to:
+commands, including its sub-agents' commands since #1245), not one a `cd` earlier in the same command moves to:
 `cd /x && rm -rf /home/me/proj` still asks.
 Since Day 269 `..` is resolved the same way on **absolute and home
 paths** (`~`, `$HOME`, `${HOME}`): `rm -rf /tmp/../*` is `rm -rf /*` and

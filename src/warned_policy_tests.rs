@@ -136,11 +136,11 @@ async fn without_the_refusal_the_same_warned_command_runs() {
 fn a_child_refuses_with_the_parents_text() {
     let warning = crate::safety::analyze_bash_command(WARNED).expect("fixture is warned");
     assert_eq!(
-        child_unattended_refusal(true, WARNED),
+        child_unattended_refusal(true, WARNED, None),
         Some(unattended_refusal(&warning))
     );
-    assert_eq!(child_unattended_refusal(false, WARNED), None);
-    assert_eq!(child_unattended_refusal(true, "touch OK"), None);
+    assert_eq!(child_unattended_refusal(false, WARNED, None), None);
+    assert_eq!(child_unattended_refusal(true, "touch OK", None), None);
 }
 
 /// #1229: the working folder is the one the bash tool runs in (its pinned

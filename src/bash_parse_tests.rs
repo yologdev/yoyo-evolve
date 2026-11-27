@@ -437,11 +437,11 @@ fn a_child_refuses_what_its_parent_would_ask_about() {
     use crate::tools::child_confirm_refusal;
     for cmd in ["{echo,hi}", "eval echo hi", "ls &&"] {
         assert_eq!(analyze_bash_command(cmd), None, "anti-vacuous: {cmd:?}");
-        let got = child_confirm_refusal(true, cmd).unwrap_or_default();
+        let got = child_confirm_refusal(true, cmd, None).unwrap_or_default();
         assert!(got.contains("Unanalyzable command"), "{cmd:?}: {got:?}");
-        assert_eq!(child_confirm_refusal(false, cmd), None, "{cmd:?}");
+        assert_eq!(child_confirm_refusal(false, cmd, None), None, "{cmd:?}");
     }
-    assert_eq!(child_confirm_refusal(true, "ls -la"), None);
+    assert_eq!(child_confirm_refusal(true, "ls -la", None), None);
 }
 
 // ---- #1209: a literal `bash -c` / `sh -c` body is the command it runs -------

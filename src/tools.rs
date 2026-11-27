@@ -18,7 +18,7 @@ use crate::commands_todo;
 use crate::commands_web;
 use crate::format::*;
 use crate::hooks::{self, maybe_hook, AuditHook, HookRegistry};
-use crate::safety::{analyze_bash_command, analyze_bash_command_in};
+use crate::safety::analyze_bash_command_in;
 use crate::smart_edit::with_smart_edit;
 use crate::tool_wrappers::{
     maybe_confirm, maybe_guard, maybe_guard_arc, sub_agent_model_label, with_auto_check,
@@ -1680,12 +1680,16 @@ pub(crate) use crate::hard_deny::{hard_deny_refusal, HARD_DENY_PATTERNS};
 /// (`analyze_bash_command` flags it and the parent has a confirm prompt), the
 /// child has nobody to ask, so it refuses. Without a parent prompt (piped,
 /// `--yes`) the parent allows such commands, and so does the child.
-pub(crate) fn child_confirm_refusal(parent_confirms: bool, command: &str) -> Option<String> {
+pub(crate) fn child_confirm_refusal(
+    parent_confirms: bool,
+    command: &str,
+    pinned_cwd: Option<&str>,
+) -> Option<String> {
     if !parent_confirms {
         return None;
     }
     // #1202 step 1: what the parent would ask about even after "always".
-    let warning = analyze_bash_command(command)
+    let warning = child_bash_warning(command, pinned_cwd)
         .or_else(|| crate::bash_parse::unanalyzable_reason(command))?;
     Some(crate::warned_policy::needs_confirmation(
         "a sub-agent",
@@ -1697,11 +1701,23 @@ pub(crate) fn child_confirm_refusal(parent_confirms: bool, command: &str) -> Opt
 
 /// #1231: under a parent that refuses warned commands, the child refuses them
 /// with the parent's own text, so delegating is never a way around it.
-pub(crate) fn child_unattended_refusal(refuse: bool, command: &str) -> Option<String> {
+pub(crate) fn child_unattended_refusal(
+    refuse: bool,
+    command: &str,
+    pinned_cwd: Option<&str>,
+) -> Option<String> {
     refuse
-        .then(|| analyze_bash_command(command))
+        .then(|| child_bash_warning(command, pinned_cwd))
         .flatten()
         .map(|w| crate::warned_policy::unattended_refusal(&w))
+}
+
+/// #1245: a child is judged in the folder its bash runs in, its pin (a /spawn
+/// worker's folder) or else the process cwd, as `StreamingBashTool` (#1229).
+fn child_bash_warning(command: &str, pinned_cwd: Option<&str>) -> Option<String> {
+    let runs_in = pinned_cwd.map(std::path::PathBuf::from);
+    let runs_in = runs_in.or_else(|| std::env::current_dir().ok());
+    analyze_bash_command_in(command, runs_in.as_deref())
 }
 
 /// A sub-agent child's bash is yoagent's raw `BashTool`, which never sees
@@ -1738,14 +1754,17 @@ impl AgentTool for UserDenyBashTool {
         ctx: yoagent::types::ToolContext,
     ) -> Result<yoagent::types::ToolResult, yoagent::types::ToolError> {
         let command = params.get("command").and_then(|v| v.as_str());
+        let pin = self.pinned_cwd.as_deref();
         let refusal = command.and_then(|c| {
-            child_git_redirection_refusal(self.pinned_cwd.as_deref(), c)
+            child_git_redirection_refusal(pin, c)
                 .or_else(|| hard_deny_refusal(HARD_DENY_PATTERNS, c))
                 .or_else(|| {
                     crate::cd_deny::effective_user_deny_refusal(&self.user_deny, &self.cd_deny, c)
                 })
-                .or_else(|| child_confirm_refusal(self.parent_confirms, c))
-                .or_else(|| child_unattended_refusal(crate::warned_policy::refuses_warned(), c))
+                .or_else(|| child_confirm_refusal(self.parent_confirms, c, pin))
+                .or_else(|| {
+                    child_unattended_refusal(crate::warned_policy::refuses_warned(), c, pin)
+                })
         });
         if let Some(refusal) = refusal {
             return Err(yoagent::types::ToolError::Failed(refusal));
