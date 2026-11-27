@@ -44,7 +44,7 @@ fn a_hook_writing_200kb_to_stderr_finishes_and_its_feedback_is_capped() {
     assert!(
         stderr.starts_with("HEAD-MARKER\n"),
         "head kept: {:?}",
-        &stderr.get(..40)
+        stderr.get(..40)
     );
     assert!(stderr.ends_with("\nTAIL-MARKER\n"), "tail kept");
     let marker_budget = 200;
