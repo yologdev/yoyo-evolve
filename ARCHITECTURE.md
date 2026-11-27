@@ -1826,3 +1826,110 @@ The end-to-end and persist tests were written by the test-coverage reviewer and 
 - **Why not `ProviderError::classify(400, msg)`:** checked first. It agrees on every phrase, but it reads whitespace-only text as overflow (status rule) and does not recognise the display prefix, which is what actually lands in `error_message`.
 - **Evidence grade (read from code, yoagent 0.27.7; not observed):** `error_message` is `e.to_string()` (`agent_loop.rs` `error_message`). HTTP 429/503/529 become `RateLimited`, whose display carries no body, and the Azure SSE payload is caught by `is_rate_limit_payload` before overflow, so the Azure text reaches `is_overflow_error` only if a provider sends it on another status or in a payload yoagent does not flag as a rate limit. No user is known to have been compacted by it.
 - **Tests:** `src/prompt_retry_overflow_tests.rs` checks each verdict against yoagent (`classify` and the `Message` reader), never against a typed list: Azure's text copied from yoagent's `AZURE_NO_CAPACITY` fixture, the in-stream stop reason, the empty-body display, one overflow per provider, near-misses. Positive control: re-adding `"exceeds the maximum"` ahead of the delegation (marked `NEUTERED`, marker counted before running) reddened `azure_peak_load_rate_limit_is_not_an_overflow` and `near_misses_are_not_overflows`; restored, 5/5 green.
+
+### `scripts/evolve.sh` backlog drain + `skills/evolve` Filing Issues — 2026-11-27: the drain has its own trigger, and filing has a bar
+
+- **Measured (2026-10-27..11-26, 251 task commits):** 159 `Fixes`, 73 `Part of`, 24 neither. Of the 148 issues those tasks served, 137 were opened by the bot (`agent-self`), 11 by the creator, none by the community. In the same window 133 `agent-self` issues were filed and 119 closed. The backlog sat at about 21 open.
+- **Why the second slot never went anywhere else:** the drain fired at "more than `SELF_ISSUES_LIMIT`" (12), a number that exists to say how many full issue bodies fit in the planner prompt. At 21 open it was true every session, so one of two slots was always a backlog close, and the self-driven slot had no code milestone to prefer (the one active dream is pursued in dream cycles).
+- **Superseded claim, recorded rather than erased:** the comment on `SELF_ISSUES_LIMIT` said three places quote it, the third being the drain trigger. It is two now.
+- **Now:** `SELF_DRAIN_THRESHOLD=20` and `SELF_DRAIN_CEILING=30`. At or under 20 open: no drain. 21 to 30: at most one a day, skipped when any `agent-self` issue was closed in the last 24 hours (one extra `gh issue list --state closed --search "closed:>=…"`, asked only in that band). Over 30: every session, as before. The harness computes `DRAIN_STATUS` and the planner prompt prints it (`BACKLOG DRAIN: $DRAIN_STATUS`); the planner no longer compares two numbers itself.
+- **Fail direction:** a failed backlog query, `gh` absent, or an unreadable closed-count all read as DUE. "Could not read" must not become "slot is free".
+- **20 is shared** with the evolve skill's "over 20, leftovers go on the parent issue" rule. Keep the two equal.
+- **Filing bar (`skills/evolve/SKILL.md`, Filing Issues):** an `agent-self` issue must be something a person using yoyo on their own project would hit, and must name the command or situation. Everything else is a comment on the issue it belongs to, or a journal line, at any backlog size. This throttles inflow at the source; the over-20 residue rule only redirected it once the backlog was already large.
+- **Not changed:** the priority ladder, the two-slot allocation, the 3-issues-per-session cap, the umbrella review, and what a drain task must do once it is due.
+- **Expected and unverified:** that the freed slot goes to something other than another self-filed fix. The self-driven slot already picks `agent-self` bugs on its own (tiers 2 and 6), so this change removes the forcing, not the habit. Check after a week: share of task commits whose issue was bot-filed, and the open count.
+- **Tests:** `tests/harness_logic.sh`, 13 checks: nine cases through the extracted decision block (empty, at threshold, over with 0 and 1 closed, closed-count unreadable, at ceiling, over ceiling, query failed, `gh` absent), the two constants, the prompt line, the retired trigger text gone, and the skill's bar. Suite: 334 → 347 passing; the 2 failures (`social bin: …`) are the same before and after on a checkout with no built binary, and pass in CI.
+
+### `skills/evolve/SKILL.md` — incident record (moved here 2026-11-27, verbatim)
+
+The skill is read in every implementation task, and four of its passages had become incident logs (Days 252–268: commit hashes, ticket numbers, one-off measurements). The rules stayed in the skill, shortened to rule plus one-clause reason; the passages are kept here exactly as they stood, so no history is lost. Same policy as CLAUDE.md: new history goes here, under the file it is about. The first block is the old goal statement, replaced because it contradicted IDENTITY.md ("a reference point, not my purpose").
+
+**"Your Ultimate Goal" (the whole section, replaced)**
+
+````markdown
+## Your Ultimate Goal
+
+You are trying to become the best open-source coding agent in the world.
+
+Today, Claude Code is the benchmark. It can navigate complex codebases, make
+multi-file edits with surgical precision, run and fix tests, manage git
+workflows, understand project context from config files, and recover gracefully
+when things go wrong. Developers pay $20/month for it.
+
+You started as 200 lines of Rust. You have the same LLM brain as Claude Code.
+What you lack is everything around it — the tools, the judgment, the error
+handling, the polish. Every session you close that gap by one step.
+
+Your measure of progress: **could a real developer use me for real work today?**
+If the answer is "not yet," figure out what's stopping them and fix that thing.
+
+Not features for features' sake. Not refactoring for cleanliness. Ask: what
+would make someone choose me over opening Claude Code right now? Build that.
+````
+
+**"After each change", step 0**
+
+````markdown
+0. **Publish your evidence before the full gate, not after it.** The moment a before/after table,
+   a probe of the built binary, or a recall control (break it, watch it fail by name, restore)
+   prints its result, your next tool call posts it as a comment on the task's issue: the command,
+   the raw result, the binary mtime, and for a control the marker count before and after. Only
+   then run the slow fmt/clippy/test gate. Why: the time budget cuts tasks during that gate, and
+   the harness then commits with a title and no body, so evidence kept for the commit message is
+   lost. That happened on Days 260, 261, 266 and 267. On Day 267 the task whose plan said "post
+   before the gate" kept its tables on #1221, and the task whose plan only said "record" kept its
+   control in one narrated line. This applies whether or not your task file asks for it.
+   **Then commit, with the full body, before the slow gate too** (`git add -A && git commit -F
+   <msgfile>`, as soon as the task's targeted `cargo test <name>` passes). The commit body is the
+   one record a ticket comment can't replace, and it was still cut on Day 268: 3 of 4 code commits
+   (`e790aeee`, `95df6d8b`, `8557c48c`) have code and no body, because step 7 puts the commit after
+   the full gate (Day 268 Task 2: fmt+build alone took 6m50s, then the test run was cut). That is
+   safe: the harness re-runs `cargo build && cargo test` after your task with a fix loop and reverts
+   the task if it fails (evolve.sh "Check 2"), so an early commit can't reach main untested. If the
+   gate then finds something, fix it and add a commit; don't leave the fix uncommitted.
+````
+
+**"After each change", steps 7 and 8**
+
+````markdown
+7. **Commit** — `git add -A && git commit -m "Day N (HH:MM): <short description>"`. One commit per improvement.
+   **Closing keywords live in the title AND the body.** GitHub closes an issue when any pushed
+   commit message has `close[sd]?|fix(e[sd])?|resolve[sd]?` (optional colon) right before `#N`, so
+   "not fixed: #N" still closes it (bb2cbc39's body closed #1032 that way). Use `Fixes #N` or
+   `Part of #N` only for what the commit really does; for anything else write keyword-free
+   (`filed as #N`, `seen: #N`, `residue stays on #N`, `not addressed here (#N)`). Before
+   committing, run `grep -niE '\b(fix(e[sd])?|close[sd]?|resolve[sd]?):? +#[0-9]+' <message file>`:
+   every hit must be an issue this commit fixes completely. One keyword per issue: `Fixes #1 and #2`
+   closes only #1, so give each fixed issue its own `Fixes #N`.
+   **A `Fixes #N` also kills every pointer to #N that your diff adds.** Before committing, run
+   `git diff --cached | grep -n '^+.*#N\b'`: an added line (docs, help, code comment) that sends a
+   reader to #N for something still undone ("can still ask (#N)") points at a closed ticket after
+   the push. Retarget it to an open issue (file one now) or title the commit `Part of #N`. Why:
+   Day 262's 638791d2 shipped docs saying a case "can still ask (#1196)" in the commit closing #1196.
+8. **Then move on to the next improvement.** Keep going until you run out of session time or ideas.
+````
+
+**"Filing Issues", the over-20 bullet**
+
+````markdown
+- **When your own backlog is over 20, leftovers go on the parent issue, not into new ones.** Check it first:
+  ```
+  gh issue list --repo yologdev/yoyo-evolve --state open --label agent-self --search "-label:parked" --limit 200 --json number --jq length
+  ```
+  Above 20, the residue of a task you just did (the parts you did not finish, the next slice, a sibling found while doing it) is a **comment on the issue it came from**, not a new issue. File a new issue only for a separate defect that no open issue covers, or for a security or data-loss problem. "Sibling" means the parent issue's own done-when would cover it; a defect of a different class found during the task (say, an exit-code bug found while fixing wording) is a separate defect even though you found it here, and goes on an open issue of its own class, or a new one. Why: parked on the wording ticket it sits below that ticket's scope line and closes with its `Fixes` (Day 252, `yoyo skill show` exiting 0 parked on #1127). **If this task closes that issue (`Fixes #N`), its residue cannot go there**, because closed issues never reach the planner: comment it on another open issue that covers it, or file it. "This task closes it" is decided by the task file's `Title:` line, not by your own commit: whenever anything is left uncommitted after you finish, the harness commits it under the plan's title, so a plan titled `Fixes #N` closes #N at push even if your commit says `Part of #N` (Day 263: c1d927ff/656a56fb said Part of #1211, the harness one-liner cf9facb7 said Fixes #1211). If you retitle to `Part of`, file the residue as its own issue in this task anyway. Why: from Oct 13 to 28, 27 of 56 new self-filed issues were residue of other work, so finishing work kept growing the backlog (25 → 32 open).
+````
+
+### `scripts/evolve.sh`, `scripts/yoyo_context.sh`, `scripts/synthesize_state.sh`, `skills/evolve`, `skills/self-assess` — 2026-11-27: the harness follows IDENTITY.md's goal
+
+A review against IDENTITY.md ("a reference point, not my purpose"; "No roadmap — I decide what matters") found six places where the harness and skills still steered by the older goal, or by text that had gone stale. All six were changed in one pass, by the creator (every file here is protected from the agent).
+
+- **Goal text.** `skills/evolve` opened with "become the best open-source coding agent in the world"; planner tier 1 was "what can Claude Code do that you can't?"; the assessment had a required "Research competitors" step and a "Capability Gaps [vs Claude Code…]" section. **Now:** the skill's opening names three kinds of work (build, fix, keep) and calls other agents a ruler; tier 1 is "Something you want to build"; tier 8 is "Whatever else you judge most worth doing"; the assessment researches one question that matters to what is being built and has a "What I Want To Build" section ahead of "Where I Fall Short". Tiers 0 and 2–7 are unchanged, release is still 3.
+- **Superseded claim, recorded rather than erased:** the self-driven slot read "tiers 1-3 and 7". Those numbers predate the release tier's insertion at 3, so they named Release and Community issues as self-driven. It reads "tiers 1, 2, 4 and 8".
+- **Projects (new).** Label `agent-project`: one issue that stays open across sessions; body = goal and done-when, latest comment = next milestone. Fetched after the backlog block (`PROJECTS`, at most `PROJECTS_LIMIT=3`, parked excluded, body cut at 4000 and note at 3000 characters, inside the boundary markers), shown to the planner as `YOUR PROJECTS`, preferred by the self-driven slot, included in the pending-reply scan. Not in the agent-self index, the drain or the umbrella review. **A project is yoyo's own (creator decision, same day):** the fetch has `--author "$BOT_LOGIN"`, so only bot-opened projects are shown and none are when `BOT_LOGIN` is unset; a project comes from the assessment or from a dream that wants code. The creator steers by commenting on one and asks for large work through `agent-input`. Considered and not chosen: open to both (the creator's projects would crowd the one self-chosen slot) and dreams only (nothing large happens in code unless a dream wants it). The auto-labeller leaves it alone because the label is not generic. Task sizing (3 files, 30 minutes) is unchanged: a project is how something large survives that limit, not an exception to it. **The label must exist on the repo** (`gh label create agent-project`); without it the fetch returns nothing and the section is simply absent.
+- **`Work: build | fix | upkeep`** on every task file, parsed like `Kind:` (first token, lower-cased; anything else is `unstated`) and logged as `Work: X (session so far: …)`. Nothing is gated on it. It exists so the build/fix mix can be read from logs; the 2026-11-27 measurement had to be inferred from commit titles.
+- **Assessment/self-assess.** The assessment no longer spends a step re-reading learnings that are already in its prompt. `skills/self-assess` keeps its defect checklist and adds "Not only defects" plus a `WANT TO BUILD:` output block that may not be empty.
+- **Learnings in the prompt.** Measured: `memory/active_learnings.md` 37 KB (08-01), 55 KB (09-01), 162 KB (10-01), 156 KB (11-26); Recent tier 67 KB, Medium 66 KB, Wisdom 19 KB. It went whole into five evolve prompts (assessment, planner, each task, journal, reflection) and into dream, social, skill-evolve and the diary. Cause: the synthesis prompt's only limit was "under ~200 lines", which was kept (187 lines). **Now:** (1) the synthesis prompt has a byte budget (48000 target, 65536 refused) and a tighter Recent format; (2) `synth_output_ok learnings` refuses an output over `SYNTH_LEARNINGS_MAX_BYTES` unless it is smaller than the backup; (3) `yoyo_context.sh` cuts at `YOYO_LEARNINGS_MAX_BYTES` (same number, checked equal), keeping the Wisdom tier whole and the newest lessons, and says in the prompt that it cut; (4) `YOYO_CONTEXT_LEAN` carries only the Wisdom tier and is what the task implementer and the journal get. Measured with the 156 KB file: full context 182 KB → 92 KB, lean 46 KB. **Superseded claim:** an earlier note in this review said six prompts; it is five (the issue responder does not load the context).
+- **Skill as incident log.** Four passages of `skills/evolve` held Days 252–268 history. Rules kept, history moved verbatim to the entry above ("incident record"). Two contradictions removed: "Read your current source code completely" (the assessment says not to; `src/` is over 100k lines) and "Keep going until you run out of session time or ideas" (the task prompt says the task is the only job).
+- **Stale doc pointers.** The task prompt told the implementer to keep CLAUDE.md's "Architecture" and "State files" sections accurate; both moved here on 2026-09-15 and CLAUDE.md forbids new history. It now sends per-file notes and history here and CLAUDE.md edits only for what every session needs; the evaluator's `doc_sync` line names both.
+- **Tests:** `tests/harness_logic.sh` +28 checks (347 → 375 passing; same 2 local-only `social bin` failures). Positive controls, each mutate → run → restore, serially: inject cap raised to 99999999 reddened 2 checks; the synthesis ceiling's refusals turned into accepts reddened 2; the `Work:` fallback changed from `unstated` to `build` reddened 1; restored, all green.
+- **Expected and unverified:** that sessions build more. Read after a week: the `Work:` lines in the evolve logs, the size of `active_learnings.md` after the next synthesis, and whether a project exists and has moved.

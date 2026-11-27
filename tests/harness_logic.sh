@@ -1339,6 +1339,136 @@ check "evolve skill: residue cannot go on a parent the same task closes" \
 check "evolve.sh: the backlog drain closes the issue with the least work left, not the oldest" \
     "$(grep -c 'spend this slot on CLOSING one:' "$SCRIPT")$(grep -c 'another Part-of slice does not$' "$SCRIPT")$(grep -c 'Draining the oldest' "$SCRIPT")" "110"
 
+# ── backlog drain trigger (2026-11-27): the harness decides, the prompt states ──
+# Until this date the trigger was "more than SELF_ISSUES_LIMIT (12) open", worked
+# out by the planner; the backlog sat at ~21, so the drain took the second slot
+# of every session. Now: no drain at or under the threshold, at most one a day
+# up to the ceiling, every session above it, and unknown reads as due.
+DRAIN_BLOCK=$(awk '/^# ── backlog drain: is the second task slot/,/^fi$/' "$SCRIPT")
+if require "evolve.sh backlog drain decision extracted" "$DRAIN_BLOCK"; then
+    drain_case() { # $1=SELF_BACKLOG_RC ('' = gh absent)  $2=SELF_BACKLOG_COUNT  $3=SELF_CLOSED_24H
+        ( set -uo pipefail
+          SELF_DRAIN_THRESHOLD=20; SELF_DRAIN_CEILING=30
+          [ -n "$1" ] && SELF_BACKLOG_RC="$1"
+          [ -n "$2" ] && SELF_BACKLOG_COUNT="$2"
+          [ -n "$3" ] && SELF_CLOSED_24H="$3"
+          eval "$DRAIN_BLOCK"; printf '%s' "$DRAIN_STATUS" | sed 's/ this session.*//' ) 2>&1
+    }
+    check "drain: empty backlog (count never set) is not due"          "$(drain_case 0 '' '')"  "NOT DUE"
+    check "drain: at the threshold is not due"                         "$(drain_case 0 20 '')"  "NOT DUE"
+    check "drain: over the threshold, none closed in 24h, is due"      "$(drain_case 0 21 0)"   "DUE"
+    check "drain: over the threshold, one closed in 24h, is not due"   "$(drain_case 0 21 1)"   "NOT DUE"
+    check "drain: closed-count unreadable reads as none closed (due)"  "$(drain_case 0 25 '')"  "DUE"
+    check "drain: at the ceiling the once-a-day rule still applies"    "$(drain_case 0 30 3)"   "NOT DUE"
+    check "drain: over the ceiling is due whatever was closed"         "$(drain_case 0 31 9)"   "DUE"
+    check "drain: a failed backlog query is due, not free"             "$(drain_case 1 '' '')"  "DUE"
+    check "drain: gh absent (no rc at all) is due, not free"           "$(drain_case '' '' '')" "DUE"
+fi
+check "evolve.sh: drain threshold and ceiling are 20 and 30" \
+    "$(grep -c '^SELF_DRAIN_THRESHOLD=20$' "$SCRIPT")$(grep -c '^SELF_DRAIN_CEILING=30$' "$SCRIPT")" "11"
+check "evolve.sh: the planner prompt states the harness's drain decision" \
+    "$(awk '/<<PLANEOF$/,/^PLANEOF$/' "$SCRIPT" | grep -c '^  BACKLOG DRAIN: \$DRAIN_STATUS$')" "1"
+check "evolve.sh: no planner text still ties the drain to the full-body limit" \
+    "$(grep -c 'If that is more than \$SELF_ISSUES_LIMIT' "$SCRIPT")" "0"
+check "evolve skill: an agent-self issue must be something a user would hit" \
+    "$(grep -c 'someone using yoyo on their own project would hit it' "$ROOT/skills/evolve/SKILL.md")" "1"
+
+# ── goal alignment, projects, and prompt size (2026-11-27) ──────────────────
+# IDENTITY.md calls other agents "a reference point, not my purpose"; the
+# planner ladder and the evolve skill still opened with closing the gap to
+# Claude Code. These pin the realigned text and the pieces added with it.
+PLAN_BLOCK=$(awk '/<<PLANEOF$/,/^PLANEOF$/' "$SCRIPT")
+ASSESS_BLOCK=$(awk '/<<ASSESSEOF$/,/^ASSESSEOF$/' "$SCRIPT")
+TASK_BLOCK=$(awk '/<<TEOF$/,/^TEOF$/' "$SCRIPT")
+check "planner: tier 1 is something yoyo wants to build, not the gap to Claude Code" \
+    "$(printf '%s\n' "$PLAN_BLOCK" | grep -c '^1. Something you want to build')$(printf '%s\n' "$PLAN_BLOCK" | grep -c 'what can Claude Code do that you')" "10"
+check "planner: the self-driven slot names tiers that are self-driven (1, 2, 4 and 8)" \
+    "$(printf '%s\n' "$PLAN_BLOCK" | grep -c 'tiers 1, 2, 4 and 8')" "1"
+check "planner: the ladder still has release at 3 and community issues at 7" \
+    "$(printf '%s\n' "$PLAN_BLOCK" | grep -c '^3. Release, IF the RELEASE CADENCE')$(printf '%s\n' "$PLAN_BLOCK" | grep -c '^7. Community issues')" "11"
+check "planner: open projects are shown, and only when there are some" \
+    "$(printf '%s\n' "$PLAN_BLOCK" | grep -c '^\${PROJECTS:+$')$(printf '%s\n' "$PLAN_BLOCK" | grep -c '^\$PROJECTS$')" "11"
+check "planner: each task file declares its Work (build | fix | upkeep)" \
+    "$(printf '%s\n' "$PLAN_BLOCK" | grep -c '^Work: \[build | fix | upkeep\]$')" "1"
+check "assessment: asks what yoyo wants to build, and no longer requires competitor research" \
+    "$(printf '%s\n' "$ASSESS_BLOCK" | grep -c '^## What I Want To Build$')$(printf '%s\n' "$ASSESS_BLOCK" | grep -c 'Research competitors')" "10"
+check "assessment: does not re-read the learnings already in its prompt" \
+    "$(printf '%s\n' "$ASSESS_BLOCK" | grep -c 'Read memory files')" "0"
+check "task prompt: history goes to ARCHITECTURE.md; the retired CLAUDE.md sections are not named as live" \
+    "$(printf '%s\n' "$TASK_BLOCK" | grep -c '^  - ARCHITECTURE.md — the entry for each file you changed')$(printf '%s\n' "$TASK_BLOCK" | grep -c 'CLAUDE.md — keep the')" "10"
+check "task and journal prompts carry the lean context; assessment, planner and reflection the full one" \
+    "$(printf '%s\n' "$TASK_BLOCK" | grep -c '^\$YOYO_CONTEXT_LEAN$')$(awk '/<<JEOF$/,/^JEOF$/' "$SCRIPT" | grep -c '^\$YOYO_CONTEXT_LEAN$')$(printf '%s\n' "$PLAN_BLOCK" | grep -c '^\$YOYO_CONTEXT$')$(printf '%s\n' "$ASSESS_BLOCK" | grep -c '^\$YOYO_CONTEXT$')$(awk '/<<REOF$/,/^REOF$/' "$SCRIPT" | grep -c '^\$YOYO_CONTEXT$')" "11111"
+check "evaluator: doc_sync accepts ARCHITECTURE.md as the place for per-file notes" \
+    "$(grep -c 'behavior change reflected in ARCHITECTURE.md (per-file notes and history)' "$SCRIPT")" "1"
+check "evolve.sh: projects are fetched by their own label, and replies on them are scanned" \
+    "$(grep -c -- '--label "agent-project" --search "-label:parked" --limit "\$PROJECTS_LIMIT"' "$SCRIPT")$(grep -c 'label:agent-input,agent-help-wanted,agent-self,agent-project,agent-revert,agent-unverified' "$SCRIPT")" "11"
+# A project is yoyo's own: only bot-opened ones are shown, and none without a bot login.
+PROJ_BLOCK=$(awk '/^PROJECTS=""$/,/^fi$/' "$SCRIPT")
+if require "evolve.sh project fetch extracted" "$PROJ_BLOCK"; then
+    proj_case() { # $1 = BOT_LOGIN ('' = unset) → the gh args seen, or "no call"
+        ( set -uo pipefail; REPO=o/r; PROJECTS_LIMIT=3; BOUNDARY_BEGIN=B; BOUNDARY_END=E
+          [ -n "$1" ] && BOT_LOGIN="$1"
+          gh() { printf '%s\n' "$*" > "$PROJ_SEEN"; }
+          PROJ_SEEN=$(mktemp); eval "$PROJ_BLOCK" >/dev/null 2>&1
+          [ -s "$PROJ_SEEN" ] && grep -o -- '--author [^ ]*' "$PROJ_SEEN" || echo "no call"; rm -f "$PROJ_SEEN" ) 2>&1
+    }
+    check "projects: only issues the bot opened are fetched" "$(proj_case 'yoyo-evolve[bot]')" "--author yoyo-evolve[bot]"
+    check "projects: with no bot login none are fetched (cannot tell whose they are)" "$(proj_case '')" "no call"
+fi
+check "planner and skill: a project is yoyo's own, nobody assigns one" \
+    "$(printf '%s\n' "$PLAN_BLOCK" | grep -c 'Nobody$')$(printf '%s\n' "$PLAN_BLOCK" | grep -c '^assigns you a project')$(grep -c 'nobody assigns you one' "$ROOT/skills/evolve/SKILL.md")" "111"
+WORK_BLOCK=$(awk '/^    task_work_raw=/,/^    echo "    Work: /' "$SCRIPT")
+if require "evolve.sh Work: parser extracted" "$WORK_BLOCK"; then
+    work_case() { ( set -uo pipefail; d=$(mktemp -d); TASK_FILE="$d/t.md"; printf '%b' "$1" > "$TASK_FILE"
+        eval "$WORK_BLOCK" >/dev/null; printf '%s' "$task_work"; rm -rf "$d" ) 2>&1; }
+    check "work: build, fix and upkeep parse; a reason after the word is allowed" \
+        "$(work_case 'Title: x\nWork: build\n') $(work_case 'Work: fix (no build this session: CI was red)\n') $(work_case 'Work: Upkeep\n')" "build fix upkeep"
+    check "work: a missing or unknown value is logged as unstated, never guessed" \
+        "$(work_case 'Title: x\n') $(work_case 'Work: [build | fix | upkeep]\n')" "unstated unstated"
+fi
+check "evolve skill: the goal follows IDENTITY.md (a ruler, not the list of what to build)" \
+    "$(grep -c 'They are an honest ruler, not the list of what to build' "$ROOT/skills/evolve/SKILL.md")$(grep -c 'best open-source coding agent in the world' "$ROOT/skills/evolve/SKILL.md")" "10"
+check "evolve skill: says how to open a project" \
+    "$(grep -c -- '--title "Project: ..." --body "..." --label "agent-project"' "$ROOT/skills/evolve/SKILL.md")" "1"
+check "evolve skill: no dated incident history (it lives in ARCHITECTURE.md)" \
+    "$(grep -cE 'Day [0-9]{2,3}\b' "$ROOT/skills/evolve/SKILL.md")$(grep -c 'skills/evolve/SKILL.md. — incident record' "$ROOT/ARCHITECTURE.md")" "01"
+check "self-assess skill: its output includes what yoyo wants to build" \
+    "$(grep -c '^WANT TO BUILD:$' "$ROOT/skills/self-assess/SKILL.md")" "1"
+
+# Learnings in the prompt: capped, with the distilled tier kept (2026-11-27).
+CTX="$ROOT/scripts/yoyo_context.sh"
+check "learnings: the inject cap and the synthesis ceiling are the same number" \
+    "$(sed -n 's/^YOYO_LEARNINGS_MAX_BYTES=//p' "$CTX")" "$(sed -n 's/^SYNTH_LEARNINGS_MAX_BYTES=//p' "$ROOT/scripts/synthesize_state.sh")"
+ctx_case() { # $1 = python expr building the learnings file text; $2 = shell run after sourcing
+    ( d=$(mktemp -d); mkdir -p "$d/memory"; python3 -c "import sys; sys.stdout.write($1)" > "$d/memory/active_learnings.md"
+      YOYO_REPO="$d"; source "$CTX" 2>/dev/null; eval "$2"; rm -rf "$d" ) 2>&1
+}
+SMALL='"# Active Learnings\n\n## Recent\n## Lesson: a\nbody a\n\n## Wisdom — 8+ weeks\n## Wisdom: t\nold truth\n"'
+BIG='"# Active Learnings\n\n## Recent\n" + "".join("## Lesson: n%d\n%s\n" % (i, "x"*2000) for i in range(60)) + "## Wisdom — 8+ weeks\n## Wisdom: t\nold truth\n"'
+check "learnings: a file under the cap is injected whole, with no cut note" \
+    "$(ctx_case "$SMALL" 'printf "%s" "$YOYO_CONTEXT" | grep -c "body a"; printf "%s" "$YOYO_CONTEXT" | grep -c "CUT BY THE HARNESS"' | tr '\n' ' ')" "1 0 "
+check "learnings: over the cap, the newest lessons and the whole Wisdom tier survive, and the cut is stated" \
+    "$(ctx_case "$BIG" 'printf "%s" "$YOYO_CONTEXT" | grep -c "^## Lesson: n0$"; printf "%s" "$YOYO_CONTEXT" | grep -c "^## Lesson: n59$"; printf "%s" "$YOYO_CONTEXT" | grep -c "old truth"; printf "%s" "$YOYO_CONTEXT" | grep -c "CUT BY THE HARNESS"' | tr '\n' ' ')" "1 0 1 1 "
+check "learnings: over the cap, what is injected fits the cap" \
+    "$(ctx_case "$BIG" 'n=$(printf "%s" "$_LEARNINGS" | LC_ALL=C wc -c); [ "$n" -le "$YOYO_LEARNINGS_MAX_BYTES" ] && [ "$n" -gt 30000 ] && echo fits || echo "no: $n"')" "fits"
+check "learnings: the lean context has the Wisdom tier and none of the recent lessons" \
+    "$(ctx_case "$SMALL" 'printf "%s" "$YOYO_CONTEXT_LEAN" | grep -c "old truth"; printf "%s" "$YOYO_CONTEXT_LEAN" | grep -c "body a"; printf "%s" "$YOYO_CONTEXT_LEAN" | grep -c "=== YOUR VOICE ==="' | tr '\n' ' ')" "1 0 1 "
+check "learnings: no file at all still yields both contexts" \
+    "$( ( d=$(mktemp -d); YOYO_REPO="$d"; source "$CTX" 2>/dev/null; printf '%s' "$YOYO_CONTEXT$YOYO_CONTEXT_LEAN" | grep -c 'No learnings yet.'; rm -rf "$d" ) 2>&1)" "2"
+if [ -f "$SYN" ]; then
+    SYN_BIG='python3 -c "import sys; sys.stdout.write(\"# Active Learnings\n\" + \"x\"*int(sys.argv[1]))"'
+    check "synthesize output: learnings over the ceiling are refused when the previous file was under it" \
+        "$(syn_case "printf '# Active Learnings\nold\n' > memory/active_learnings.md.bak; $SYN_BIG 70000 > memory/active_learnings.md" "$SYN_OK")" "no"
+    check "synthesize output: an oversize file that shrank from a larger one is accepted (a step toward the budget)" \
+        "$(syn_case "$SYN_BIG 150000 > memory/active_learnings.md.bak; $SYN_BIG 90000 > memory/active_learnings.md" "$SYN_OK")" "ok"
+    check "synthesize output: an oversize file that grew is refused" \
+        "$(syn_case "$SYN_BIG 90000 > memory/active_learnings.md.bak; $SYN_BIG 150000 > memory/active_learnings.md" "$SYN_OK")" "no"
+    check "synthesize output: the ceiling is for learnings only" \
+        "$(syn_case "printf '# Active Social Learnings\n' > memory/active_social_learnings.md.bak; python3 -c \"import sys; sys.stdout.write('# Active Social Learnings\n' + 'x'*70000)\" > memory/active_social_learnings.md" 'synth_output_ok social && echo ok || echo no')" "ok"
+fi
+check "synthesize.yml: the learnings budget is in bytes, not lines" \
+    "$(grep -c 'SIZE BUDGET, IN BYTES' "$ROOT/.github/workflows/synthesize.yml")$(grep -c 'Keep total under ~200 lines. Preserve the most actionable' "$ROOT/.github/workflows/synthesize.yml")" "10"
+
 # ── workflows that restore the shared cargo cache free disk first (2026-10-31) ─
 for w in evolve social dream skill-evolve; do
     check "$w.yml: frees disk space right before restoring the cargo cache" \

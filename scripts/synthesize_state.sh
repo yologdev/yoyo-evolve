@@ -53,13 +53,35 @@ synth_header() { # $1 = key → the first line a valid active file starts with
 # an answer in chat, a stub), so the exit code alone is not success: the file
 # must be non-empty, start with its header, and differ from the backup taken
 # before the step. A step that fails this records no hash and runs next time.
+#
+# Learnings also have a size ceiling (2026-11-27). The file goes whole into the
+# prompts of every loop (scripts/yoyo_context.sh), and the prompt's old limit,
+# "under ~200 lines", was kept while the file reached 156 KB of very long
+# lines. An output over the ceiling is refused unless it is smaller than the
+# backup: a file already over the ceiling may shrink toward it in steps, but
+# never grow, and a file under it can never be replaced by one over it.
+# Keep equal to YOYO_LEARNINGS_MAX_BYTES in scripts/yoyo_context.sh, which cuts
+# at the same size when injecting (tests/harness_logic.sh checks the two).
+SYNTH_LEARNINGS_MAX_BYTES=65536
 synth_output_ok() {
-    local active header bak
+    local active header bak size bak_size
     active=$(synth_active "$1"); header=$(synth_header "$1"); bak="${active}.bak"
     [ -s "$active" ] || return 1
     [ "$(head -1 "$active")" = "$header" ] || return 1
     if [ -f "$bak" ] && cmp -s "$active" "$bak"; then
         return 1
+    fi
+    if [ "$1" = "learnings" ]; then
+        size=$(wc -c < "$active" | tr -d ' ')
+        if [ "$size" -gt "$SYNTH_LEARNINGS_MAX_BYTES" ]; then
+            bak_size=0
+            [ -f "$bak" ] && bak_size=$(wc -c < "$bak" | tr -d ' ')
+            if [ "$bak_size" -le "$SYNTH_LEARNINGS_MAX_BYTES" ] || [ "$size" -ge "$bak_size" ]; then
+                echo "synth_output_ok: $active is $size bytes, over the $SYNTH_LEARNINGS_MAX_BYTES-byte ceiling (previous: $bak_size) — refused" >&2
+                return 1
+            fi
+            echo "synth_output_ok: $active is $size bytes, still over the $SYNTH_LEARNINGS_MAX_BYTES-byte ceiling but down from $bak_size — accepted" >&2
+        fi
     fi
     return 0
 }

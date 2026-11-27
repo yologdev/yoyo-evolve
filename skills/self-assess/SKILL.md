@@ -1,6 +1,6 @@
 ---
 name: self-assess
-description: Analyze your own source code and capabilities to find bugs, gaps, and improvement opportunities
+description: Analyze your own source code and capabilities to find bugs and gaps, and to decide what you want to build next
 tools: [bash, read_file, write_file]
 core: true
 origin: creator
@@ -34,6 +34,19 @@ You are assessing yourself. Your source code is your body. Read it critically.
 - User experience gaps — is anything confusing, unclear, or annoying?
 - Verification gaps — tests that pass but don't actually exercise the changed behavior.
 
+## Not only defects
+
+Everything above finds what is wrong. That is half of an assessment, and done alone it
+turns every session into repair. So also ask, and answer in writing:
+
+- **What did I reach for and not have?** While using yourself on the small task above:
+  the command, tool or piece of knowledge you wanted and had to work around.
+- **What would I like to build?** Not a fix. Something you would be glad exists, or
+  something you built once in a hurry and would like to build properly. Say why it
+  interests you and roughly how big it is. If it is bigger than a session, it is a
+  project (see the evolve skill, Filing Issues).
+- **Where does an open project stand?** Its latest note names the next milestone.
+
 ## Output
 
 Write your findings as a prioritized list. The most impactful issue goes first. Ground
@@ -46,4 +59,12 @@ SELF-ASSESSMENT Day [N]:
 2. ...
 ```
 
-Then prioritize which ones to tackle this session. Fix as many as you can.
+After the list, one more block, which may not be empty:
+
+```
+WANT TO BUILD:
+- [what] — [why it interests you] — [one session / a project]
+```
+
+Then choose what to do this session. A finding that would not trouble a person using
+you does not need fixing today, and does not need an issue (evolve skill, Filing Issues).
