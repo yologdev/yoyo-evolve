@@ -1,0 +1,117 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | head; sed -…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 700,780p src/hooks.rs; gr… ✓ (23ms)
+ ✓ (27ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 4.6s (2 ✓)
+
+The read tool elided some lines; let me see the exact timeout branch and the drain tests.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=812 && NR<=870' src/hoo… ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "" src/hooks.rs | sed -n… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/h… (36 lines) ✓ (46.0s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 1m 10s (3 ✓)
+
+Fails by name, as expected. Now the fix:
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ edit src/hooks.rs (5 → 15 lines)
+  -                         // The reader thread is not joined: a process the hook
+  -                         // backgrounded may still hold the pipe open, and the
+  -                         // thread ends by itself at EOF. Its output is dropped,
+  -                         // as a timed-out hook's always was.
+  -                         return Err(format!("Hook '{}' timed out after 5 seconds", self.name));
+  +                         // The reader thread is not joined, nor is EOF awaited: a
+  +                         // process the hook backgrounded may still hold the pipe
+  +                         // open, and the thread ends by itself at EOF. What it
+  +                         // drained so far is taken under the lock and shown,
+  +                         // #844-capped, since it is usually the clue to the hang
+  +                         // (#1248; before, it was dropped).
+  +                         let captured =
+  +                             std::mem::take(&mut *crate::sync_util::lock_or_recover(&capture));
+  +                         let so_far = captured.finish(HOOK_STDERR_HEAD_BYTES, HOOK_STDERR_TAIL_BYTES);
+  +                         let mut msg = format!("Hook '{}' timed out after 5 seconds", self.name);
+  +                         if !so_far.trim().is_empty() {
+  +                             msg.push_str(". stderr so far:\n");
+  +                             msg.push_str(&so_far);
+  +                         }
+  +                         return Err(msg);
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "fn cap_hook_stderr" -A1… ✓ (6m 29s)
+  -                         // The reader thread is not joined: a process the hook
+  -                         // backgrounded may still hold the pipe open, and the
+  -                         // thread ends by itself at EOF. Its output is dropped,
+  -                         // as a timed-out hook's always was.
+  -                         return Err(format!("Hook '{}' timed out after 5 seconds", self.name));
+  +                         // The reader thread is not joined, nor is EOF awaited: a
+  +                         // process the hook backgrounded may still hold the pipe
+  +                         // open, and the thread ends by itself at EOF. What it
+  ... (12 more lines)
+ ✗ (6m 29s)
+    │ Command timed out after 120s. Output so far:
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ search 'timed out|5.second' in docs/src ✓ (2ms)
+  ▶ search 'timeout' in docs/src ✓ (3ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 6m 41s (3 ✓, 1 ✗)
+
+No docs mention hook timeouts. Adding one capped row so the #844 cap on this path is pinned too:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cat >> src/h… (21 lines) ✓ (48.9s)
+
+Now the full gates (module size included):
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && wc -l src/hooks.rs && cargo clip… ✓ (6m 14s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "^test… ✓ (5m 30s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 11m 52s (2 ✓)
+
+All green, module_size included. Now the ARCHITECTURE.md entry for hooks.rs:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "src/hooks.rs\|stderr_dr… ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "hooks.rs" ARCHITECTURE.… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 265p ARCHITECTURE.md | gr… ✓ (14ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (10 lines) ✓ (61ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 19.9s (4 ✓)
+
+Gates were green before the docs edit (the docs edit touches no code). Committing:
+  ╭─ Turn 15 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (22 lines) ✓ (56ms)
+
+I fixed #1248: when a hook hits the 5-second timeout, its error message now includes the stderr it had printed before it was killed. Commit ba3b3e24.
+
+Before: Hook 'X' timed out after 5 seconds
+After: Hook 'X' timed out after 5 seconds. stderr so far:\n<what it printed>
+
+What changed (src/hooks.rs, 3780 → 3791 lines, within the module-size limit):
+• Since #1247, a hook's stderr is already captured while it runs, but the timeout branch threw it away. It now takes what has been captured so far, the same way the normal-exit path does, and appends it using the same head/tail size cap and truncation marker. That meant hooks_stderr_capture.rs needed no new method.
+• It still doesn't wait for the reader thread or for the pipe to close, because a process the hook started in the background can keep the pipe open.
+• A hook that printed nothing, or only whitespace, keeps the old message exactly.
+• I rewrote the old "always was" comment to say what happens now and why.
+
+Tests (three new ones in src/hooks_stderr_drain_tests.rs):
+• Marker case: a hook writes HOOK-MARKER-1248 to stderr, then sleeps 30 seconds. Before the fix it failed by name with left: "Hook 'drain-probe' timed out after 5 seconds"; now the error includes the marker. Because the sleep runs as a separate child that keeps the pipe open, this test also proves the timeout returns in under 10 seconds rather than waiting for the pipe to close.
+• Silent hook: a hook that prints nothing gets exactly the old message.
+• Large output: a hook that prints 50 KB is cut down, with the truncation marker, and keeps both its first and last lines.
+
+Checks: clippy with -D warnings, cargo fmt --check, the full cargo test and the module-size test all passed. I made the ARCHITECTURE.md edit after those runs, but it changes no code.
+
+Docs: nothing in docs/src describes hook timeouts, so there was nothing to update there. I added a dated note to the hooks.rs entry in ARCHITECTURE.md and marked the old "output is dropped" claim as superseded rather than deleting it.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 0/1 changed files were in top-10 predictions (0.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/1 (0.0%) — reactive was 0.0%
+     Surprises (not predicted): src/hooks.rs

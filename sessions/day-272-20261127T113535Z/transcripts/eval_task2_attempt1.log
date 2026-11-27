@@ -1,0 +1,24 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || cd .; grep -rn "time… ✓ (13ms)
+  ▶ $ mkdir -p session_plan && cat > session_plan/eval_task_2.md <… (8 lines) ✓ (11ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 14.7s (2 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_2.md. I judged it from the diff plus one quick check; I did not re-run the suite, since the harness already reported build and tests passing.
+
+• The fix matches the task: when a hook times out, the error now includes the stderr it had printed so far. The reader thread is not joined and EOF is not awaited. The output goes through the existing head/tail cap, with its truncation marker.
+• A silent hook is unchanged: if the hook printed nothing, or only whitespace, the message is exactly the old Hook 'X' timed out after 5 seconds.
+• No snapshot method was needed: the code empties the capture under its lock the same way the normal exit path does. So src/hooks_stderr_capture.rs was not touched.
+• Tests: three new tests sit in the existing src/hooks_stderr_drain_tests.rs:
+  • the marker case, which also checks the timeout returns in under 10 seconds while a background process still holds the pipe;
+  • the silent hook, checked with an exact string match;
+  • a 50 KB output, checked for the cap.
+• No missing pieces: nothing new was defined, so there are no unused helpers or unhandled cases.
+• File size: hooks.rs grew from 3780 to 3791 lines, inside the allowance in tests/module_size.rs.
+• Docs: the hooks.rs entry in ARCHITECTURE.md gained a note that records the old "always was" claim as superseded. Nothing in docs/src describes hook timeouts, so no user doc needed a change.
+• Product surface: no defaults, flags or startup behaviour changed.
+  watch: no files changed this turn — skipping
