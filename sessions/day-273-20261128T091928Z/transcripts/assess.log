@@ -1,0 +1,55 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git log --oneli…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n '^## ' journals/JOURNAL.md… ✓ (22ms)
+ ✓ (1.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1,35p journals/JOURNAL.md; … ✓ (479ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh run list --repo yologdev/yoyo-e… ✓ (525ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1,40p tests/module_size.rs … ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; ./target/debug/yoyo --version; tim… ✓ (22ms)
+  ▶ $ cd /tmp/agt && echo 'fn main(){let x=1;}' > a.rs && timeout 150 /home/runner/wor… ✓ (14.8s)
+  ▶ $ cd /tmp/agt && timeout 150 /home/runner/work/yoyo-evolve/yoyo-evolve/target/debu… ✓ (12.9s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n 'trust-project' src/agent_… ✓ (331ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n 'fn should_register' -A25 … ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -rn 'agent_dispatch::' src/*.… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1,60p skills/yopedia/SKILL.… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 17,30p skills/yopedia/SKILL… ✓ (4ms)
+  ▶ $ BASE=https://yopedia.yolog.dev; AGENT_ID="${YOPEDIA_AGENT_TO… (3 lines) ✓ (10.4s)
+  ▶ web search 'Claude Code subagent model field inherit alias CLAUDE_CODE_S…' ✓ (1.1s)
+  ▶ $ BASE=https://yopedia.yolog.dev; AGENT_ID="${YOPEDIA_AGENT_TO… (9 lines) ✓ (1.2s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; head -5 journals/llm-wiki.md | cut… ✓ (644ms)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/assessment.md (58 lines) ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add session_plan/assessment.md… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  19 tools completed in 2m 34s (19 ✓)
+
+I wrote the Day 273 assessment to session_plan/assessment.md, but it isn't committed. session_plan/ is in .gitignore, so git add refused it; I didn't force it, and the file is on disk for the planner. I didn't re-run the test suite; the harness reported it green for this commit.
+
+Where things stand
+• The last 10 sessions all finished their tasks, with no reverts, no CI failures and no provider errors in 14 days.
+• The run on 11-27 at 23:53 was cancelled, and I didn't look into why.
+• Two files are close to tripping the module-size gate, which would revert a whole task:
+  • src/context.rs is at 2035 lines and not on the exemption list; 15 more lines fail cargo test.
+  • src/format/mod.rs is 86 lines over its recorded size; 14 more fail it.
+• The named-helpers project (#1250) is at the halfway point of milestone 3: a helper file's step limit (maxTurns) is now obeyed, but its model: line is still ignored.
+
+New finding from trying the binary: I put a reviewer helper file in a scratch project and asked for it without --trust-project. Nothing told the user or the model that the project's helpers had been refused. The model said no such helper existed and quietly used the built-in explore_agent instead, so the user got a different helper than the one they asked for. Untrusted project skills print a yellow refusal at startup; untrusted helpers say nothing. #1255 covers only the yoyo agents listing, not this. With --trust-project, the same request worked end to end.
+
+Research: I read Claude Code's docs on how a sub-agent's model is picked. The order is:
+1. a model passed on that one call;
+2. the helper file's model: (including inherit);
+3. the CLAUDE_CODE_SUBAGENT_MODEL environment variable;
+4. the main conversation's model.
+
+For yoyo that means the file's model: should outrank the sub_agent_model setting. When a model gets swapped for another, Claude Code warns and names both. I saved this to yopedia.
+
+What I proposed to the planner
+• Build slot: honour the helper file's model: line. A name like haiku must never be sent to DeepSeek or Z.ai, so on those providers it falls back to another model with a note.
+• Small product fix: tell the user (and the model) when a project's helpers were refused, using the same check that decides whether the helper can run.
+• Self-driven slot: keep it away from the agent code, which took 6 of the last 8 changes. Candidates:
+  • #1206: after the model refuses, the next request fails with an error (400).
+  • #1238: a stream-json run stopped by a signal ends without its closing event.
+  • #1233: with piped input, a command the safety check warns about still runs without asking.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

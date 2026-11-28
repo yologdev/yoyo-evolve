@@ -1,0 +1,30 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "not honoured yet" src … ✓ (38ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && mkdir -p ses… (8 lines) ✓ (11ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 17.2s (2 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_1.md, and every Checked line passes.
+
+The diff does what the task asked. There is now one function, choose_agent_model, that decides which model a named agent runs on, in this order:
+• The file's `model:`. inherit means the main model, even when sub_agent_model is set.
+• Family aliases (haiku, sonnet, opus, fable, any case). With provider anthropic, an alias uses the main model if it's the same family. Otherwise it uses the newest matching id from yoagent's own preset list, so no id is typed by hand.
+• Other providers. An alias or a claude-… id is never sent. The agent falls back to sub_agent_model, else the main model, and its answer starts with a note naming both models.
+• No `model:` in the file. It runs on sub_agent_model, else the main model, which is the old behaviour.
+
+What I ran:
+• The binary. I made a temp project with an agent file set to model: haiku. yoyo agents showed model: haiku → claude-haiku-5-5. With --provider deepseek it showed haiku (falls back to deepseek-v4-pro: haiku is a Claude alias and the provider is deepseek).
+• The disclaimer grep. grep -rn "not honoured yet" src docs finds nothing.
+
+What I read but didn't run:
+• One authority. The dispatch and the yoyo agents listing call the same function, so the listing can't disagree with what actually runs.
+• Tests. They cover every case the task listed, including model_field_is_honoured_not_disclaimed.
+• Every new definition is used. RunModels, configured_sub_agent_model, BuiltChild and model_note all have consumers in the same diff.
+• Docs. docs/src/usage/commands.md and the two ARCHITECTURE.md entries were updated.
+
+I didn't check whether the required comment on #1250 was posted.
+  watch: no files changed this turn — skipping

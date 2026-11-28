@@ -1,0 +1,206 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | head && gre…  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.27.9/ && grep -n "claude-" src/provider/mod… ✓ (10ms)
+ ✓ (27ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.27.9/ && sed -n 2290,2330p src/provider/mod…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,45p src/agent_dispatch.… ✓ (7ms)
+ ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1669,1690p src/config.rs;… ✓ (10ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn "render_agent\b\|render… ✓ (32ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 540,590p src/dispatch_sub… ✓ (14ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 2340,2365p src/cli.rs; gr… ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1130,1250p src/cli.rs; gr… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 60,130p src/commands_conf… ✓ (9ms)
+  ▶ $ curl -sL https://code.claude.com/docs/en/sub-agents | sed 's/<[^>]*>//g' | grep … ✓ (108ms)
+  ▶ $ curl -sL https://code.claude.com/docs/en/sub-agents | sed 's/<[^>]*>/\n/g' | gre… ✓ (110ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.27.9/ && sed -n 1118,1135p src/provider/mod… ✓ (9ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 160,245p src/agent_dispat… ✓ (5ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "AgentDispatchTool::new"… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "SUB_AGENT_MODEL\.\|pub … ✓ (15ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "record_sub_agent_model"… ✓ (8ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 46,62p src/agent_dispatch… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  18 tools completed in 1m 41s (18 ✓)
+
+Tests first (in agent_dispatch.rs's test module), then the function.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (121 lines) ✓ (131ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --lib agent_dispatch … ✓ (95ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo agent_disp… ✓ (21.4s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 14,18p Cargo.toml; cargo … ✓ (22.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --bin yoyo agent_disp… ✓ (21.4s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 1m 31s (5 ✓)
+
+Red (functions don't exist). Now the implementation:
+  ╭─ Turn 22 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/agent_dispatch.rs (1 → 118 lines)
+  + /// The family aliases an agent file's `model:` may name, as Claude Code's
+  + /// sub-agent page lists them ("sonnet, opus, haiku, fable, a full model ID
+  + /// such as claude-opus-5-5, or inherit"; code.claude.com/docs/en/sub-agents,
+  + /// read Day 273). Matched case-insensitively.
+  + const CLAUDE_FAMILY_ALIASES: &[&str] = &["haiku", "sonnet", "opus", "fable"];
+  + 
+  + /// `(major, minor)` of a `claude-{family}-{major}[-{minor}]` id, read from
+  + /// the number tokens after the family word; `(0, 0)` when there are none.
+  + /// Only used to order yoagent's own preset ids, which all have this shape.
+  + fn claude_family_version(id: &str) -> (u32, u32) {
+  +     let mut nums = id
+  +         .split(['-', '.'])
+  +         .filter_map(|t| t.parse::<u32>().ok())
+  +         .filter(|n| *n < 1000); // a date suffix is not a version
+  +     (nums.next().unwrap_or(0), nums.next().unwrap_or(0))
+  + }
+  + 
+  + /// The newest Claude id of `family` that yoagent ships a preset for. The
+  + /// authority is yoagent's preset table (`ModelConfig::PRESETS` in
+  + /// yoagent's `src/provider/model.rs`, reached through
+  ... (98 more lines)
+ ✓ (21.9s)
+  + /// The family aliases an agent file's `model:` may name, as Claude Code's
+  + /// sub-agent page lists them ("sonnet, opus, haiku, fable, a full model ID
+  + /// such as claude-opus-5-5, or inherit"; code.claude.com/docs/en/sub-agents,
+  + /// read Day 273). Matched case-insensitively.
+  + const CLAUDE_FAMILY_ALIASES: &[&str] = &["haiku", "sonnet", "opus", "fable"];
+  + 
+  + /// `(major, minor)` of a `claude-{family}-{major}[-{minor}]` id, read from
+  + /// the number tokens after the family word; `(0, 0)` when there are none.
+  ... (13 more lines)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Expected until wired. Now the accessor in config.rs and the dispatch wiring:
+  ╭─ Turn 23 ────────────────────────────────────────────────────────────╮
+  ▶ edit src/config.rs (3 → 10 lines)
+    pub fn effective_sub_agent_model(parent_model: &str) -> String {
+        resolve_sub_agent_model(&SUB_AGENT_MODEL, parent_model)
+  + }
+  + 
+  + /// The recorded `sub_agent_model` itself, `None` when the config set none.
+  + /// The `agent` tool needs the distinction (#1250): a file's `model: inherit`
+  + /// means the main model even when `sub_agent_model` is set.
+  + pub fn configured_sub_agent_model() -> Option<String> {
+  +     SUB_AGENT_MODEL.get().cloned().flatten()
+    }
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (108 lines) ✓ (5m 36s)
+    pub fn effective_sub_agent_model(parent_model: &str) -> String {
+        resolve_sub_agent_model(&SUB_AGENT_MODEL, parent_model)
+  + }
+  + 
+  + /// The recorded `sub_agent_model` itself, `None` when the config set none.
+  + /// The `agent` tool needs the distinction (#1250): a file's `model: inherit`
+  + /// means the main model even when `sub_agent_model` is set.
+  + pub fn configured_sub_agent_model() -> Option<String> {
+  +     SUB_AGENT_MODEL.get().cloned().flatten()
+    }
+ ✗ (5m 36s)
+    │ Command timed out after 120s. Output so far:
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "model_note\|BuiltChild"… ✓ (137ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 5m 43s (2 ✓, 1 ✗)
+
+Dispatch side green. Now the yoyo agents row, using the same function.
+  ╭─ Turn 25 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,30p src/agent_defs.rs; … ✓ (7ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (56 lines) ✓ (26ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 455,475p src/dispatch_sub… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n '"agents"' src/verb_flag… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "pub… (29 lines) ✓ (25ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (73 lines) ✓ (41ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 560 cargo test --bin yoy… ✓ (35.1s)
+
+────────────────────────────────────────────────────────────────────────────────
+  7 tools completed in 1m 21s (7 ✓)
+
+Now a test that the note actually reaches the parent's tool result:
+  ╭─ Turn 32 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "struct Tick" -A35 src/a… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (50 lines) ✓ (35.3s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 47.5s (2 ✓)
+
+Positive control (atomic mutate → run → restore): drop the prefix insertion, and the test should fail by name.
+  ╭─ Turn 34 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/agent_dispatch.rs /tmp/ad… ✓ (35.5s)
+
+Control fails by name, and the restore leaves no marker. Next I'm retiring the disclaimer in the doc comments and the docs page.
+  ╭─ Turn 35 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 26,34p src/agent_dispatch… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 27,34p src/agent_dispatch… ✓ (7ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=29 && NR<=33' src/agent… ✓ (4ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 -c " (3 lines) ✓ (13ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (40 lines) ✓ (42ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  5 tools completed in 24.5s (5 ✓)
+
+Nested backticks in that markdown will break; I'm switching those two spans to double-backtick delimiters.
+  ╭─ Turn 40 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (12 lines) ✓ (20ms)
+
+Now the ARCHITECTURE.md entries (append to both, mark superseded claims):
+  ╭─ Turn 41 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (12 lines) ✓ (22.8s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 590 cargo test 2>&1 | gr… ✓ (5m 1s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && timeout 590 cargo test 2>&1 | gr… ✓ (4m 28s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 10m 4s (3 ✓)
+
+All green. Quick live check of yoyo agents from a temp project, with a fake HOME:
+  ╭─ Turn 44 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build -q 2>&1 | tail -2; B… ✓ (132ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The live binary prints all three shapes: newest preset, provider fallback, and the same-family rule. Committing now.
+  ╭─ Turn 45 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (34 lines) ✓ (54ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue com… (18 lines) ✓ (844ms)
+  2 tools completed in 19.2s (2 ✓)
+
+An agent file's model: field is now honoured, so model: haiku actually runs on Haiku instead of being silently ignored. Build, the full cargo test run (0 failures), clippy with -D warnings and fmt --check all pass. It's committed as f05f9b3d and I commented on #1250.
+
+How the model is picked. One function, choose_agent_model in src/agent_dispatch.rs, decides for both the agent tool and the yoyo agents listing, so they can't disagree. The order is: the file's model:, then sub_agent_model, then the main model.
+• `inherit` means the main model, even when sub_agent_model is set.
+• `haiku`, `sonnet`, `opus`, `fable` (any case; that's the alias list on Claude Code's docs page): with provider = "anthropic", they run on the main model's exact id if it's the same family. Otherwise they run on the newest model of that family in yoagent's preset list, so I never typed an id.
+• On any other provider, an alias or a claude-… id is never sent, because it would fail every call. The agent runs on sub_agent_model or the main model instead, and its answer starts with a note naming both models and the reason, so the calling model can tell the user.
+• Any other id is sent as written, so llama3.1 on ollama works.
+
+The `yoyo agents` listing now reads --provider, --model and the config file the way a session does. I ran the built binary on a temp project and got all three row shapes:
+• model: haiku → claude-haiku-5-5 (the newest preset)
+• model: haiku (falls back to deepseek-v4-pro: ...) with --provider deepseek
+• model: haiku → claude-haiku-4-5 with --model claude-haiku-4-5 (the same-family rule)
+
+Tests. The new tests failed before the implementation existed and pass now. They cover each rule, including model_field_is_honoured_not_disclaimed, plus two inputs that must be sent as written: anthropic/claude-sonnet-4.6 on openrouter and haiku-local:7b on ollama. One test checks the note actually reaches the parent's answer. To prove that test can fail, I disabled the note in one atomic edit: it failed by name, then passed once restored, with no marker left behind.
+
+Other changes. I added config::configured_sub_agent_model(), because the existing helper can't tell "not set" from "set to the main model", and inherit needs that difference. The "not honoured yet" wording is gone from src and docs. docs/src/usage/commands.md now documents the order and the fallback, and both ARCHITECTURE.md entries mark the old claims as superseded.
+
+One limit I haven't decided: a custom OpenAI-compatible provider that serves Claude under claude-… ids will now fall back for those ids. I noted this in ARCHITECTURE.md and on #1250. It's a small rule change if someone hits it.
+
+Next: milestone 4 (a /doctor row for skipped and duplicate agent files, plus the docs page). #1255 is still open for per-row status in yoyo agents and the note that explains a refusal at run time.
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`
+  📊 Risk validation: 0/2 changed files were in top-10 predictions (0.0% accuracy)
+     📊 Emerging (anticipatory) accuracy: 0/2 (0.0%) — reactive was 0.0%
+     Surprises (not predicted): src/agent_dispatch.rs, src/config.rs
