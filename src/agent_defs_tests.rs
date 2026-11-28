@@ -38,6 +38,32 @@ fn tools_as_comma_string_and_as_yaml_list_parse_the_same() {
 }
 
 #[test]
+fn max_turns_near_misses_that_must_load() {
+    // The smallest positive cap, and a large one honoured as written: the
+    // user wrote the file deliberately, so yoyo does not clamp it.
+    for (text, want) in [("1", 1), ("100000", 100_000)] {
+        let def = parse(&format!(
+            "---\nname: a\ndescription: d\nmaxTurns: {text}\n---\n"
+        ))
+        .unwrap();
+        assert_eq!(def.max_turns, Some(want), "maxTurns: {text}");
+    }
+    // Omitted and explicit null both mean "no cap of its own".
+    assert_eq!(
+        parse("---\nname: a\ndescription: d\n---\n")
+            .unwrap()
+            .max_turns,
+        None
+    );
+    assert_eq!(
+        parse("---\nname: a\ndescription: d\nmaxTurns: null\n---\n")
+            .unwrap()
+            .max_turns,
+        None
+    );
+}
+
+#[test]
 fn every_skip_reason_has_its_own_row() {
     let rows: &[(&str, &str)] = &[
         ("name: a\n", "first line is not `---` (no YAML frontmatter)"),
@@ -75,7 +101,25 @@ fn every_skip_reason_has_its_own_row() {
         ),
         (
             "---\nname: a\ndescription: d\nmaxTurns: -1\n---\n",
-            "`maxTurns` -1 is not a non-negative whole number",
+            "`maxTurns` -1 is not a positive whole number",
+        ),
+        // 0 would be a cap of no turns at all; it must skip, never fall
+        // back to the child default of 25 (#1250 milestone 3).
+        (
+            "---\nname: a\ndescription: d\nmaxTurns: 0\n---\n",
+            "`maxTurns` 0 is not a positive whole number",
+        ),
+        (
+            "---\nname: a\ndescription: d\nmaxTurns: 2.5\n---\n",
+            "`maxTurns` 2.5 is not a positive whole number",
+        ),
+        (
+            "---\nname: a\ndescription: d\nmaxTurns: \"three\"\n---\n",
+            "`maxTurns` must be a whole number",
+        ),
+        (
+            "---\nname: a\ndescription: d\nmaxTurns: \"3\"\n---\n",
+            "`maxTurns` must be a whole number",
         ),
         (
             "---\n- just\n- a list\n---\n",
@@ -142,7 +186,7 @@ fn render_pins_a_whole_valid_entry_and_a_whole_skipped_line() {
     .unwrap();
     assert_eq!(
         render_agent(&def),
-        "  code-reviewer  [project] /proj/.claude/agents/code-reviewer.md\n    Reviews diffs\n    tools: read_file, search · model: sonnet · maxTurns: 5\n    ignored keys: color\n"
+        "  code-reviewer  [project] /proj/.claude/agents/code-reviewer.md\n    Reviews diffs\n    tools: read_file, search · model: sonnet (not honoured yet: runs on sub_agent_model, else the main model) · maxTurns: 5\n    ignored keys: color\n"
     );
     let skip = Skipped {
         path: p("/proj/.claude/agents/broken.md"),
@@ -235,7 +279,7 @@ fn project_beats_user_and_yoyo_beats_claude() {
 
     let listing = render_agents_listing(&d);
     assert!(listing.starts_with(
-        "Named sub-agents (preview: discovered and validated, not yet used by yoyo)\n"
+        "Named sub-agents (the model can delegate to these with the agent tool; project-scope ones only with --trust-project; none whose tools resolve to nothing)\n"
     ));
     assert!(listing.contains(&format!(
         "  rev  {}  shadowed by {}\n",

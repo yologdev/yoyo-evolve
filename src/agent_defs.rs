@@ -193,9 +193,12 @@ pub fn parse_agent_file(text: &str, path: &Path, scope: AgentScope) -> Result<Ag
     let max_turns = match get("maxTurns") {
         None | Some(Value::Null) => None,
         Some(Value::Number(n)) => Some(
+            // 0 is rejected too: a cap of no turns is not a cap the user
+            // meant, and skipping beats silently running with the default.
             n.as_u64()
+                .filter(|&n| n > 0)
                 .and_then(|n| u32::try_from(n).ok())
-                .ok_or_else(|| format!("`maxTurns` {n} is not a non-negative whole number"))?,
+                .ok_or_else(|| format!("`maxTurns` {n} is not a positive whole number"))?,
         ),
         Some(_) => return Err("`maxTurns` must be a whole number".to_string()),
     };
@@ -432,7 +435,12 @@ pub fn render_agent(def: &AgentDef) -> String {
         }
     }
     if let Some(m) = &def.model {
-        details.push(format!("model: {m}"));
+        // Not honoured yet (#1250 milestone 3, model half): the child runs on
+        // `config::effective_sub_agent_model`, i.e. `sub_agent_model` when
+        // set, else the main model. `maxTurns` below IS honoured.
+        details.push(format!(
+            "model: {m} (not honoured yet: runs on sub_agent_model, else the main model)"
+        ));
     }
     if let Some(n) = def.max_turns {
         details.push(format!("maxTurns: {n}"));
@@ -479,7 +487,7 @@ pub fn render_agents_listing(d: &Discovery) -> String {
         looked_in(&mut s);
         return s;
     }
-    s.push_str("Named sub-agents (preview: discovered and validated, not yet used by yoyo)\n");
+    s.push_str("Named sub-agents (the model can delegate to these with the agent tool; project-scope ones only with --trust-project; none whose tools resolve to nothing)\n");
     if d.agents.is_empty() {
         s.push_str("\nNo valid agent files.\n");
     } else {

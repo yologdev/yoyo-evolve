@@ -26,9 +26,11 @@
 //! dispatchable. A user with no agent files, or with only untrusted project
 //! files, gets the same tool list as before this module existed.
 //!
-//! Not here yet (#1250): frontmatter `model` and `maxTurns` (milestone 3;
-//! every named agent runs on the `sub_agent` child model with its turn cap),
-//! a REPL `/agents`, nested delegation, and the docs page (milestone 4).
+//! Frontmatter `maxTurns` IS honoured (#1250 milestone 3, Day 273): the
+//! child runs with that turn cap (`with_def_turn_cap`); without it, the
+//! shared child default of 25. Not here yet: frontmatter `model` (milestone 3,
+//! model half; every named agent runs on the `sub_agent` child model), a REPL
+//! `/agents`, nested delegation, and the docs page (milestone 4).
 
 use std::path::PathBuf;
 
@@ -260,8 +262,9 @@ const NAMED_AGENT_FLAVOR: crate::tools::DispatchFlavor = crate::tools::DispatchF
 /// resolved tools, with the def's body as the system prompt (plus the
 /// runtime grounding note every builder gets, `compose_system_prompt`).
 ///
-/// `model` / `maxTurns` from the frontmatter are ignored until #1250
-/// milestone 3. No fallback-model retry yet either: one attempt.
+/// `maxTurns` from the frontmatter is applied last (`with_def_turn_cap`);
+/// `model` is still ignored until #1250 milestone 3's model half. No
+/// fallback-model retry yet either: one attempt.
 fn build_child(
     config: &AgentConfig,
     def: &AgentDef,
@@ -296,9 +299,27 @@ fn build_child(
         &config.provider,
         &child_model,
     ));
+    let inner = with_def_turn_cap(inner, def);
     Box::new(crate::tool_wrappers::SubAgentOutputMarkerTool::new(
         Box::new(inner),
     ))
+}
+
+/// Apply a definition's `maxTurns` on top of whatever turn cap the shared
+/// builder (`tools::sub_agent_tool_for`, 25) already set, so it must run
+/// AFTER that builder. No `maxTurns` keeps the shared default: that 25 is
+/// yoyo's chosen child default, not a Claude Code value. `parse_agent_file`
+/// already skipped any file whose `maxTurns` is not a positive whole number,
+/// so `n` here is >= 1. Hitting the cap is reported by yoagent itself: its
+/// `extract_final_text` appends the loop's `[Agent stopped: …]` notice.
+fn with_def_turn_cap(
+    tool: yoagent::sub_agent::SubAgentTool,
+    def: &AgentDef,
+) -> yoagent::sub_agent::SubAgentTool {
+    match def.max_turns {
+        Some(n) => tool.with_max_turns(n as usize),
+        None => tool,
+    }
 }
 
 #[async_trait::async_trait]
@@ -608,6 +629,113 @@ mod tests {
             .await,
         );
         assert!(gated.contains("--trust-project"), "{gated}");
+    }
+
+    /// Counts its own executions: the observable a turn cap bounds.
+    struct Tick(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+    #[async_trait::async_trait]
+    impl AgentTool for Tick {
+        fn name(&self) -> &str {
+            "tick"
+        }
+        fn label(&self) -> &str {
+            "tick"
+        }
+        fn description(&self) -> &str {
+            "counts calls"
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object", "properties": {"i": {"type": "integer"}}})
+        }
+        async fn execute(
+            &self,
+            _params: serde_json::Value,
+            _ctx: ToolContext,
+        ) -> Result<ToolResult, ToolError> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(ToolResult {
+                content: vec![Content::Text { text: "ok".into() }],
+                details: serde_json::Value::Null,
+            })
+        }
+    }
+
+    /// A child on a mock model that would call `tick` six times, built the
+    /// way `build_child` builds one (the shared default of 25 first), with
+    /// the def's cap applied by the same helper. Returns (ticks, output).
+    async fn run_capped_child(def: &AgentDef) -> (usize, String) {
+        use yoagent::provider::mock::{MockResponse, MockToolCall};
+        use yoagent::provider::MockProvider;
+        let mut responses: Vec<MockResponse> = (0..6)
+            .map(|i| {
+                // Distinct arguments so loop detection never fires first.
+                MockResponse::ToolCalls(vec![MockToolCall {
+                    name: "tick".into(),
+                    arguments: serde_json::json!({ "i": i }),
+                    provider_metadata: None,
+                }])
+            })
+            .collect();
+        responses.push(MockResponse::Text("CHILD_DONE".into()));
+        let count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let base = yoagent::sub_agent::SubAgentTool::from_provider(
+            AGENT_TOOL_NAME,
+            std::sync::Arc::new(MockProvider::new(responses)),
+            yoagent::provider::ModelConfig::mock(),
+        )
+        .with_api_key("not-a-real-key")
+        .with_tools(vec![std::sync::Arc::new(Tick(count.clone()))])
+        .with_max_turns(25);
+        let tool = with_def_turn_cap(base, def);
+        let out = tool
+            .execute(serde_json::json!({"task": "go"}), ctx())
+            .await
+            .expect("child run");
+        let text = out
+            .content
+            .iter()
+            .filter_map(|c| match c {
+                Content::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        (count.load(std::sync::atomic::Ordering::SeqCst), text)
+    }
+
+    #[tokio::test]
+    async fn a_definitions_max_turns_caps_the_child_it_builds() {
+        let proj = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        write(
+            home.path(),
+            ".yoyo/agents/capped.md",
+            &agent_file("capped", "d", "maxTurns: 3\n", "body"),
+        );
+        write(
+            home.path(),
+            ".yoyo/agents/uncapped.md",
+            &agent_file("uncapped", "d", "", "body"),
+        );
+        let defs = discover(proj.path(), home.path());
+        let capped = by_name(&defs, "capped");
+        assert_eq!(capped.max_turns, Some(3));
+
+        let (ticks, out) = run_capped_child(capped).await;
+        assert_eq!(
+            ticks, 3,
+            "maxTurns: 3 must stop the child after 3 turns: {out}"
+        );
+        // yoagent's own stop notice tells the parent the answer is partial.
+        assert!(out.contains("[Agent stopped:"), "{out}");
+
+        // Near-miss: no `maxTurns` keeps the shared default (25), so all six
+        // tool turns run and the child finishes on its own text.
+        let (ticks, out) = run_capped_child(by_name(&defs, "uncapped")).await;
+        assert_eq!(ticks, 6, "{out}");
+        assert!(out.contains("CHILD_DONE"), "{out}");
+        assert!(!out.contains("[Agent stopped:"), "{out}");
     }
 
     #[tokio::test]
