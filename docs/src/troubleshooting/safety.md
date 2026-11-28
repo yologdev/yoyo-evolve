@@ -401,6 +401,18 @@ To use the project's URL, re-run with `--trust-project`, or pass
 file entirely, so inside such a repository use the flag. `yoyo review`
 applies the same rule.
 
+When a trusted run does use the project's `base_url`, yoyo prints one line
+to stderr on every run, for example `note: requests for custom (with your API
+key) go to https://proxy.example:8443, set by base_url in
+/path/to/.yoyo.toml`. Only the scheme, host and port are shown, never a
+username, password, path or query, because those can carry a token. The line
+is printed under `--quiet` too, and never to stdout. Trust is still granted
+per directory and is not asked again when the file changes: if a `git pull`
+changes `base_url` in a directory you already trusted, the new host is
+named on the next run, not re-asked, and that first run's requests have
+already gone to it. Nothing is printed for `--base-url` or for a `base_url`
+in your own user-level config, since you chose those yourself.
+
 ## What happens in practice
 
 A typical evolution session:

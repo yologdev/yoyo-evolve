@@ -19,7 +19,9 @@
 //!   user's own choice, used as before.
 //! - A project-local `base_url` in a trusted run (`--trust-project`,
 //!   `--trust-project-always`, the remembered trust store, or a yes at the trust
-//!   prompt): used.
+//!   prompt): used, and named on stderr every run (#1188): trust is per
+//!   directory and never re-checked, so a pulled change to `base_url` would
+//!   otherwise move the key to a new host in silence. Detection, not prevention.
 //! - A project-local `base_url` in an untrusted run, provider with an endpoint
 //!   of its own (anthropic, openai, ollama, ...): **withheld** with a warning; the
 //!   request goes to that provider's own endpoint, which is where the user's key
@@ -38,6 +40,10 @@ pub(crate) struct BaseUrlGateOutcome {
     /// The project file's `base_url` that was NOT used. `None` when nothing was
     /// withheld, which is every run without a project-local `base_url`.
     pub withheld: Option<String>,
+    /// #1188: `base_url` is the project file's, used because the run is
+    /// trusted. Trust is per directory and never re-checked, so a `git pull`
+    /// can change this host silently; the caller names it on every such run.
+    pub from_trusted_project: bool,
 }
 
 /// Pure gate. `flag_url` is `--base-url`; `file_url` is the loaded config's
@@ -54,6 +60,7 @@ pub(crate) fn gate_project_base_url(
         return BaseUrlGateOutcome {
             base_url: flag_url,
             withheld: None,
+            from_trusted_project: false,
         };
     }
     // A blank value names no host, so there is nothing to withhold.
@@ -62,11 +69,13 @@ pub(crate) fn gate_project_base_url(
         return BaseUrlGateOutcome {
             base_url: file_url,
             withheld: None,
+            from_trusted_project: project_local && trusted && names_a_host,
         };
     }
     BaseUrlGateOutcome {
         base_url: None,
         withheld: file_url,
+        from_trusted_project: false,
     }
 }
 
@@ -103,6 +112,35 @@ Re-run with --trust-project to use it this session, or pass --base-url <url> you
     )
 }
 
+/// #1188: the note for a trusted project's `base_url`, naming where the key
+/// goes. Only scheme, host and port are shown: userinfo, path and query can
+/// carry a token. A URL with no readable host is reported without its value.
+pub(crate) fn trusted_project_base_url_note(
+    provider: &str,
+    url: &str,
+    config_file: &str,
+) -> String {
+    let provider = crate::cli::sanitize_for_display(provider);
+    let config_file = crate::cli::sanitize_for_display(config_file);
+    let parsed = url::Url::parse(url.trim()).ok();
+    let origin = parsed.as_ref().and_then(|u| {
+        let host = u.host_str()?;
+        Some(match u.port_or_known_default() {
+            Some(port) => format!("{}://{host}:{port}", u.scheme()),
+            None => format!("{}://{host}", u.scheme()),
+        })
+    });
+    match origin {
+        Some(origin) => format!(
+            "requests for {provider} (with your API key) go to {origin}, set by base_url in {config_file}"
+        ),
+        None => format!(
+            "requests for {provider} (with your API key) go to the base_url set in {config_file}, \
+which yoyo could not read a host from (value not shown)"
+        ),
+    }
+}
+
 /// Resolve the run's base URL through the gate, printing the notice and
 /// exiting 2 on a refusal. `trusted` is the caller's trust reading.
 pub(crate) fn resolve_base_url(
@@ -118,12 +156,23 @@ pub(crate) fn resolve_base_url(
         crate::config::loaded_config_is_project_local(),
         trusted,
     );
+    let config_file = || {
+        crate::config::loaded_config_resolved_path()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| ".yoyo.toml".to_string())
+    };
     let Some(url) = gated.withheld else {
+        if gated.from_trusted_project {
+            if let Some(used) = gated.base_url.as_deref() {
+                // Same policy as the withheld notice: not silenced by --quiet,
+                // because it says where the user's key goes.
+                let note = trusted_project_base_url_note(provider, used, &config_file());
+                eprintln!("{YELLOW}note:{RESET} {note}");
+            }
+        }
         return gated.base_url;
     };
-    let config_file = crate::config::loaded_config_resolved_path()
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|| ".yoyo.toml".to_string());
+    let config_file = config_file();
     let refused = !provider_has_own_endpoint(provider);
     let msg = project_base_url_message(&url, &config_file, provider, refused);
     // Not silenced by --quiet: it says where the user's key goes (or that the
@@ -166,14 +215,17 @@ mod tests {
             bool,
             Option<String>,
             Option<String>,
+            bool,
         );
         let rows: Vec<Row> = vec![
             // The defect: untrusted project file URL is withheld.
-            (None, s(u), true, false, None, s(u)),
-            // Trusted project: used.
-            (None, s(u), true, true, s(u), None),
+            (None, s(u), true, false, None, s(u), false),
+            // Trusted project: used, and named (#1188).
+            (None, s(u), true, true, s(u), None, true),
             // User-level file: used, trusted or not.
-            (None, s(u), false, false, s(u), None),
+            (None, s(u), false, false, s(u), None, false),
+            // User-level file in a trusted dir: the user's own, not named.
+            (None, s(u), false, true, s(u), None, false),
             // The flag always wins, and nothing is announced about the file.
             (
                 s("http://mine/v1"),
@@ -182,6 +234,7 @@ mod tests {
                 false,
                 s("http://mine/v1"),
                 None,
+                false,
             ),
             (
                 s("http://mine/v1"),
@@ -190,19 +243,33 @@ mod tests {
                 false,
                 s("http://mine/v1"),
                 None,
+                false,
+            ),
+            // The flag in a trusted project: the user typed it, not named.
+            (
+                s("http://mine/v1"),
+                s(u),
+                true,
+                true,
+                s("http://mine/v1"),
+                None,
+                false,
             ),
             // Nothing set: nothing to do.
-            (None, None, true, false, None, None),
+            (None, None, true, false, None, None, false),
+            (None, None, true, true, None, None, false),
             // A blank value names no host: passed through, not announced.
-            (None, s("  "), true, false, s("  "), None),
+            (None, s("  "), true, false, s("  "), None, false),
+            (None, s("  "), true, true, s("  "), None, false),
         ];
-        for (flag, file, local, trusted, want_url, want_withheld) in rows {
+        for (flag, file, local, trusted, want_url, want_withheld, want_named) in rows {
             let got = gate_project_base_url(flag.clone(), file.clone(), local, trusted);
             assert_eq!(
                 got,
                 BaseUrlGateOutcome {
                     base_url: want_url,
                     withheld: want_withheld,
+                    from_trusted_project: want_named,
                 },
                 "flag={flag:?} file={file:?} local={local} trusted={trusted}"
             );
@@ -236,5 +303,58 @@ mod tests {
             assert_eq!(m.contains("Nothing was sent."), refused, "{m}");
             assert_eq!(m.contains("It was not used"), !refused, "{m}");
         }
+    }
+
+    #[test]
+    fn trusted_note_names_scheme_host_and_port() {
+        assert_eq!(
+            trusted_project_base_url_note(
+                "custom",
+                "https://proxy.example:8443/v1",
+                "/p/.yoyo.toml"
+            ),
+            "requests for custom (with your API key) go to https://proxy.example:8443, \
+set by base_url in /p/.yoyo.toml"
+        );
+        // The default port is spelled out, so the host line always has one shape.
+        assert_eq!(
+            trusted_project_base_url_note("openai", "https://api.example/v1", "./.yoyo.toml"),
+            "requests for openai (with your API key) go to https://api.example:443, \
+set by base_url in ./.yoyo.toml"
+        );
+    }
+
+    #[test]
+    fn trusted_note_never_shows_userinfo_path_or_query() {
+        let url = "http://user:s3cret@evil.example:8080/v1/sk-path?key=sk-query#frag";
+        let n = trusted_project_base_url_note("custom", url, "/p/.yoyo.toml");
+        assert_eq!(
+            n,
+            "requests for custom (with your API key) go to http://evil.example:8080, \
+set by base_url in /p/.yoyo.toml"
+        );
+        for secret in ["user", "s3cret", "sk-path", "sk-query", "key=", "frag"] {
+            assert!(!n.contains(secret), "{secret} leaked: {n}");
+        }
+    }
+
+    #[test]
+    fn trusted_note_without_a_readable_host_withholds_the_value() {
+        for bad in ["not a url sk-raw", "mailto:sk-raw@x", "http://[sk-raw"] {
+            let n = trusted_project_base_url_note("custom", bad, "/p/.yoyo.toml");
+            assert_eq!(
+                n,
+                "requests for custom (with your API key) go to the base_url set in /p/.yoyo.toml, \
+which yoyo could not read a host from (value not shown)",
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn trusted_note_escapes_control_bytes_in_provider_and_path() {
+        let n = trusted_project_base_url_note("cu\u{1b}[2Jstom", "http://h/v1", "/p\n/.yoyo.toml");
+        assert!(!n.as_bytes().contains(&0x1b), "{n:?}");
+        assert!(!n.contains('\n'), "{n:?}");
     }
 }

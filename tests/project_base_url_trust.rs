@@ -169,6 +169,16 @@ fn custom_toml(url: &str) -> String {
     format!("provider = \"custom\"\nmodel = \"x\"\nbase_url = \"{url}\"\n")
 }
 
+/// #1188: the note a trusted run prints when the project file chose the host.
+/// `url` is a stub URL (`http://127.0.0.1:<port>/v1`); the note shows only
+/// scheme, host and port.
+fn trusted_note(url: &str) -> String {
+    let origin = url.strip_suffix("/v1").expect("stub url ends in /v1");
+    format!("note: requests for custom (with your API key) go to {origin}, set by base_url in ")
+}
+
+const NOTE_STEM: &str = "(with your API key) go to";
+
 fn assert_names_the_remedies(r: &Run) {
     let ctx = r.ctx();
     assert!(r.stderr.contains("base_url"), "names the key\n{ctx}");
@@ -190,6 +200,8 @@ fn untrusted_project_custom_base_url_is_refused_and_nothing_is_sent() {
     assert_eq!(r.exit, Some(2), "{ctx}");
     assert!(r.stderr.contains("Nothing was sent"), "{ctx}");
     assert_names_the_remedies(&r);
+    // The untrusted path is the withheld notice, never the trusted note.
+    assert!(!r.stderr.contains(NOTE_STEM), "{ctx}");
 }
 
 /// Ignore branch: `ollama` has an endpoint of its own (localhost:11434), so the
@@ -219,6 +231,27 @@ fn trust_project_flag_uses_the_project_base_url() {
     );
     assert!(r.seen[0].contains(CANARY), "{ctx}");
     assert!(!r.stderr.contains("Nothing was sent"), "{ctx}");
+    // #1188: the host the key went to is named, with the file that chose it.
+    assert!(r.stderr.contains(&trusted_note(&url)), "{ctx}");
+    assert!(r.stderr.contains(".yoyo.toml"), "{ctx}");
+}
+
+/// #1188: a `--base-url` typed in a trusted project is the user's own choice,
+/// so nothing is named even though the project file also sets one.
+#[test]
+fn base_url_flag_in_a_trusted_project_is_not_named() {
+    let (url, seen) = start_stub();
+    let (other, other_seen) = start_stub();
+    let d = dirs(Some(&custom_toml(&other)));
+    let r = run(
+        &d,
+        &["--trust-project", "--base-url", &url, "-p", "hi"],
+        &seen,
+    );
+    let ctx = r.ctx();
+    assert!(!r.seen.is_empty(), "--base-url not used\n{ctx}");
+    assert!(other_seen.lock().unwrap().is_empty(), "{ctx}");
+    assert!(!r.stderr.contains(NOTE_STEM), "{ctx}");
 }
 
 /// The remembered trust store (`--trust-project-always`) counts as trust too,
@@ -240,6 +273,8 @@ fn trust_store_uses_the_project_base_url_on_both_doors() {
             !r.seen.is_empty(),
             "{verb:?}: store-trusted run never reached the stub\n{ctx}"
         );
+        // #1188: both doors name the host.
+        assert!(r.stderr.contains(&trusted_note(&url)), "{verb:?}\n{ctx}");
     }
 }
 
@@ -253,6 +288,8 @@ fn user_config_base_url_is_used() {
     let ctx = r.ctx();
     assert!(!r.seen.is_empty(), "user config URL not used\n{ctx}");
     assert!(!r.stderr.contains("Nothing was sent"), "{ctx}");
+    // #1188: the user wrote this file, so the host is not announced.
+    assert!(!r.stderr.contains(NOTE_STEM), "{ctx}");
 }
 
 /// `--base-url` on the command line is the user's choice and beats the
@@ -267,6 +304,7 @@ fn base_url_flag_is_used_in_an_untrusted_project() {
     assert!(!r.seen.is_empty(), "--base-url not used\n{ctx}");
     assert!(other_seen.lock().unwrap().is_empty(), "{ctx}");
     assert!(!r.stderr.contains("Nothing was sent"), "{ctx}");
+    assert!(!r.stderr.contains(NOTE_STEM), "{ctx}");
 }
 
 /// The second door: `yoyo review` reads `base_url` on its own path
