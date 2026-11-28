@@ -182,8 +182,8 @@ pub const KNOWN_MODELS: &[&str] = &[
     "gemini-3.6-flash",
     "gemini-3.1-pro-preview",
     "gemini-2.5-flash-lite",
-    "grok-4",
-    "grok-4-mini",
+    // #1147: grok-4 / grok-4-mini are not on xAI's models page (2026-11-28).
+    "grok-4.7",
     "deepseek-v4-pro",
     "deepseek-v4-flash",
 ];

@@ -160,7 +160,13 @@ pub fn known_models_for_provider(provider: &str) -> &'static [&'static str] {
             "llama-3.3-70b-versatile",
             "llama-3.1-8b-instant",
         ],
-        "xai" => &["grok-4.7", "grok-4", "grok-4-mini", "grok-3", "grok-3-mini"],
+        // #1147 (Day 273): only grok-4.7 is offered. grok-4, grok-4-mini,
+        // grok-3 and grok-3-mini are off: grok-3 was retired 2026-05-15
+        // (docs.x.ai/developers/migration/may-15-retirement) and the other
+        // three are absent from xAI's models and pricing pages (read
+        // 2026-11-28); each row with its source is in IDS_NO_VENDOR_SERVES.
+        // grok-4.7 is also the only id with a yoagent preset and price row.
+        "xai" => &["grok-4.7"],
         // `deepseek-flash` is the id the evolve loop actually runs on (2026-09-15);
         // `deepseek-v4-pro` remains the legacy id for the same routed backend.
         // Listed first because it is the current one — this slice is only used for
@@ -349,7 +355,10 @@ pub fn default_model_for_provider(provider: &str) -> String {
         // config, which cuts a long file write short, and /cost billed it
         // at an estimated $3/$15. So the move is cheaper AND gives real
         // limits. A user with `provider = "xai"` and no `model` silently
-        // moves to grok-4.7; `--model grok-4` still reaches the old one.
+        // moves to grok-4.7. Superseded (#1147, Day 273): this said
+        // "`--model grok-4` still reaches the old one"; xAI's pages no longer
+        // list grok-4, and its dated release grok-4-0709 now redirects to
+        // grok-4.3 (docs.x.ai/developers/migration/may-15-retirement).
         "xai" => "grok-4.7".into(),
         // No preset by necessity: yoagent ships none for any groq id, so the
         // default runs on guessed limits and says so (#1119, `DEFAULT_WITHOUT_PRESET`).
@@ -530,6 +539,30 @@ mod tests {
             "grok-2",
             "retired: absent from docs.x.ai/developers/models; the grok-2 family answers \
              'Model not found - retired by xAI' (reported in BerriAI/litellm#38179)",
+        ),
+        (
+            "xai",
+            "grok-3",
+            "retired 2026-05-15: docs.x.ai/developers/migration/may-15-retirement (read \
+             2026-11-28, #1147); the slug now redirects to grok-4.3 and bills at its rates",
+        ),
+        (
+            "xai",
+            "grok-4",
+            "absent from docs.x.ai/developers/models.md and /pricing.md (read 2026-11-28, \
+             #1147); its dated release grok-4-0709 retired 2026-05-15 (may-15-retirement)",
+        ),
+        (
+            "xai",
+            "grok-4-mini",
+            "absent from docs.x.ai/developers/models.md and /pricing.md (read 2026-11-28, \
+             #1147); no xAI page names it",
+        ),
+        (
+            "xai",
+            "grok-3-mini",
+            "absent from docs.x.ai/developers/models.md and /pricing.md (read 2026-11-28, \
+             #1147)",
         ),
         (
             "minimax",
@@ -1044,8 +1077,12 @@ mod tests {
 
     #[test]
     fn test_xai_known_models_includes_grok4() {
+        // #1147 (Day 273): this pinned grok-4 as offered; xAI's pages no
+        // longer list it (IDS_NO_VENDOR_SERVES), so it now pins the served
+        // family member and that grok-4 is gone.
         let models = known_models_for_provider("xai");
-        assert!(models.contains(&"grok-4"), "xai should include grok-4");
+        assert!(models.contains(&"grok-4.7"), "xai should include grok-4.7");
+        assert!(!models.contains(&"grok-4"), "xai must not offer grok-4");
     }
 
     #[test]
