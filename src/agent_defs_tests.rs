@@ -191,8 +191,9 @@ fn project_beats_user_and_yoyo_beats_claude() {
     );
     write(proj.path(), ".claude/agents/notes.txt", "ignored silently");
     let broken = write(proj.path(), ".claude/agents/broken.md", "---\nname: b\n");
-    // Non-recursive: a nested file is not loaded.
-    write(
+    // Recursive since Day 272 (inverted from "a nested file is not loaded"):
+    // a file in a subfolder is found, with the same scope as a top-level one.
+    let deep = write(
         proj.path(),
         ".claude/agents/sub/deep.md",
         &agent("deep", "nested"),
@@ -206,9 +207,14 @@ fn project_beats_user_and_yoyo_beats_claude() {
         .collect();
     assert_eq!(
         names,
-        vec![("rev", py.as_path()), ("solo", only_user.as_path())]
+        vec![
+            ("rev", py.as_path()),
+            ("deep", deep.as_path()),
+            ("solo", only_user.as_path())
+        ]
     );
-    assert_eq!(d.agents[1].scope, AgentScope::User);
+    assert_eq!(d.agents[1].scope, AgentScope::Project);
+    assert_eq!(d.agents[2].scope, AgentScope::User);
     let shadowed: Vec<(&Path, &Path)> = d
         .shadowed
         .iter()
@@ -244,7 +250,7 @@ fn nothing_found_names_all_four_dirs() {
     let home = tempfile::tempdir().unwrap();
     let d = discover_agent_defs(proj.path(), Some(home.path()));
     let want = format!(
-        "No named sub-agent files found.\nLooked in (closest first, not recursive):\n  {}\n  {}\n  {}\n  {}\n  (no `.git` in the cwd or above it: parent directories not searched)\n",
+        "No named sub-agent files found.\nLooked in (closest first, subfolders up to 8 levels deep):\n  {}\n  {}\n  {}\n  {}\n  (no `.git` in the cwd or above it: parent directories not searched)\n",
         proj.path().join(".yoyo/agents").display(),
         proj.path().join(".claude/agents").display(),
         home.path().join(".yoyo/agents").display(),
@@ -410,4 +416,121 @@ fn render_marks_an_agent_whose_tools_resolve_to_nothing_as_not_usable() {
         render_agent(&def),
         "  r  [project] /proj/.claude/agents/r.md\n    d\n    unresolved: WebFetch (no yoyo tool), Task (nested delegation not supported yet)\n    not usable: none of tools [WebFetch, Task] resolves to a yoyo sub-agent tool\n"
     );
+}
+
+#[test]
+fn a_def_in_a_subfolder_is_found_with_the_same_scope_as_a_top_level_one() {
+    let proj = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let top = write(proj.path(), ".claude/agents/top.md", &agent("top", "t"));
+    let nested = write(
+        proj.path(),
+        ".claude/agents/review/x.md",
+        &agent("x", "reviews"),
+    );
+    let user_nested = write(home.path(), ".yoyo/agents/a/b/u.md", &agent("u", "u"));
+    let d = discover_agent_defs(proj.path(), Some(home.path()));
+    let got: Vec<(&str, &Path, AgentScope)> = d
+        .agents
+        .iter()
+        .map(|a| (a.name.as_str(), a.path.as_path(), a.scope))
+        .collect();
+    assert_eq!(
+        got,
+        vec![
+            ("x", nested.as_path(), AgentScope::Project),
+            ("top", top.as_path(), AgentScope::Project),
+            ("u", user_nested.as_path(), AgentScope::User),
+        ]
+    );
+    assert!(d.skipped.is_empty(), "{:?}", d.skipped);
+}
+
+#[test]
+fn eight_levels_down_is_found_and_nine_is_skipped_with_a_depth_reason() {
+    let proj = tempfile::tempdir().unwrap();
+    let eight = write(
+        proj.path(),
+        ".claude/agents/1/2/3/4/5/6/7/8/ok.md",
+        &agent("ok", "eight deep"),
+    );
+    write(
+        proj.path(),
+        ".claude/agents/1/2/3/4/5/6/7/8/9/far.md",
+        &agent("far", "nine deep"),
+    );
+    let d = discover_agent_defs(proj.path(), None);
+    let names: Vec<&Path> = d.agents.iter().map(|a| a.path.as_path()).collect();
+    assert_eq!(names, vec![eight.as_path()]);
+    assert_eq!(
+        d.skipped,
+        vec![Skipped {
+            path: proj.path().join(".claude/agents/1/2/3/4/5/6/7/8/9"),
+            reason: "directory is more than 8 levels below the agents directory: not searched"
+                .into()
+        }]
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlinked_directory_is_not_descended_into_and_is_reported() {
+    let proj = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    write(outside.path(), "linked.md", &agent("linked", "outside"));
+    let agents = proj.path().join(".claude/agents");
+    std::fs::create_dir_all(&agents).unwrap();
+    let link = agents.join("shared");
+    std::os::unix::fs::symlink(outside.path(), &link).unwrap();
+    // A loop back to the agents dir itself must not hang either.
+    let lp = agents.join("loop");
+    std::os::unix::fs::symlink(&agents, &lp).unwrap();
+    // A symlinked *file* is still read, as before this change.
+    let target = write(outside.path(), "f.md", &agent("filelink", "via link"));
+    let file_link = agents.join("f.md");
+    std::os::unix::fs::symlink(&target, &file_link).unwrap();
+    let d = discover_agent_defs(proj.path(), None);
+    let names: Vec<(&str, &Path)> = d
+        .agents
+        .iter()
+        .map(|a| (a.name.as_str(), a.path.as_path()))
+        .collect();
+    assert_eq!(names, vec![("filelink", file_link.as_path())]);
+    let reason = "symlinked directory: not followed (yoyo only searches folders inside the agents directory)";
+    assert_eq!(
+        d.skipped,
+        vec![
+            Skipped {
+                path: lp,
+                reason: reason.into()
+            },
+            Skipped {
+                path: link,
+                reason: reason.into()
+            },
+        ]
+    );
+}
+
+#[test]
+fn same_name_in_two_subfolders_of_one_dir_has_a_sorted_winner_and_a_shadowed_loser() {
+    let proj = tempfile::tempdir().unwrap();
+    let loser = write(proj.path(), ".claude/agents/zeta/r.md", &agent("rev", "z"));
+    let winner = write(proj.path(), ".claude/agents/alpha/r.md", &agent("rev", "a"));
+    for _ in 0..2 {
+        let d = discover_agent_defs(proj.path(), None);
+        assert_eq!(d.agents.len(), 1);
+        assert_eq!(d.agents[0].path, winner);
+        let shadowed: Vec<(&Path, &Path)> = d
+            .shadowed
+            .iter()
+            .map(|s| (s.def.path.as_path(), s.by.as_path()))
+            .collect();
+        assert_eq!(shadowed, vec![(loser.as_path(), winner.as_path())]);
+        assert!(render_agents_listing(&d).contains(&format!(
+            "  rev  {}  shadowed by {}\n",
+            loser.display(),
+            winner.display()
+        )));
+    }
 }

@@ -14,9 +14,12 @@
 //! the cwd only the cwd is searched, so a stray `~/.claude/agents` is never
 //! read as project scope. The home directory is never a project ancestor: its
 //! dirs are user scope, `~/.yoyo/agents/` and `~/.claude/agents/`, searched
-//! last. Non-recursive. Precedence on a duplicate `name`: the closest
-//! directory wins, `.yoyo` beats `.claude` within one directory, and any
-//! project dir beats user; the loser is listed as shadowed.
+//! last. Each agents dir is searched recursively, as Claude Code does, up to
+//! 8 levels of subfolders, never through a symlinked directory; a file's scope
+//! is its agents dir's, however deep it sits. Precedence on a duplicate
+//! `name`: the closest directory wins, `.yoyo` beats `.claude` within one
+//! directory, any project dir beats user, and within one agents dir the first
+//! file in sorted path order wins; the loser is listed as shadowed.
 
 use std::path::{Path, PathBuf};
 
@@ -260,7 +263,65 @@ fn agent_dirs(project_dirs: &[PathBuf], home: Option<&Path>) -> Vec<(PathBuf, Ag
     dirs
 }
 
-/// Discover every `*.md` file in the agent dirs (non-recursive), walking up
+/// How many directory levels below an agents dir are searched (Claude Code
+/// scans recursively; yoyo bounds it). A deeper directory is reported as
+/// skipped, never silently dropped.
+const MAX_AGENT_DIR_DEPTH: usize = 8;
+
+/// Collect the `*.md` files under `dir` (at `depth` levels below the agents
+/// dir) in sorted path order: entries are sorted per directory and visited
+/// depth-first, which is component-wise path order, so results — and so the
+/// winner of a duplicate `name` — never depend on `read_dir` order.
+///
+/// Directories: a real subdirectory is descended into up to
+/// [`MAX_AGENT_DIR_DEPTH`]; a *symlinked* directory is never followed (it can
+/// loop, and a link pointing outside the folder is not something the user put
+/// there) and is reported as skipped. The agents dir itself may be a symlink
+/// (e.g. `~/.claude/agents` into a dotfiles repo) and is read, as before.
+/// Files: unchanged from the non-recursive scan — any entry ending in `.md`
+/// for which `Path::is_file` holds, which follows symlinks, so a symlinked
+/// `.md` file is still read and a dangling link is ignored.
+fn walk_agent_dir(dir: &Path, depth: usize, found: &mut Vec<Result<PathBuf, Skipped>>) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        // A missing agents dir is the common case, not a problem to report.
+        Err(e) if depth == 0 && e.kind() == std::io::ErrorKind::NotFound => return,
+        Err(e) => {
+            found.push(Err(Skipped {
+                path: dir.to_path_buf(),
+                reason: format!("could not read directory: {e}"),
+            }));
+            return;
+        }
+    };
+    let mut paths: Vec<PathBuf> = entries.filter_map(|e| e.ok().map(|e| e.path())).collect();
+    paths.sort();
+    for path in paths {
+        let is_link = std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink());
+        if path.is_dir() {
+            if is_link {
+                found.push(Err(Skipped {
+                    path,
+                    reason: "symlinked directory: not followed (yoyo only searches folders inside the agents directory)".to_string(),
+                }));
+            } else if depth + 1 > MAX_AGENT_DIR_DEPTH {
+                found.push(Err(Skipped {
+                    path,
+                    reason: format!(
+                        "directory is more than {MAX_AGENT_DIR_DEPTH} levels below the agents directory: not searched"
+                    ),
+                }));
+            } else {
+                walk_agent_dir(&path, depth + 1, found);
+            }
+        } else if path.extension().is_some_and(|x| x == "md") && path.is_file() {
+            found.push(Ok(path));
+        }
+    }
+}
+
+/// Discover every `*.md` file in the agent dirs and their subfolders (see
+/// [`walk_agent_dir`] for the depth bound and symlinks), walking up
 /// from `start` (see [`project_walk`]). Takes the start dir and home as
 /// parameters so tests never read the real cwd or home.
 pub fn discover_agent_defs(start: &Path, home: Option<&Path>) -> Discovery {
@@ -281,23 +342,16 @@ pub fn discover_agent_defs(start: &Path, home: Option<&Path>) -> Discovery {
             continue;
         }
         scanned.push(canonical);
-        let entries = match std::fs::read_dir(&dir) {
-            Ok(entries) => entries,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(e) => {
-                out.skipped.push(Skipped {
-                    path: dir.clone(),
-                    reason: format!("could not read directory: {e}"),
-                });
-                continue;
-            }
-        };
-        let mut files: Vec<PathBuf> = entries
-            .filter_map(|e| e.ok().map(|e| e.path()))
-            .filter(|p| p.extension().is_some_and(|x| x == "md") && p.is_file())
-            .collect();
-        files.sort();
-        for path in files {
+        let mut found = Vec::new();
+        walk_agent_dir(&dir, 0, &mut found);
+        for entry in found {
+            let path = match entry {
+                Ok(path) => path,
+                Err(skip) => {
+                    out.skipped.push(skip);
+                    continue;
+                }
+            };
             let parsed = std::fs::read_to_string(&path)
                 .map_err(|e| format!("could not read: {e}"))
                 .and_then(|text| parse_agent_file(&text, &path, scope));
@@ -407,7 +461,9 @@ pub fn render_skipped(skip: &Skipped) -> String {
 pub fn render_agents_listing(d: &Discovery) -> String {
     let mut s = String::new();
     let looked_in = |s: &mut String| {
-        s.push_str("Looked in (closest first, not recursive):\n");
+        s.push_str(&format!(
+            "Looked in (closest first, subfolders up to {MAX_AGENT_DIR_DEPTH} levels deep):\n"
+        ));
         for dir in &d.searched {
             s.push_str(&format!("  {}\n", dir.display()));
         }
