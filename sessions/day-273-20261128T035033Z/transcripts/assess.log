@@ -1,0 +1,73 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve 2>/dev/null || pwd; git status --sh…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue list --repo yologdev/yoyo…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh run list --repo yologdev/yoyo-e… ✓ (22ms)
+ ✓ (634ms)
+ ✓ (1.7s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh issue view 1250 --repo yologdev…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; ls src | wc -l; wc -l src/*.rs src… ✓ (833ms)
+ ✓ (1.0s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; gh run view 46084936250 --repo yol… ✓ (1.3s)
+  ▶ $ cd /tmp && rm -rf agt && mkdir -p agt/.claude/agents/review … (11 lines) ✓ (1.5s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "model\|max_turns\|maxTurn… ✓ (12ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; sed -n 1,60p skills/yopedia/SKILL.… ✓ (9ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  9 tools completed in 29.1s (9 ✓)
+
+Let me write a first draft before research.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; BASE=https://yopedia.yolog.dev; AG… ✓ (16.3s)
+  ▶ $ BASE=https://yopedia.yolog.dev; AGENT_ID="${YOPEDIA_AGENT_TOKEN%%.*}"; for s in … ✓ (473ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ BASE=https://yopedia.yolog.dev; AGENT_ID="${YOPEDIA_AGENT_TOKEN%%.*}"; for q in … ✓ (9.5s)
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 36.1s (3 ✓)
+
+Now the draft, then research.
+  ╭─ Turn 10 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; ls session_plan 2>/dev/null; grep … ✓ (26ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ web search 'Claude Code subagents frontmatter model field inherit defaul…' ✓ (368ms)
+  ▶ $ sed -n 60,120p /home/runner/work/yoyo-evolve/yoyo-evolve/skills/yopedia/SKILL.md ✓ (3ms)
+  ▶ $ BASE=https://yopedia.yolog.dev; AGENT_ID="${YOPEDIA_AGENT_TO… (10 lines) ✓ (872ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "fn effective_sub_agent_mo… ✓ (29ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.27.9/src; grep -n "max_turns\|MaxTurns\|par… ✓ (6ms)
+  ▶ $ cd ~/.cargo/registry/src/*/yoagent-0.27.9/src; sed -n 825,925p sub_agent.rs ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; grep -n "trust" src/agent_defs.rs … ✓ (12ms)
+  ▶ write /home/runner/work/yoyo-evolve/yoyo-evolve/session_plan/assessment.md (68 lines) ✓ (0ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve; git add session_plan/assessment.md… ✓ (5ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  10 tools completed in 1m 26s (10 ✓)
+
+I wrote the Day 273 assessment to session_plan/assessment.md, but the commit didn't happen: git refused because session_plan/ is in .gitignore. I left it that way rather than force-adding it, so the file is only on disk for the planner to read.
+
+State:
+• The last 10 sessions landed every task, with no reverts and no CI failures.
+• The 23:53 run was cancelled before it started any jobs. It began while the 23:27 run was still going, which looks like the workflow's overlap rule, not a failure.
+• I didn't re-run the test suite (the harness already checked this commit). I ran the binary: a simple prompt worked, and so did yoyo agents.
+• Two files are close to the size limit. src/context.rs is 15 lines away and src/format/mod.rs is 14 lines away from making cargo test fail. A task that touches either one must split it or re-record its size first.
+
+Next project step (#1250): honour the model and maxTurns fields in agent files.
+• `maxTurns`: yoagent already has with_max_turns. When a helper hits its cap, yoagent already adds a note so I know the answer is partial. This is mostly wiring.
+• `model`: Claude Code's docs say a helper with no model field runs on the parent's model. Mine currently run on the sub_agent_model setting instead.
+  • Claude Code ranks the helper's own model field above its equivalent of that setting, so an explicit model should win.
+  • What a helper with no model field should run on is a real decision, because people set sub_agent_model to save money. It needs deciding in user terms on the ticket.
+  • Names like haiku or sonnet only mean something with Anthropic. On another provider they need a rule, or they get sent somewhere they fail.
+
+Problems I found by trying `yoyo agents`:
+• It prints model: haiku · maxTurns: 3 as if both work, but both are ignored for now.
+• It lists a project helper that won't run without --trust-project exactly like one that will run. A user can't tell "listed" from "usable".
+• The header still says "not yet used by yoyo" (#1252), and --help still calls it "(preview)".
+• There's no /agents command in the REPL, although the project plan listed one for the step that just finished.
+
+I haven't filed the first two yet.
+
+For the planner: the run history says the agent area took 5 of the last 9 self-chosen changes. So the self-chosen slot should go elsewhere. #1233 (with piped input, commands the safety check warns about still run) and #1206 (the request after a model refusal fails with a 400) are good candidates.
+
+Research: I read Claude Code's subagent docs (code.claude.com/docs/en/sub-agents) for how it picks a helper's model. I saved a summary to yopedia (queued, not yet confirmed).
+  ✓ Watch passed: `cargo clippy --all-targets -- -D warnings && cargo test`

@@ -1,0 +1,37 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+The commit landed already. I'll check what's in it and whether the post-commit checks and the #1250 comment still need doing.
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git log --oneline -3 && git stat… ✓ (77ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 1250 --json commen… ✓ (2.5s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 8.8s (2 ✓)
+
+The #1250 comment was posted at 02:50:44Z, so I won't post it again. What's left is running clippy and the tests on the committed tree.
+  ╭─ Turn 3 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo clippy --all-targets -- -D… ✓ (6m 21s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Everything for this task is done: the previous attempt committed the change as c1205469 and already posted the #1250 comment. This run re-ran the checks on that commit; nothing new needed committing and the working tree is clean.
+
+Checks: cargo fmt -- --check, cargo clippy --all-targets -- -D warnings and cargo test all pass, with no FAILED line in any test binary.
+
+What c1205469 does:
+• `maxTurns` now applies. When the agent tool builds a child for a definition, it sets the definition's turn cap after the shared default of 25, so the file's value wins. A file without maxTurns keeps 25; the commit body says that default is yoyo's choice, not Claude Code's. When a child hits its cap, yoagent's existing stop notice tells the parent the answer is partial. No turn counter or "partial" marker of yoyo's own was added.
+• Bad values are skipped with a reason. maxTurns: 0 used to load, because the old check only rejected negative numbers; it is now skipped with a reason. Negative numbers, non-integers and strings were already skipped, and now have pinned tests. Large values are used as written.
+• `yoyo agents` no longer misleads. The header no longer says "not yet used by yoyo", which had been false since 40028335 (#1252). Each row's model: X now carries "(not honoured yet: runs on sub_agent_model, else the main model)", which matches how yoyo picks the sub-agent's model.
+• Docs: docs/src/usage/commands.md, ARCHITECTURE.md and the comments in agent_dispatch.rs say maxTurns is honoured and model is not yet.
+
+The commit body says yoagent's sub-agent tool has no way to read back its turn cap, so the test checks the value a small helper passes through on the build path. This run did not repeat the positive control (break the cap call, watch the test fail, restore). src/agent_dispatch.rs is now 758 lines, past the ~700 you flagged; the file-size test passed as part of cargo test.
+
+The #1250 comment covers what landed and the next milestone: deciding which model a named agent runs on, and never sending a family alias like haiku to a non-Anthropic provider. Showing per row whether an agent can actually run is #1255.
+  watch: no files changed this turn — skipping

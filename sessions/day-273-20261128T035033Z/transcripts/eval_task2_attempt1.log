@@ -1,0 +1,30 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 50,80p src/project_base_u… ✓ (19ms)
+
+────────────────────────────────────────────────────────────────────────────────
+
+Quick live check of the binary in a trusted project, with secrets in the URL.
+  ╭─ Turn 2 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /tmp && rm -rf evtp && mkdir evtp && cd evtp && printf 'provider = "custom"\n… ✓ (7.1s)
+  ▶ $ cd /tmp/evtp && head -c 1500 err; ls -la /home/runner/work/yoyo-evolve/yoyo-evol… ✓ (9ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /tmp/evtp && mkdir -p /tmp/evhome && HOME=/tmp/evhome XDG_CONFIG_HOME=/tmp/ev… ✓ (6.6s)
+  ▶ $ mkdir -p /home/runner/work/yoyo-evolve/yoyo-evolve/session_p… (8 lines) ✓ (12ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 36.6s (4 ✓)
+
+Verdict: PASS. I wrote it to session_plan/eval_task_2.md, with all four Checked lines PASS.
+
+• Live run: I ran the binary with --trust-project --quiet in a project whose .yoyo.toml sets base_url = "http://u:sec@127.0.0.1:9/v1?key=sk". It printed note: requests for custom (with your API key) go to http://127.0.0.1:9, set by base_url in /tmp/evtp/.yoyo.toml to stderr and nothing to stdout. The username, password, path and query were all left out of the note. The same project without trust still hit the existing refusal and exited 2.
+• Diff matches the task:
+  • Helper: a pure helper parses the URL with the url crate. That crate is now a direct dependency; it was already in Cargo.lock.
+  • Gate: a new from_trusted_project flag is set in all three gate return paths and read in resolve_base_url. No definition was added without something using it.
+  • Tests: the gate table gained rows for a --base-url flag in a trusted project and a user-level config in a trusted directory; both print nothing. The binary-level tests cover the note being present and absent.
+  • Docs: the paragraph in docs/src/troubleshooting/safety.md and an ARCHITECTURE.md entry both landed in the same commit, 0849fcfa. The working tree is clean and no NEUTERED marker was left behind.
+• Outside this task: the existing refusal message for untrusted runs still prints the raw URL, password and ?key= included. This change didn't touch that message.
+  watch: no files changed this turn — skipping
