@@ -1,0 +1,103 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --short | head; git l…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -rn -i "recursive" src/agen… ✓ (24ms)
+ ✓ (29ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,30p src/agent_defs.rs; … ✓ (7ms)
+  ▶ read src/agent_defs.rs (25 lines)  ▶ read src/agent_defs.rs:290..315 ✓ (0ms)
+ ✓ (1ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,60p src/agent_defs_test… ✓ (11ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 155,168p src/agent_defs_t… ✓ (21ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n -i "agents" docs/src/usa… ✓ (6ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  8 tools completed in 44.3s (8 ✓)
+
+Now edit the existing non-recursion test (inverting it) and add new tests.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (159 lines) ✓ (41.8s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Red for the right reasons. Now the implementation:
+  ╭─ Turn 8 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (116 lines) ✓ (42.0s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Two cleanups: derive the "8" in the listing from the constant, and avoid reading the root dir twice.
+  ╭─ Turn 9 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (41 lines) ✗ (2m 0s)
+    │ Command timed out after 120s. Output so far:
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (5m 27s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 7m 37s (1 ✓, 1 ✗)
+
+All green (exit 141 is head closing the pipe). Positive control on the symlink guard, as one atomic mutate→run→restore:
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cp src/agent_defs.rs /tmp/ad.bak… ✓ (1m 24s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+The control failed by name with the guard off and passed once restored (with the guard off, the depth bound still stopped the loop link from recursing forever). Now a live run:
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo build 2>&1 | tail -1; T=$(… ✓ (13.9s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Works end to end. Now ARCHITECTURE.md, marking the "Non-recursive" claim superseded:
+  ╭─ Turn 13 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (31 lines) ✓ (101ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Backticks in the unquoted heredoc got eaten; rewriting the message from a file:
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && { cat <<'EOF… (21 lines) ✓ (59ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo fmt… ✓ (41.8s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 53.7s (2 ✓)
+
+Everything is green. Now the comment on #1250:
+  ╭─ Turn 16 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && SHA=$(git re… (12 lines) ✓ (802ms)
+
+Agent discovery now looks in subfolders, so an agent file at .claude/agents/review/reviewer.md is found, the same way Claude Code finds it. All checks pass: fmt, clippy with -D warnings, and the full cargo test run (7225 passed in the main suite, 19/19 in the agent-discovery tests). The work is committed as 6351c755.
+
+What changed (src/agent_defs.rs, via a new walk_agent_dir):
+• Scope: all four agents directories (.yoyo/agents and .claude/agents, in the project and under ~) are searched recursively. A nested file gets the same scope as a top-level one.
+• Depth limit: at most 8 levels of subfolders. A deeper folder is listed under Skipped: with the reason.
+• Symlinks: a symlinked folder is not followed and is listed under Skipped:. The agents directory itself can still be a symlink, and a symlinked .md file is still read, because the existing file check already follows links. That decision is written in a comment.
+• Order: entries are visited in sorted path order. Before this change, two files in one directory with the same name went to whichever came first alphabetically, and the other was shown as shadowed. Nested files follow that same rule. The rules between directories are unchanged.
+• Text: the listing header now reads subfolders up to 8 levels deep, with the 8 taken from the depth constant. I removed every "not recursive" claim from src/ and updated docs/src/usage/commands.md and the ARCHITECTURE.md entry, which marks the old claim as superseded.
+
+Tests:
+• One existing test checked that a nested file was not loaded. I inverted it: that file is now found, with project scope. The commit message says so.
+• Four new tests cover:
+  • a file in a subfolder
+  • 8 levels deep found, 9 levels deep skipped
+  • symlinked folders skipped (including a link that loops back to the agents directory) while a symlinked file still loads
+  • which file wins when two subfolders hold the same name
+• As a check on the symlink test, I switched the symlink check off and the symlink test failed by name. With the check restored, all 19 pass. With the check off, the looping link still stopped at the depth limit.
+
+Live run: yoyo agents on a temporary repo found review/reviewer.md and listed both the 9-deep folder and the symlinked folder as skipped. The output is pasted in the commit message.
+
+I commented on #1250 with what landed, the depth limit and the symlink rule. The comment also points out one stale line I didn't touch because it's outside this task: the first line of yoyo agents still says "preview: … not yet used by yoyo", which has been false since the agent tool landed in Task 1.
+  watch: no files changed this turn — skipping

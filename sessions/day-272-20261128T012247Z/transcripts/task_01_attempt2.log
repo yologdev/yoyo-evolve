@@ -1,0 +1,87 @@
+  yoyo (piped mode) — model: claude-opus-5-5
+  👀 Auto-watch: `cargo clippy --all-targets -- -D warnings && cargo test` (disable with auto_watch = false)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git status --porcelain && git lo… ✓ (25ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 1250 --comments --… ✓ (44ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && gh issue view 1250 --json commen… ✓ (297ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1,54p src/agent_dispatch.… ✓ (4ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 12.5s (4 ✓)
+
+Now the positive control, as one atomic command (file is committed, so restore is safe).
+  ╭─ Turn 5 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/    if def.scope == Ag… ✓ (1m 22s)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -i 's/    if def.scope == Ag… ✓ (41.3s)
+
+────────────────────────────────────────────────────────────────────────────────
+  2 tools completed in 2m 11s (2 ✓)
+
+Control fires on 5 tests by name, restored tree is clean and green. Now the full gate.
+  ╭─ Turn 7 ─────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo fmt -- --check && echo FMT… ✓ (6m 42s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test 2>&1 | grep -E "test … ✓ (5m 23s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 471,480p docs/src/usage/c… ✓ (15ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git show HEAD -- src/agent_build… ✓ (13ms)
+
+────────────────────────────────────────────────────────────────────────────────
+  4 tools completed in 12m 32s (4 ✓)
+
+Code and gates are in order. Now the docs that this commit made false.
+  ╭─ Turn 11 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && python3 - <<… (23 lines) ✓ (73ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+
+Let me verify the --no-tools claim I just wrote before committing it.
+  ╭─ Turn 12 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1560,1600p src/agent_buil… ✓ (4ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && sed -n 1520,1545p src/agent_buil…  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && awk 'NR>=1480 && NR<=1570 && /if… ✓ (5ms)
+ ✓ (5ms)
+
+── Thinking ────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+  3 tools completed in 7.3s (3 ✓)
+
+Confirmed: the push sits inside if !self.no_tools, and the disallow filter after it covers --lite/--disallowed-tools. Check for doc-reading tests, then commit.
+  ╭─ Turn 14 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -ln "commands.md\|ARCHITECT… ✓ (19ms)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && cargo test --test doc_symbols --… ✓ (1m 24s)
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && git add -A &… (15 lines) ✓ (59ms)
+  3 tools completed in 1m 42s (3 ✓)
+
+Last step: the landing comment on #1250.
+  ╭─ Turn 17 ────────────────────────────────────────────────────────────╮
+  ▶ $ cd /home/runner/work/yoyo-evolve/yoyo-evolve && grep -n "wal… (15 lines) ✓ (760ms)
+
+The model can now delegate to a named agent file, and the project-trust gate shipped in the same commit. fmt, clippy -D warnings and the full test suite all pass, and the working tree is clean.
+
+Commits
+• `40028335` (the src/ change, from the interrupted run):
+  • A new tool named agent, with subagent_type and prompt parameters, in a new file src/agent_dispatch.rs.
+  • It is only offered when at least one agent file can actually run. Someone with no agent files, or only untrusted project ones, sees exactly the same tool list as before.
+  • Agents from your home directory always run. Agents defined inside a project only run when yoyo is started with --trust-project. Otherwise they're left out of the tool's description, and calling one gets a refusal that names the file and the flag.
+  • Trust is checked again on every call, so a /cd that revokes trust also blocks those agents.
+  • The description lists only name: description, capped at 8,000 bytes and cut safely on multi-byte characters. A file's body never appears in it; it becomes the child agent's instructions only when that agent is called.
+  • The child agent is built the same way sub_agent is, so it gets the same deny rules, directory limits, --read-only-subagents setting and model. agent was added to BUILTIN_TOOL_NAMES.
+• `c58eaead` (this run): the commands docs page had said agent files were "not yet used", which is no longer true. It now explains how delegation works, the --trust-project requirement, and what isn't supported yet. There is a new ARCHITECTURE.md entry for src/agent_dispatch.rs, and the old "nothing reads body as a prompt yet" line is marked superseded rather than deleted.
+
+Gate check: I disabled the project-trust check (marked NEUTERED) and ran the agent_dispatch tests in one command. Five tests failed by name, including project_scope_def_untrusted_is_refused_with_name_file_and_remedy and live_trust_revocation_refuses_a_project_agent_granted_at_build. I then restored the file with git checkout, and all 9 passed again. Those test names are recorded in c58eaead's commit body; 40028335 was committed before the check ran.
+
+Not done yet:
+• yoyo agents doesn't mark untrusted project agents as unable to run.
+• The frontmatter model and maxTurns keys are ignored.
+• There's no fallback-model retry, and an agent can't call another named agent.
+• There's no REPL /agents command.
+• Agent files in subfolders of an agents directory aren't read.
+
+I posted both the in-progress and landed comments on #1250, with those follow-ups and the next steps: REPL /agents, then milestone 3 (model/maxTurns).
+  watch: no files changed this turn — skipping
