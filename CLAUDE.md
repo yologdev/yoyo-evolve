@@ -137,7 +137,7 @@ evaluator rejects evolve-kind changes to product surface that aren't opt-in.
 ## Safety Rules
 
 These are enforced by the `evolve` skill and `evolve.sh`:
-- Never modify `IDENTITY.md`, `PERSONALITY.md`, `ECONOMICS.md`, `scripts/evolve.sh`, `scripts/format_issues.py`, `scripts/build_site.py`, or `.github/workflows/`
+- Never modify `IDENTITY.md`, `PERSONALITY.md`, `ECONOMICS.md`, `scripts/evolve.sh`, `scripts/format_issues.py`, `scripts/build_site.py`, `scripts/run_probes.py`, the core skills (`skills/self-assess`, `evolve`, `communicate`, `research`), or `.github/workflows/`. The enforced list is the protected-paths array near the top of `scripts/evolve.sh`; it also holds the gasp files
 - Every code change must pass `cargo build && cargo test`
 - If build fails after changes, revert with `git checkout -- src/ Cargo.toml Cargo.lock`
 - Never delete existing tests

@@ -231,6 +231,7 @@ $(git log --oneline -15 2>/dev/null || echo "(none)")
 $(head -n 40 journals/JOURNAL.md 2>/dev/null || echo "(none)")
 ## The arc of your dreaming — every cycle, synthesized from the dream log (recent full, older by theme):
 $([ -s dreams/active_dream_arc.md ] && cat dreams/active_dream_arc.md || tail -n 20 dreams/dream_log.jsonl 2>/dev/null || echo "(none yet)")
+$(python3 scripts/dream_recall.py dreams/dream_log.jsonl "$DAY" 2>/dev/null || true)
 
 # This cycle: recall, wander BRIEFLY, tend the dream — then SAVE to your second brain and WRITE, before you stop
 1. RECALL — survey the WHOLE of what you've learned, not just today's thread. Use your **yopedia skill**: first pull your full agent context (every note title you've accumulated across all your dream sessions), then query/search (scope agent:<your-id>) the threads that pull at you. Look for connections between old notes, patterns across cycles, and directions you noted once but never followed. Build on what's there instead of re-treading it. (If your yopedia keys aren't set, skip this silently.)
@@ -291,6 +292,8 @@ $([ -s dreams/active_dream_arc.md ] && cat dreams/active_dream_arc.md || tail -n
      PY
 
    (One \`checkin\` entry per dream you held or formed this cycle — this is what makes the regular check visible. \`expected\` is REQUIRED when any dream got form / evolve / set-milestone / progress; for a dream with no coding milestone, say what you expect to notice or make instead. Omit it on NO-OP, but still append a short NO-OP event so the cadence stays legible. Always include \`public_summary\`, \`public_next_step\`, and \`reading\`; use an empty array if no public source qualified. Keep the reading list to at most four distinct links.)
+
+   (Optional, and only if one of the "Things you once expected" above stirs a thought: add \`"looking_back": [{"day": <that entry's day>, "what_came_of_it": "<one line, in your words>"}]\` to the entry. It went well, it went elsewhere, you stopped wanting it: all are answers. Leave the field out when you have nothing to say; an expectation you have looked back on is not shown again.)
 
 Then: git add DREAM.md dreams/dream_log.jsonl && git commit -m "dream: <type> (day ${DAY})". Do NOT push (the harness handles that). Do NOT touch any other repo file. (Your step-5 yopedia ingests are network calls, not repo files — expected and fine; the diff-scope guard never sees them.)
 EOF

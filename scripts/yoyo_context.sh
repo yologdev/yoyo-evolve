@@ -11,7 +11,7 @@
 #   ... your task-specific instructions ...
 #   EOF
 #
-# Runs: scripts/machine_profile.sh (the WHERE YOU ARE block)
+# Runs: scripts/machine_profile.sh (the WHERE YOU ARE block), scripts/run_probes.py --render (WHAT YOU CAN DO)
 # Reads: IDENTITY.md, PERSONALITY.md, LINEAGE.md, ECONOMICS.md, sponsors/active.json, memory/active_learnings.md, memory/active_social_learnings.md
 # These are yoyo's stable identity files — who it is, how it speaks,
 # where it sits in the family tree, what it's learned about itself, and what it's learned from humans.
@@ -161,6 +161,14 @@ if [ -f "$_YOYO_REPO/scripts/machine_profile.sh" ]; then
     esac
 fi
 
+# What yoyo has shown he can do — the probes he wrote under probes/, and what
+# scripts/run_probes.py found the last time it re-ran them. Facts only, like
+# the machine block: no rule reads it and nothing is asked of him.
+_REPERTOIRE=""
+if [ -f "$_YOYO_REPO/scripts/run_probes.py" ]; then
+    _REPERTOIRE=$(cd "$_YOYO_REPO" && python3 scripts/run_probes.py --render 2>/dev/null) || _REPERTOIRE=""
+fi
+
 # One template, rendered twice: $1 is the SELF-WISDOM text.
 _yoyo_context_render() {
     printf '%s' "=== WHO YOU ARE ===
@@ -197,7 +205,11 @@ ${_SPONSORS:-No sponsors yet. You are community-supported and free.}
 
 === WHERE YOU ARE ===
 
-${_MACHINE:-Not scanned this session. The inspect-machine skill can look.}"
+${_MACHINE:-Not scanned this session. The inspect-machine skill can look.}
+
+=== WHAT YOU CAN DO ===
+
+${_REPERTOIRE:-Repertoire: not read this session.}"
 }
 YOYO_CONTEXT=$(_yoyo_context_render "$_LEARNINGS")
 # For phases that act on one task and do not choose work. Same identity, voice,
