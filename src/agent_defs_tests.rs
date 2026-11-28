@@ -7,6 +7,16 @@ fn p(s: &str) -> PathBuf {
     PathBuf::from(s)
 }
 
+/// Anthropic with a main model whose id contains `sonnet` (not a real id:
+/// the row must show it back, so no yoagent id is typed in a pin).
+fn models() -> RunModels {
+    RunModels {
+        provider: "anthropic".into(),
+        main_model: "claude-sonnet-main-test".into(),
+        sub_agent_model: Some("sub-model-test".into()),
+    }
+}
+
 fn parse(text: &str) -> Result<AgentDef, String> {
     parse_agent_file(text, &p("/x/a.md"), AgentScope::Project)
 }
@@ -185,8 +195,8 @@ fn render_pins_a_whole_valid_entry_and_a_whole_skipped_line() {
     )
     .unwrap();
     assert_eq!(
-        render_agent(&def),
-        "  code-reviewer  [project] /proj/.claude/agents/code-reviewer.md\n    Reviews diffs\n    tools: read_file, search · model: sonnet (not honoured yet: runs on sub_agent_model, else the main model) · maxTurns: 5\n    ignored keys: color\n"
+        render_agent(&def, &models()),
+        "  code-reviewer  [project] /proj/.claude/agents/code-reviewer.md\n    Reviews diffs\n    tools: read_file, search · model: sonnet → claude-sonnet-main-test · maxTurns: 5\n    ignored keys: color\n"
     );
     let skip = Skipped {
         path: p("/proj/.claude/agents/broken.md"),
@@ -277,7 +287,7 @@ fn project_beats_user_and_yoyo_beats_claude() {
     );
     assert_eq!(d.searched.len(), 4);
 
-    let listing = render_agents_listing(&d);
+    let listing = render_agents_listing(&d, &models());
     assert!(listing.starts_with(
         "Named sub-agents (the model can delegate to these with the agent tool; project-scope ones only with --trust-project; none whose tools resolve to nothing)\n"
     ));
@@ -300,9 +310,9 @@ fn nothing_found_names_all_four_dirs() {
         home.path().join(".yoyo/agents").display(),
         home.path().join(".claude/agents").display(),
     );
-    assert_eq!(render_agents_listing(&d), want);
+    assert_eq!(render_agents_listing(&d, &models()), want);
     let no_home = discover_agent_defs(proj.path(), None);
-    assert!(render_agents_listing(&no_home)
+    assert!(render_agents_listing(&no_home, &models())
         .ends_with("  (no home directory: ~/.yoyo/agents and ~/.claude/agents not searched)\n"));
 }
 
@@ -358,7 +368,7 @@ fn walk_up_finds_a_repo_root_agent_from_a_subfolder() {
     want.push(home.path().join(".yoyo/agents"));
     want.push(home.path().join(".claude/agents"));
     assert_eq!(d.searched, want);
-    assert!(!render_agents_listing(&d).contains("parent directories not searched"));
+    assert!(!render_agents_listing(&d, &models()).contains("parent directories not searched"));
 }
 
 #[test]
@@ -380,7 +390,7 @@ fn walk_up_closest_directory_wins_and_the_root_is_shadowed() {
             .collect::<Vec<_>>(),
         vec![(far.clone(), near.clone())]
     );
-    assert!(render_agents_listing(&d).contains(&format!(
+    assert!(render_agents_listing(&d, &models()).contains(&format!(
         "  rev  {}  shadowed by {}\n",
         far.display(),
         near.display()
@@ -434,6 +444,56 @@ fn a_home_inside_the_walk_stays_user_scope_and_is_listed_once() {
     );
 }
 
+/// The `model:` part of a rendered row for `model: {m}` under `models`.
+fn model_row(m: &str, models: &RunModels) -> String {
+    let def = parse(&format!("---\nname: a\ndescription: d\nmodel: {m}\n---\n")).unwrap();
+    let out = render_agent(&def, models);
+    out.lines()
+        .find_map(|l| l.trim().strip_prefix("model: ").map(str::to_string))
+        .unwrap_or_else(|| panic!("no model row in {out:?}"))
+}
+
+#[test]
+fn model_row_shows_what_the_agent_tool_runs_on() {
+    let anth = models();
+    // inherit is the main model, not sub_agent_model.
+    assert_eq!(
+        model_row("inherit", &anth),
+        "inherit → claude-sonnet-main-test"
+    );
+    // Other-family alias: yoagent's newest preset, read from yoagent.
+    let haiku = crate::agent_dispatch::resolve_agent_model(
+        Some("haiku"),
+        "anthropic",
+        "claude-sonnet-main-test",
+        None,
+    )
+    .0;
+    assert!(haiku.starts_with("claude-haiku-"), "{haiku}");
+    assert_eq!(model_row("haiku", &anth), format!("haiku → {haiku}"));
+    // An id is shown as written when it is sent as written.
+    assert_eq!(model_row("claude-opus-4-8", &anth), "claude-opus-4-8");
+    let ds = RunModels {
+        provider: "deepseek".into(),
+        main_model: "deepseek-main-test".into(),
+        sub_agent_model: None,
+    };
+    assert_eq!(
+        model_row("haiku", &ds),
+        "haiku (falls back to deepseek-main-test: `haiku` is a Claude alias and the provider is deepseek)"
+    );
+    let ollama = RunModels {
+        provider: "ollama".into(),
+        main_model: "qwen3".into(),
+        sub_agent_model: Some("sub-model-test".into()),
+    };
+    assert_eq!(model_row("llama3.1", &ollama), "llama3.1");
+    assert_eq!(
+        model_row("claude-haiku-4-5", &ollama),
+        "claude-haiku-4-5 (falls back to sub-model-test: `claude-haiku-4-5` is a Claude model id and the provider is ollama)"
+    );
+}
+
 #[test]
 fn render_shows_resolved_tools_unresolved_entries_and_whole_tool_removal() {
     let def = parse_agent_file(
@@ -443,7 +503,7 @@ fn render_shows_resolved_tools_unresolved_entries_and_whole_tool_removal() {
     )
     .unwrap();
     assert_eq!(
-        render_agent(&def),
+        render_agent(&def, &models()),
         "  r  [project] /proj/.claude/agents/r.md\n    d\n    tools: read_file · disallowedTools: Bash(git push *)\n    unresolved: WebFetch (no yoyo tool), Bash (bash removed by disallowedTools)\n    note: disallowedTools Bash(git push *) removes the whole tool (yoyo has no per-command rule for sub-agents)\n"
     );
 }
@@ -457,7 +517,7 @@ fn render_marks_an_agent_whose_tools_resolve_to_nothing_as_not_usable() {
     )
     .unwrap();
     assert_eq!(
-        render_agent(&def),
+        render_agent(&def, &models()),
         "  r  [project] /proj/.claude/agents/r.md\n    d\n    unresolved: WebFetch (no yoyo tool), Task (nested delegation not supported yet)\n    not usable: none of tools [WebFetch, Task] resolves to a yoyo sub-agent tool\n"
     );
 }
@@ -571,7 +631,7 @@ fn same_name_in_two_subfolders_of_one_dir_has_a_sorted_winner_and_a_shadowed_los
             .map(|s| (s.def.path.as_path(), s.by.as_path()))
             .collect();
         assert_eq!(shadowed, vec![(loser.as_path(), winner.as_path())]);
-        assert!(render_agents_listing(&d).contains(&format!(
+        assert!(render_agents_listing(&d, &models()).contains(&format!(
             "  rev  {}  shadowed by {}\n",
             loser.display(),
             winner.display()

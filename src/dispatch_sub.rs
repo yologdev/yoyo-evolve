@@ -568,9 +568,24 @@ pub(crate) fn try_dispatch_subcommand_in(
                 return Some(None);
             }
             "agents" => {
-                // #1250 milestone 1: list named sub-agent files; none is used yet.
+                // #1250: list named sub-agent files, each `model:` resolved
+                // against the provider/model a session would run with (the
+                // same flag > config file > default order as `parse_model_config`).
                 refuse_stray_arg("agents", positional_after_verb(args).first().copied());
-                crate::agent_defs::handle_agents_command();
+                let (file_config, _) = load_config_file();
+                let provider = flag_value(args, &["--provider"])
+                    .or_else(|| file_config.get("provider").cloned())
+                    .unwrap_or_else(|| "anthropic".into())
+                    .to_lowercase();
+                let main_model = flag_value(args, &["--model"])
+                    .or_else(|| file_config.get("model").cloned())
+                    .and_then(|s| crate::config_value::named_model(&s))
+                    .unwrap_or_else(|| default_model_for_provider(&provider));
+                crate::agent_defs::handle_agents_command(&crate::agent_defs::RunModels {
+                    provider,
+                    main_model,
+                    sub_agent_model: crate::config::parse_sub_agent_model(&file_config),
+                });
                 return Some(None);
             }
             "lint" => {

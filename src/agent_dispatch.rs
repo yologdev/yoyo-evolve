@@ -28,9 +28,13 @@
 //!
 //! Frontmatter `maxTurns` IS honoured (#1250 milestone 3, Day 273): the
 //! child runs with that turn cap (`with_def_turn_cap`); without it, the
-//! shared child default of 25. Not here yet: frontmatter `model` (milestone 3,
-//! model half; every named agent runs on the `sub_agent` child model), a REPL
-//! `/agents`, nested delegation, and the docs page (milestone 4).
+//! shared child default of 25. Frontmatter `model` IS honoured too (Day 273):
+//! `choose_agent_model` picks file `model:` > `sub_agent_model` > main model,
+//! and never sends a Claude alias or `claude-…` id to another provider (the
+//! child falls back and its answer starts with a note naming both models).
+//! Superseded claim, recorded rather than erased: until Day 273 this said
+//! "every named agent runs on the `sub_agent` child model". Not here yet: a
+//! REPL `/agents`, nested delegation, and the docs page (milestone 4).
 
 use std::path::PathBuf;
 
@@ -55,6 +59,123 @@ const PER_AGENT_DESCRIPTION_BYTES: usize = 400;
 /// (`cli::project_skill_refusal_message`): the flag is `--trust-project`.
 const TRUST_REMEDY: &str = "Re-run yoyo with --trust-project to allow this project's agents \
                             this session.";
+
+/// The family aliases an agent file's `model:` may name, as Claude Code's
+/// sub-agent page lists them ("sonnet, opus, haiku, fable, a full model ID
+/// such as claude-opus-5-5, or inherit"; code.claude.com/docs/en/sub-agents,
+/// read Day 273). Matched case-insensitively.
+const CLAUDE_FAMILY_ALIASES: &[&str] = &["haiku", "sonnet", "opus", "fable"];
+
+/// `(major, minor)` of a `claude-{family}-{major}[-{minor}]` id, read from
+/// the number tokens after the family word; `(0, 0)` when there are none.
+/// Only used to order yoagent's own preset ids, which all have this shape.
+fn claude_family_version(id: &str) -> (u32, u32) {
+    let mut nums = id
+        .split(['-', '.'])
+        .filter_map(|t| t.parse::<u32>().ok())
+        .filter(|n| *n < 1000); // a date suffix is not a version
+    (nums.next().unwrap_or(0), nums.next().unwrap_or(0))
+}
+
+/// The newest Claude id of `family` that yoagent ships a preset for. The
+/// authority is yoagent's preset table (`ModelConfig::PRESETS` in
+/// yoagent's `src/provider/model.rs`, reached through
+/// `ModelConfig::presets()`), so no id is typed here and a yoagent upgrade
+/// that adds a newer model moves the pick by itself.
+fn newest_claude_preset(family: &str) -> Option<String> {
+    let prefix = format!("claude-{family}-");
+    yoagent::provider::ModelConfig::presets()
+        .filter(|m| m.provider == "anthropic" && m.id.starts_with(&prefix))
+        .map(|m| m.id)
+        .max_by_key(|id| claude_family_version(id))
+}
+
+/// The model a named agent runs on, and why it differs from what the file
+/// asked for when it does.
+pub(crate) struct AgentModelChoice {
+    pub model: String,
+    /// `Some` only when the file's `model:` could not be honoured: the
+    /// reason, e.g. "`haiku` is a Claude alias and the provider is deepseek".
+    pub fallback_reason: Option<String>,
+}
+
+/// #1250 milestone 3: which model a named agent runs on. The one authority
+/// for both the `agent` tool and the `yoyo agents` row.
+///
+/// Order (Claude Code's, minus its per-call parameter, which yoyo's `agent`
+/// tool does not take): the file's `model:` → `sub_agent_model` → the main
+/// model. `inherit` means the MAIN model, as in Claude Code. A family alias
+/// on `anthropic` runs on the main model when that is the same family (its
+/// id contains the word), else on yoagent's newest preset of the family. A
+/// family alias, or a `claude-…` id, on any other provider is never sent (it
+/// would fail every call): the child falls back and the reason is returned.
+/// Any other id is sent as written, so ollama/custom ids keep working.
+pub(crate) fn choose_agent_model(
+    def_model: Option<&str>,
+    provider: &str,
+    main_model: &str,
+    sub_agent_model: Option<&str>,
+) -> AgentModelChoice {
+    let default = sub_agent_model.unwrap_or(main_model).to_string();
+    let fallback = |reason: String| AgentModelChoice {
+        model: default.clone(),
+        fallback_reason: Some(reason),
+    };
+    let honoured = |model: &str| AgentModelChoice {
+        model: model.to_string(),
+        fallback_reason: None,
+    };
+    let Some(raw) = def_model.map(str::trim).filter(|m| !m.is_empty()) else {
+        return honoured(&default);
+    };
+    let lower = raw.to_ascii_lowercase();
+    if lower == "inherit" {
+        return honoured(main_model);
+    }
+    let anthropic = provider.eq_ignore_ascii_case("anthropic");
+    if let Some(family) = CLAUDE_FAMILY_ALIASES.iter().find(|f| **f == lower) {
+        if !anthropic {
+            return fallback(format!(
+                "`{raw}` is a Claude alias and the provider is {provider}"
+            ));
+        }
+        if main_model.to_ascii_lowercase().contains(family) {
+            return honoured(main_model);
+        }
+        return match newest_claude_preset(family) {
+            Some(id) => honoured(&id),
+            None => fallback(format!(
+                "`{raw}` is a Claude alias and yoagent ships no `{family}` preset to resolve it to"
+            )),
+        };
+    }
+    if lower.starts_with("claude-") && !anthropic {
+        return fallback(format!(
+            "`{raw}` is a Claude model id and the provider is {provider}"
+        ));
+    }
+    honoured(raw)
+}
+
+/// [`choose_agent_model`] as the dispatch site uses it: the model to run on,
+/// and the note prefixed to the tool result when the file's `model:` was
+/// not honoured, naming both models so the calling model can tell the user.
+pub(crate) fn resolve_agent_model(
+    def_model: Option<&str>,
+    provider: &str,
+    main_model: &str,
+    sub_agent_model: Option<&str>,
+) -> (String, Option<String>) {
+    let choice = choose_agent_model(def_model, provider, main_model, sub_agent_model);
+    let note = choice.fallback_reason.map(|reason| {
+        format!(
+            "[agent model: this agent file asks for model `{}`, but it ran on `{}`: {reason}]",
+            def_model.unwrap_or_default().trim(),
+            choice.model
+        )
+    });
+    (choice.model, note)
+}
 
 /// Why `def` may not run, or `None` when it may.
 ///
@@ -162,7 +283,13 @@ struct Entry {
     def: AgentDef,
     resolution: ToolResolution,
     child: Option<Box<dyn AgentTool>>,
+    /// Prefixed to the child's answer when its file's `model:` could not be
+    /// honoured (`resolve_agent_model`), so the parent can tell the user.
+    model_note: Option<String>,
 }
+
+/// A built child and its model note (see `Entry::model_note`).
+type BuiltChild = (Box<dyn AgentTool>, Option<String>);
 
 /// The `agent` tool.
 pub(crate) struct AgentDispatchTool {
@@ -179,7 +306,7 @@ impl AgentDispatchTool {
     fn new(
         defs: Vec<AgentDef>,
         trusted: fn() -> bool,
-        mut make_child: impl FnMut(&AgentDef, &ToolResolution) -> Option<Box<dyn AgentTool>>,
+        mut make_child: impl FnMut(&AgentDef, &ToolResolution) -> Option<BuiltChild>,
     ) -> Option<Self> {
         let now = trusted();
         if !should_register(&defs, now) {
@@ -188,15 +315,20 @@ impl AgentDispatchTool {
         let mut entries = Vec::with_capacity(defs.len());
         for def in defs {
             let resolution = resolution_for(&def);
-            let child = if dispatch_refusal(&def, &resolution, now).is_none() {
+            let built = if dispatch_refusal(&def, &resolution, now).is_none() {
                 make_child(&def, &resolution)
             } else {
                 None
+            };
+            let (child, model_note) = match built {
+                Some((child, note)) => (Some(child), note),
+                None => (None, None),
             };
             entries.push(Entry {
                 def,
                 resolution,
                 child,
+                model_note,
             });
         }
         let listed: Vec<&AgentDef> = entries
@@ -257,20 +389,21 @@ const NAMED_AGENT_FLAVOR: crate::tools::DispatchFlavor = crate::tools::DispatchF
 
 /// One child for one def, assembled from the same pieces `sub_agent` uses:
 /// `sub_agent_child_tools` (directory restrictions, `/read`·`/plan` mode, user
-/// deny + hard deny on bash, `--read-only-subagents`), the same child-model
-/// resolution, and the same output marker. Then narrowed to the def's
+/// deny + hard deny on bash, `--read-only-subagents`) and the same output
+/// marker. Then narrowed to the def's
 /// resolved tools, with the def's body as the system prompt (plus the
 /// runtime grounding note every builder gets, `compose_system_prompt`).
 ///
-/// `maxTurns` from the frontmatter is applied last (`with_def_turn_cap`);
-/// `model` is still ignored until #1250 milestone 3's model half. No
-/// fallback-model retry yet either: one attempt.
+/// The child's model is the def's `model:` as `resolve_agent_model` resolves
+/// it (its note, if any, travels with the child to be prefixed to the
+/// answer); `maxTurns` from the frontmatter is applied last
+/// (`with_def_turn_cap`). No fallback-model retry yet: one attempt.
 fn build_child(
     config: &AgentConfig,
     def: &AgentDef,
     resolution: &ToolResolution,
     shared_state: &SharedState,
-) -> Box<dyn AgentTool> {
+) -> BuiltChild {
     let child_disallowed = if crate::cli::is_read_only_subagents() {
         crate::tools::read_only_child_disallowed(&config.disallowed_tools)
     } else {
@@ -284,7 +417,13 @@ fn build_child(
         config.bash_cwd.as_deref(),
     );
     child_tools.retain(|t| resolution.resolved.iter().any(|r| r == t.name()));
-    let child_model = crate::config::effective_sub_agent_model(&config.model);
+    let sub_agent_model = crate::config::configured_sub_agent_model();
+    let (child_model, model_note) = resolve_agent_model(
+        def.model.as_deref(),
+        &config.provider,
+        &config.model,
+        sub_agent_model.as_deref(),
+    );
     let inner = crate::tools::sub_agent_tool_for(
         config,
         &config.provider,
@@ -300,9 +439,12 @@ fn build_child(
         &child_model,
     ));
     let inner = with_def_turn_cap(inner, def);
-    Box::new(crate::tool_wrappers::SubAgentOutputMarkerTool::new(
-        Box::new(inner),
-    ))
+    (
+        Box::new(crate::tool_wrappers::SubAgentOutputMarkerTool::new(
+            Box::new(inner),
+        )),
+        model_note,
+    )
 }
 
 /// Apply a definition's `maxTurns` on top of whatever turn cap the shared
@@ -392,14 +534,18 @@ impl AgentTool for AgentDispatchTool {
         let result = child
             .execute(serde_json::json!({ "task": prompt }), ctx)
             .await?;
+        let mut content = if result.content.is_empty() {
+            vec![Content::Text {
+                text: String::new(),
+            }]
+        } else {
+            result.content
+        };
+        if let Some(note) = &entry.model_note {
+            content.insert(0, Content::Text { text: note.clone() });
+        }
         Ok(ToolResult {
-            content: if result.content.is_empty() {
-                vec![Content::Text {
-                    text: String::new(),
-                }]
-            } else {
-                result.content
-            },
+            content,
             details: result.details,
         })
     }
@@ -452,6 +598,126 @@ mod tests {
         let defs = discover(proj.path(), home.path());
         assert_eq!(defs.len(), 2, "fixture must discover both files: {defs:?}");
         (proj, home, defs)
+    }
+
+    /// The newest Claude id of `family` that yoagent ships, read from
+    /// yoagent's own preset table (not typed here).
+    fn shipped(family: &str) -> Vec<String> {
+        yoagent::provider::ModelConfig::presets()
+            .filter(|m| m.provider == "anthropic" && m.id.starts_with(&format!("claude-{family}-")))
+            .map(|m| m.id)
+            .collect()
+    }
+
+    #[test]
+    fn model_field_is_honoured_not_disclaimed() {
+        // inherit is the MAIN model, even when sub_agent_model is set.
+        let (m, note) = resolve_agent_model(Some("inherit"), "anthropic", "main-x", Some("sub-y"));
+        assert_eq!((m.as_str(), note), ("main-x", None));
+        // Absent: sub_agent_model, else the main model (unchanged behaviour).
+        assert_eq!(
+            resolve_agent_model(None, "deepseek", "main-x", Some("sub-y")),
+            ("sub-y".to_string(), None)
+        );
+        assert_eq!(
+            resolve_agent_model(None, "deepseek", "main-x", None),
+            ("main-x".to_string(), None)
+        );
+        // An explicit non-Claude id is sent as written (ollama/custom ids).
+        assert_eq!(
+            resolve_agent_model(Some("llama3.1"), "ollama", "qwen3", Some("sub-y")),
+            ("llama3.1".to_string(), None)
+        );
+        // An explicit Claude id on anthropic is sent as written.
+        assert_eq!(
+            resolve_agent_model(
+                Some("claude-opus-4-8"),
+                "anthropic",
+                "claude-sonnet-5",
+                None
+            ),
+            ("claude-opus-4-8".to_string(), None)
+        );
+    }
+
+    #[test]
+    fn same_family_alias_on_anthropic_runs_on_the_parents_exact_id() {
+        // Claude Code's rule: `opus` under an opus parent keeps the parent's version.
+        for alias in ["opus", "OPUS", " Opus "] {
+            assert_eq!(
+                resolve_agent_model(Some(alias), "anthropic", "claude-opus-4-8", Some("sub-y")),
+                ("claude-opus-4-8".to_string(), None),
+                "{alias}"
+            );
+        }
+    }
+
+    #[test]
+    fn other_family_alias_on_anthropic_resolves_to_a_shipped_preset() {
+        for family in ["haiku", "sonnet", "opus", "fable"] {
+            let (m, note) =
+                resolve_agent_model(Some(family), "anthropic", "some-other-model", None);
+            assert_eq!(note, None, "{family}");
+            let ids = shipped(family);
+            assert!(
+                ids.contains(&m),
+                "{family} -> {m}, not among yoagent's {ids:?}"
+            );
+        }
+        // Newest of the family: the haiku pick is not the 4.5 preset when a
+        // later haiku ships beside it.
+        let (h, _) = resolve_agent_model(Some("haiku"), "anthropic", "claude-opus-5", None);
+        for id in shipped("haiku") {
+            assert!(
+                claude_family_version(&id) <= claude_family_version(&h),
+                "{id} is newer than the pick {h}"
+            );
+        }
+        assert_eq!(claude_family_version("claude-opus-5-5"), (5, 5));
+        assert_eq!(claude_family_version("claude-opus-5"), (5, 0));
+        assert!(claude_family_version("claude-opus-4-8") < (5, 0));
+    }
+
+    #[test]
+    fn claude_alias_on_another_provider_falls_back_with_a_note_naming_both() {
+        let (m, note) =
+            resolve_agent_model(Some("haiku"), "deepseek", "deepseek-v4-pro", Some("sub-y"));
+        assert_eq!(m, "sub-y");
+        assert_eq!(
+            note.as_deref(),
+            Some(
+                "[agent model: this agent file asks for model `haiku`, but it ran on `sub-y`: \
+                 `haiku` is a Claude alias and the provider is deepseek]"
+            )
+        );
+        let (m, note) = resolve_agent_model(Some("sonnet"), "zai", "glm-5", None);
+        assert_eq!(m, "glm-5");
+        assert!(note
+            .unwrap()
+            .contains("`sonnet` is a Claude alias and the provider is zai"));
+    }
+
+    #[test]
+    fn claude_id_on_another_provider_falls_back_with_a_note() {
+        let (m, note) = resolve_agent_model(Some("claude-haiku-4-5"), "zai", "glm-5", None);
+        assert_eq!(m, "glm-5");
+        assert_eq!(
+            note.as_deref(),
+            Some(
+                "[agent model: this agent file asks for model `claude-haiku-4-5`, but it ran on \
+                 `glm-5`: `claude-haiku-4-5` is a Claude model id and the provider is zai]"
+            )
+        );
+        // Near miss: an id that merely contains "claude" later is not refused.
+        assert_eq!(
+            resolve_agent_model(Some("anthropic/claude-sonnet-4.6"), "openrouter", "x", None),
+            ("anthropic/claude-sonnet-4.6".to_string(), None)
+        );
+        // Near miss: the word `haiku` inside a non-alias id is sent as written.
+        assert_eq!(
+            resolve_agent_model(Some("haiku-local:7b"), "ollama", "x", None),
+            ("haiku-local:7b".to_string(), None)
+        );
     }
 
     #[test]
@@ -754,5 +1020,47 @@ mod tests {
             .await,
         );
         assert!(gated.contains("Agent 'proj-rev' was not run"), "{gated}");
+    }
+
+    #[tokio::test]
+    async fn a_model_note_is_prefixed_to_the_answer_the_parent_reads() {
+        let (_p, _h, defs) = mixed();
+        let count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let c = count.clone();
+        let tool = AgentDispatchTool::new(
+            defs,
+            || false,
+            move |def, _| {
+                // The note for the user agent only, as build_child computes it.
+                let note = resolve_agent_model(Some("haiku"), "deepseek", "ds-main", None).1;
+                let child: Box<dyn AgentTool> = Box::new(Tick(c.clone()));
+                Some((child, note.filter(|_| def.name == "helper")))
+            },
+        )
+        .unwrap();
+        let out = tool
+            .execute(
+                serde_json::json!({"subagent_type": "helper", "prompt": "x"}),
+                ctx(),
+            )
+            .await
+            .expect("child run");
+        let texts: Vec<&str> = out
+            .content
+            .iter()
+            .filter_map(|c| match c {
+                Content::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(
+            texts,
+            vec![
+                "[agent model: this agent file asks for model `haiku`, but it ran on `ds-main`: \
+                 `haiku` is a Claude alias and the provider is deepseek]",
+                "ok"
+            ]
+        );
     }
 }

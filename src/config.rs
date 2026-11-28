@@ -1655,6 +1655,13 @@ pub fn effective_sub_agent_model(parent_model: &str) -> String {
     resolve_sub_agent_model(&SUB_AGENT_MODEL, parent_model)
 }
 
+/// The recorded `sub_agent_model` itself, `None` when the config set none.
+/// The `agent` tool needs the distinction (#1250): a file's `model: inherit`
+/// means the main model even when `sub_agent_model` is set.
+pub fn configured_sub_agent_model() -> Option<String> {
+    SUB_AGENT_MODEL.get().cloned().flatten()
+}
+
 /// The resolution itself, taking the store as a **parameter**.
 ///
 /// Not decoration: `SUB_AGENT_MODEL` is a process-global `OnceLock` and a test

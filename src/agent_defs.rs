@@ -373,8 +373,16 @@ pub fn discover_agent_defs(start: &Path, home: Option<&Path>) -> Discovery {
     out
 }
 
+/// What a named agent's `model:` is resolved against (#1250 milestone 3):
+/// the session's provider, main model and `sub_agent_model`.
+pub struct RunModels {
+    pub provider: String,
+    pub main_model: String,
+    pub sub_agent_model: Option<String>,
+}
+
 /// One listing line block for a loaded agent.
-pub fn render_agent(def: &AgentDef) -> String {
+pub fn render_agent(def: &AgentDef, models: &RunModels) -> String {
     let mut s = format!(
         "  {}  [{}] {}\n    {}\n",
         def.name,
@@ -435,12 +443,19 @@ pub fn render_agent(def: &AgentDef) -> String {
         }
     }
     if let Some(m) = &def.model {
-        // Not honoured yet (#1250 milestone 3, model half): the child runs on
-        // `config::effective_sub_agent_model`, i.e. `sub_agent_model` when
-        // set, else the main model. `maxTurns` below IS honoured.
-        details.push(format!(
-            "model: {m} (not honoured yet: runs on sub_agent_model, else the main model)"
-        ));
+        // The same resolution the `agent` tool runs the child on (#1250
+        // milestone 3), so this row cannot disagree with the dispatch.
+        let c = crate::agent_dispatch::choose_agent_model(
+            Some(m),
+            &models.provider,
+            &models.main_model,
+            models.sub_agent_model.as_deref(),
+        );
+        details.push(match c.fallback_reason {
+            Some(reason) => format!("model: {m} (falls back to {}: {reason})", c.model),
+            None if c.model == m.trim() => format!("model: {m}"),
+            None => format!("model: {m} → {}", c.model),
+        });
     }
     if let Some(n) = def.max_turns {
         details.push(format!("maxTurns: {n}"));
@@ -466,7 +481,7 @@ pub fn render_skipped(skip: &Skipped) -> String {
 }
 
 /// The whole `yoyo agents` output.
-pub fn render_agents_listing(d: &Discovery) -> String {
+pub fn render_agents_listing(d: &Discovery, models: &RunModels) -> String {
     let mut s = String::new();
     let looked_in = |s: &mut String| {
         s.push_str(&format!(
@@ -493,7 +508,7 @@ pub fn render_agents_listing(d: &Discovery) -> String {
     } else {
         s.push('\n');
         for def in &d.agents {
-            s.push_str(&render_agent(def));
+            s.push_str(&render_agent(def, models));
         }
     }
     if !d.shadowed.is_empty() {
@@ -520,11 +535,11 @@ pub fn render_agents_listing(d: &Discovery) -> String {
 
 /// `yoyo agents`: list what was found from the cwd up to the repo root, and
 /// under the home dir.
-pub fn handle_agents_command() {
+pub fn handle_agents_command(models: &RunModels) {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let home = crate::config::home_dir();
     let d = discover_agent_defs(&cwd, home.as_deref());
-    print!("{}", render_agents_listing(&d));
+    print!("{}", render_agents_listing(&d, models));
 }
 
 #[cfg(test)]
